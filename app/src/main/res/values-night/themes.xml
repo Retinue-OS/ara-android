@@ -1,0 +1,7 @@
+<resources>
+    <!-- Dark variant of the window shell (Compose still themes the content). -->
+    <style name="Theme.Ara" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

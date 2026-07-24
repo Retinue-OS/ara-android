@@ -1,0 +1,172 @@
+package os.retinue.ara.speech
+
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import java.util.Locale
+import os.retinue.ara.state.PrivacyState
+
+/**
+ * Thin wrapper over Android's [SpeechRecognizer].
+ *
+ * Prefers an on-device recognizer when the device provides one, falling back to
+ * the normal (possibly cloud-backed) recognition service otherwise. It reports
+ * the confirmed privacy posture — [PrivacyState.OnDevice] only when an on-device
+ * recognizer is actually in use.
+ *
+ * Every callback carries the session token it was started with so the caller can
+ * ignore stale callbacks from a superseded session. All methods must be called
+ * on the main thread.
+ */
+class SpeechController(private val context: Context) {
+
+    enum class Availability { OnDevice, Cloud, None }
+
+    enum class SpeechError {
+        NoMatch, NoSpeech, Timeout, Busy, Unavailable,
+        InsufficientPermissions, Network, TemporaryFailure,
+    }
+
+    interface Listener {
+        fun onReady(token: Long)
+        fun onBeginningOfSpeech(token: Long)
+        fun onPartial(token: Long, text: String)
+        fun onFinal(token: Long, text: String)
+        fun onEndOfSpeech(token: Long)
+        fun onError(token: Long, error: SpeechError)
+    }
+
+    var privacyState: PrivacyState = PrivacyState.Unknown
+        private set
+
+    var active: Boolean = false
+        private set
+
+    private var recognizer: SpeechRecognizer? = null
+    private var listener: Listener? = null
+    private var token: Long = 0
+
+    /** What kind of recognition, if any, this device can do right now. */
+    fun availability(): Availability = when {
+        SpeechRecognizer.isOnDeviceRecognitionAvailable(context) -> Availability.OnDevice
+        SpeechRecognizer.isRecognitionAvailable(context) -> Availability.Cloud
+        else -> Availability.None
+    }
+
+    /**
+     * Start a recognition session. Only one session exists at a time; any
+     * previous recognizer is torn down first.
+     */
+    fun start(sessionToken: Long, listener: Listener) {
+        teardown()
+        this.listener = listener
+        this.token = sessionToken
+
+        val onDevice = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        val rec = if (onDevice) {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        } else {
+            SpeechRecognizer.createSpeechRecognizer(context)
+        }
+        privacyState = if (onDevice) PrivacyState.OnDevice else PrivacyState.Cloud
+        recognizer = rec
+        active = true
+        rec.setRecognitionListener(adapter)
+        rec.startListening(buildIntent(onDevice))
+    }
+
+    /**
+     * Ask the recognizer to finalize: stop capturing more audio and deliver its
+     * best final result via [Listener.onFinal]. This finalizes — it does not
+     * discard — the current capture.
+     */
+    fun stopAndFinalize() {
+        recognizer?.stopListening()
+    }
+
+    /** Discard the current capture entirely. */
+    fun cancel() {
+        teardown()
+    }
+
+    fun destroy() {
+        teardown()
+    }
+
+    private fun teardown() {
+        active = false
+        recognizer?.let {
+            runCatching { it.cancel() }
+            runCatching { it.destroy() }
+        }
+        recognizer = null
+    }
+
+    private fun buildIntent(onDevice: Boolean): Intent {
+        // Use the device's current locale; never hardcode a language.
+        val lang = Locale.getDefault().toLanguageTag()
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+            if (onDevice) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+    }
+
+    private fun firstResult(results: Bundle?): String =
+        results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            ?.firstOrNull().orEmpty()
+
+    private val adapter = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {
+            listener?.onReady(token)
+        }
+
+        override fun onBeginningOfSpeech() {
+            listener?.onBeginningOfSpeech(token)
+        }
+
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+
+        override fun onEndOfSpeech() {
+            listener?.onEndOfSpeech(token)
+        }
+
+        override fun onPartialResults(partialResults: Bundle?) {
+            val text = firstResult(partialResults)
+            if (text.isNotEmpty()) listener?.onPartial(token, text)
+        }
+
+        override fun onResults(results: Bundle?) {
+            active = false
+            listener?.onFinal(token, firstResult(results))
+        }
+
+        override fun onError(error: Int) {
+            active = false
+            listener?.onError(token, mapError(error))
+        }
+
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    private fun mapError(code: Int): SpeechError = when (code) {
+        SpeechRecognizer.ERROR_NO_MATCH -> SpeechError.NoMatch
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> SpeechError.NoSpeech
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> SpeechError.Timeout
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> SpeechError.Busy
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> SpeechError.InsufficientPermissions
+        SpeechRecognizer.ERROR_NETWORK -> SpeechError.Network
+        SpeechRecognizer.ERROR_CLIENT,
+        SpeechRecognizer.ERROR_AUDIO,
+        SpeechRecognizer.ERROR_SERVER,
+        -> SpeechError.TemporaryFailure
+        else -> SpeechError.Unavailable
+    }
+}

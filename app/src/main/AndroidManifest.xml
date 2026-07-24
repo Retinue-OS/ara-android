@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Speech capture. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Retinue HTTPS calls and job polling. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground service that owns background job polling (data synchronization). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Completion/active-job notifications. Runtime-requested on Android 13+. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- A microphone is required for the app's purpose but recognition degrades
+         gracefully if unavailable, so it is not marked strictly required. -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+
+    <application
+        android:name=".AraApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ara">
+
+        <!-- The launcher label is "Ara" (see @string/app_name) so the user can say
+             "Hi Bixby, start Ara" and Bixby launches this activity by name.
+             singleTask: a Bixby relaunch resumes the existing instance rather than
+             stacking a new one, so persisted job/answer state is presented. -->
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Background job-polling service. dataSync type is the correct category
+             for polling a network job to completion. stopWithTask=true ties its
+             lifetime to the task so a Recents swipe tears it down; onTaskRemoved
+             still runs first to cancel polling and clear notifications. -->
+        <service
+            android:name=".service.PollingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="true" />
+
+    </application>
+
+</manifest>
