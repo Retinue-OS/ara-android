@@ -73,7 +73,11 @@ class SpeechController(private val context: Context) {
      * the session fails closed with [SpeechError.Unavailable] rather than leaking
      * audio to the cloud.
      */
+<<<<<<< HEAD
     fun start(sessionToken: Long, mode: Mode, listener: Listener) {
+=======
+    fun start(sessionToken: Long, listener: Listener, silenceTimeoutMs: Long = 0) {
+>>>>>>> origin/main
         teardown()
         this.listener = listener
         this.token = sessionToken
@@ -97,7 +101,7 @@ class SpeechController(private val context: Context) {
         recognizer = rec
         active = true
         rec.setRecognitionListener(adapter)
-        rec.startListening(buildIntent(onDevice))
+        rec.startListening(buildIntent(onDevice, silenceTimeoutMs))
     }
 
     /**
@@ -127,7 +131,7 @@ class SpeechController(private val context: Context) {
         recognizer = null
     }
 
-    private fun buildIntent(onDevice: Boolean): Intent {
+    private fun buildIntent(onDevice: Boolean, silenceTimeoutMs: Long): Intent {
         // Use the device's current locale; never hardcode a language.
         val lang = Locale.getDefault().toLanguageTag()
         return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -137,6 +141,19 @@ class SpeechController(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
             if (onDevice) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // Lengthen the end-of-speech silence window when the user configured
+            // one. These extras are advisory — a recognizer may ignore them — so
+            // the ViewModel also restarts recognition when auto-send is disabled.
+            if (silenceTimeoutMs > 0) {
+                putExtra(
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                    silenceTimeoutMs,
+                )
+                putExtra(
+                    RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                    silenceTimeoutMs,
+                )
+            }
         }
     }
 

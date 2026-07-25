@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,6 +55,10 @@ fun SettingsScreen(
     var requestSeconds by remember { mutableStateOf((settings.requestTimeoutMs / 1000).toString()) }
     var jobSeconds by remember { mutableStateOf((settings.overallJobTimeoutMs / 1000).toString()) }
     var maxRetries by remember { mutableStateOf(settings.maxConsecutivePollFailures.toString()) }
+    var autoEndOfSpeech by remember { mutableStateOf(settings.autoEndOfSpeech) }
+    var silenceSeconds by remember {
+        mutableStateOf(settings.silenceTimeoutMs.takeIf { it > 0 }?.let { (it / 1000).toString() } ?: "")
+    }
 
     Scaffold(
         topBar = {
@@ -94,6 +100,36 @@ fun SettingsScreen(
             NumberField(jobSeconds, { jobSeconds = it }, R.string.settings_job_timeout)
             NumberField(maxRetries, { maxRetries = it }, R.string.settings_max_retries)
 
+            Text(
+                stringResource(R.string.settings_speech_section),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.settings_auto_end_of_speech),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        stringResource(R.string.settings_auto_end_of_speech_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = autoEndOfSpeech, onCheckedChange = { autoEndOfSpeech = it })
+            }
+            // The silence-timeout tuning only applies while auto-send is on.
+            if (autoEndOfSpeech) {
+                NumberField(silenceSeconds, { silenceSeconds = it }, R.string.settings_silence_timeout)
+                Text(
+                    stringResource(R.string.settings_silence_timeout_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
             Text(stringResource(R.string.settings_certificate), style = MaterialTheme.typography.labelLarge)
             Text(
                 certificateAlias ?: stringResource(R.string.settings_certificate_none),
@@ -121,6 +157,10 @@ fun SettingsScreen(
                             overallJobTimeoutMs = jobSeconds.toSeconds(settings.overallJobTimeoutMs),
                             maxConsecutivePollFailures = maxRetries.toIntOrNull()
                                 ?.coerceAtLeast(1) ?: settings.maxConsecutivePollFailures,
+                            autoEndOfSpeech = autoEndOfSpeech,
+                            // Empty/zero means "use the recognizer default".
+                            silenceTimeoutMs = silenceSeconds.toLongOrNull()
+                                ?.takeIf { it > 0 }?.let { it * 1000 } ?: 0,
                         ),
                     )
                     onClose()

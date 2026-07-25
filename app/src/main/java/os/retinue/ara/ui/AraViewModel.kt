@@ -69,6 +69,9 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
     private var submittedForCapture = false
     private var pendingSend = false
     private var capturedText: String = ""
+    // Text carried across silence gaps while auto-send (end-of-speech detection)
+    // is disabled; empty when auto-send is on.
+    private var carriedText: String = ""
 
     private var recognitionToken: Long = 0
     private var ttsToken: Long = 0
@@ -394,8 +397,12 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
             // Start after the chime so Ara never captures its own chime.
             delay(chime.approxDurationMs + 150)
             if (recognitionToken == token && inForeground) {
+<<<<<<< HEAD
                 speech.start(token, mode, speechListener)
                 // Reflect the recognizer actually in use, not the one requested.
+=======
+                speech.start(token, speechListener, settings.silenceTimeoutMs)
+>>>>>>> origin/main
                 privacy = speech.privacyState
                 emit()
             }
@@ -418,8 +425,9 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun onPartial(token: Long, text: String) {
             if (!AraDecisions.isCurrentCallback(token, recognitionToken)) return
-            bestPartial = text
-            promptText = text
+            val combined = combineSegments(text)
+            bestPartial = combined.ifBlank { text }
+            promptText = combined
             partial = true
             if (state == AraState.Listening) state = AraState.Recognizing
             emit()
@@ -427,7 +435,19 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
 
         override fun onFinal(token: Long, text: String) {
             if (!AraDecisions.isCurrentCallback(token, recognitionToken)) return
-            when (val res = AraDecisions.resolveSendText(text, bestPartial)) {
+            // With auto-send disabled, a silence-triggered final result is not a
+            // submission: fold it into the carried text and keep listening. Only
+            // an explicit Send (pendingSend) submits.
+            if (!settings.autoEndOfSpeech && !pendingSend) {
+                carriedText = combineSegments(text)
+                bestPartial = carriedText.ifBlank { bestPartial ?: "" }
+                promptText = carriedText
+                partial = true
+                continueListening()
+                return
+            }
+            val combined = combineSegments(text)
+            when (val res = AraDecisions.resolveSendText(combined, bestPartial)) {
                 is AraDecisions.SendResolution.Submit -> submit(res.text)
                 AraDecisions.SendResolution.NothingUsable -> {
                     status = getString(
@@ -475,6 +495,9 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
             SpeechController.SpeechError.Timeout,
             -> {
                 if (pendingSend && !bestPartial.isNullOrBlank()) { submit(bestPartial!!); return }
+                // Auto-send disabled: a pause must not end the capture. Preserve
+                // the carried text and keep listening until the user presses Send.
+                if (!settings.autoEndOfSpeech && !pendingSend) { continueListening(); return }
                 pendingSend = false
                 status = getString(R.string.msg_no_speech)
                 scheduleRestart()
@@ -661,8 +684,36 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
         bestPartial = null
         submittedForCapture = false
         pendingSend = false
+        carriedText = ""
         promptText = if (state == AraState.CapturedInputDecision) promptText else ""
         partial = false
+    }
+
+    /** Join previously carried segments with the latest recognizer text. */
+    private fun combineSegments(latest: String?): String =
+        listOfNotNull(
+            carriedText.takeIf { it.isNotBlank() },
+            latest?.trim()?.takeIf { it.isNotBlank() },
+        ).joinToString(" ")
+
+    /**
+     * Restart recognition without a chime or clearing the carried capture. Used
+     * when auto-send is disabled and a silence ended a segment: the recognized
+     * text is preserved and capture continues until the user presses Send.
+     */
+    private fun continueListening() {
+        if (!inForeground || autoListenSuppressed) { emit(); return }
+        state = AraState.Recognizing
+        emit()
+        val token = ++recognitionToken
+        viewModelScope.launch {
+            delay(150) // let the previous recognizer release the mic
+            if (recognitionToken == token && inForeground && !speech.active) {
+                speech.start(token, speechListener, settings.silenceTimeoutMs)
+                privacy = speech.privacyState
+                emit()
+            }
+        }
     }
 
     private fun showError(message: String, terminal: Boolean) {
