@@ -6,7 +6,7 @@ You speak a prompt, Android transcribes it, Ara submits it to Retinue, polls the
 returned job until the answer is ready, shows the answer, and (optionally) reads
 it aloud — then, in continuous mode, starts listening again.
 
-It is a companion to Retinue's **Signal Gateway** and speaks exactly the same
+It is a sibling to Retinue's **Signal Gateway** and speaks exactly the same
 protocol (see [Relationship to the Signal Gateway](#relationship-to-the-signal-gateway)).
 
 - **Language:** Kotlin, native Android APIs, Jetpack Compose UI.
