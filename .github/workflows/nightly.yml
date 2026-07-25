@@ -1,0 +1,111 @@
+name: Nightly APK build
+
+on:
+  schedule:
+    # 02:30 UTC nightly
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: nightly-apk
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check for changes since last run
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decide.outputs.should_build }}
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Decide whether to build and compute tag
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          date_tag="nightly-$(date -u +%F)"
+
+          # SHA of the last successful run of this workflow (scheduled or manual).
+          last_sha=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' || true)
+
+          if [ -n "$last_sha" ] && [ "$last_sha" = "$GITHUB_SHA" ]; then
+            echo "No changes since last successful run ($last_sha) — skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            # Manual runs are suffixed with X<n>, where n counts the manual
+            # releases already made today: nightly-2026-07-25-X1, -X2, ...
+            count=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq "[.[].tag_name | select(startswith(\"${date_tag}-X\"))] | length")
+            tag="${date_tag}-X$((count + 1))"
+          else
+            tag="$date_tag"
+          fi
+
+          echo "Building ${tag} at ${GITHUB_SHA}"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and release APK
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Rename APK
+        id: apk
+        run: |
+          set -euo pipefail
+          tag="${{ needs.check.outputs.tag }}"
+          src=$(find app/build/outputs/apk/release -name '*.apk' | head -n1)
+          out="ara-${tag}.apk"
+          cp "$src" "$out"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ara-${{ needs.check.outputs.tag }}
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.check.outputs.tag }}"
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes "Automated nightly build of Ara at ${GITHUB_SHA}." \
+            --prerelease \
+            "${{ steps.apk.outputs.path }}"
