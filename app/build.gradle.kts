@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Nightly builds are signed with a checked-in, non-secret test certificate
+// (see keystore/README.md) so consecutive nightly APKs share a signature and
+// can be installed over one another. This is not a production signing key.
+val nightlyKeystoreProperties = Properties().apply {
+    file("../keystore/nightly-test.properties").inputStream().use { load(it) }
 }
 
 android {
@@ -29,6 +38,15 @@ android {
         // client certificate are configured at runtime.
     }
 
+    signingConfigs {
+        create("nightly") {
+            storeFile = file("../keystore/${nightlyKeystoreProperties.getProperty("storeFile")}")
+            storePassword = nightlyKeystoreProperties.getProperty("storePassword")
+            keyAlias = nightlyKeystoreProperties.getProperty("keyAlias")
+            keyPassword = nightlyKeystoreProperties.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -36,6 +54,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            signingConfig = signingConfigs.getByName("nightly")
         }
     }
 
