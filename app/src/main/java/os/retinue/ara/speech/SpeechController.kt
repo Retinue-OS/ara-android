@@ -12,10 +12,11 @@ import os.retinue.ara.state.PrivacyState
 /**
  * Thin wrapper over Android's [SpeechRecognizer].
  *
- * Prefers an on-device recognizer when the device provides one, falling back to
- * the normal (possibly cloud-backed) recognition service otherwise. It reports
- * the confirmed privacy posture — [PrivacyState.OnDevice] only when an on-device
- * recognizer is actually in use.
+ * The caller decides — once — which recognizer to use and passes that decision
+ * into [start]; this class never re-derives the recognizer type on its own, so
+ * it can never silently create a cloud-backed recognizer when the caller
+ * approved an on-device one. It reports the confirmed privacy posture —
+ * [PrivacyState.OnDevice] only when an on-device recognizer is actually in use.
  *
  * Every callback carries the session token it was started with so the caller can
  * ignore stale callbacks from a superseded session. All methods must be called
@@ -24,6 +25,9 @@ import os.retinue.ara.state.PrivacyState
 class SpeechController(private val context: Context) {
 
     enum class Availability { OnDevice, Cloud, None }
+
+    /** Which recognizer the caller wants for a session. */
+    enum class Mode { OnDevice, Cloud }
 
     enum class SpeechError {
         NoMatch, NoSpeech, Timeout, Busy, Unavailable,
@@ -57,15 +61,33 @@ class SpeechController(private val context: Context) {
     }
 
     /**
-     * Start a recognition session. Only one session exists at a time; any
-     * previous recognizer is torn down first.
+     * Start a recognition session in the recognizer [mode] the caller chose.
+     * Only one session exists at a time; any previous recognizer is torn down
+     * first.
+     *
+     * The [mode] is authoritative: [Mode.OnDevice] always creates the on-device
+     * recognizer and [Mode.Cloud] always creates the cloud one. We deliberately
+     * do NOT fall back from on-device to cloud here — a fallback would send audio
+     * to Google while the caller (and the UI) still believe recognition is local.
+     * If [Mode.OnDevice] is requested while on-device recognition is unavailable,
+     * the session fails closed with [SpeechError.Unavailable] rather than leaking
+     * audio to the cloud.
      */
-    fun start(sessionToken: Long, listener: Listener) {
+    fun start(sessionToken: Long, mode: Mode, listener: Listener) {
         teardown()
         this.listener = listener
         this.token = sessionToken
 
-        val onDevice = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        val onDevice = mode == Mode.OnDevice
+        // Fail closed: never substitute the cloud recognizer for a requested
+        // on-device one. Better to error than to silently transmit audio.
+        if (onDevice && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            privacyState = PrivacyState.Unknown
+            active = false
+            listener.onError(sessionToken, SpeechError.Unavailable)
+            return
+        }
+
         val rec = if (onDevice) {
             SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } else {
