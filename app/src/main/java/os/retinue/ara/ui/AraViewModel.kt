@@ -363,8 +363,13 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
             showError(getString(R.string.msg_mic_permission_denied), terminal = false)
             return
         }
-        when (speech.availability()) {
+        // Decide the recognizer once, here, and pass that decision to the
+        // controller. The controller never re-derives it, so it can never
+        // silently fall back to the cloud recognizer for a session we approved
+        // as on-device.
+        val mode = when (speech.availability()) {
             SpeechController.Availability.None -> {
+                privacy = PrivacyState.Unknown
                 showError(getString(R.string.msg_recognizer_unavailable), terminal = true)
                 autoListenSuppressed = true
                 return
@@ -374,8 +379,12 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
                     showCloudDisclosure = true; state = AraState.Inactive; emit(); return
                 }
                 privacy = PrivacyState.Cloud
+                SpeechController.Mode.Cloud
             }
-            SpeechController.Availability.OnDevice -> privacy = PrivacyState.OnDevice
+            SpeechController.Availability.OnDevice -> {
+                privacy = PrivacyState.OnDevice
+                SpeechController.Mode.OnDevice
+            }
         }
         clearCapture()
         error = null
@@ -388,7 +397,12 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
             // Start after the chime so Ara never captures its own chime.
             delay(chime.approxDurationMs + 150)
             if (recognitionToken == token && inForeground) {
+<<<<<<< HEAD
+                speech.start(token, mode, speechListener)
+                // Reflect the recognizer actually in use, not the one requested.
+=======
                 speech.start(token, speechListener, settings.silenceTimeoutMs)
+>>>>>>> origin/main
                 privacy = speech.privacyState
                 emit()
             }
@@ -464,6 +478,11 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
                 showError(getString(R.string.msg_mic_permission_denied), terminal = false)
             }
             SpeechController.SpeechError.Unavailable -> {
+                // Includes the fail-closed case where an on-device session was
+                // requested but on-device recognition is not actually available.
+                // Clear the privacy posture so the label can never keep claiming
+                // "on-device" next to an "unavailable" error.
+                privacy = PrivacyState.Unknown
                 autoListenSuppressed = true
                 showError(getString(R.string.msg_recognizer_unavailable), terminal = true)
             }
