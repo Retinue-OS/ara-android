@@ -93,6 +93,11 @@
     <string name="settings_request_timeout">Network request timeout (seconds)</string>
     <string name="settings_job_timeout">Overall job timeout (seconds)</string>
     <string name="settings_max_retries">Consecutive poll retries before giving up</string>
+    <string name="settings_speech_section">Speech recognition</string>
+    <string name="settings_auto_end_of_speech">Auto-send at end of speech</string>
+    <string name="settings_auto_end_of_speech_desc">When on, Ara sends automatically after you stop speaking. Turn off to keep listening through pauses; nothing is sent until you press Send.</string>
+    <string name="settings_silence_timeout">End-of-speech pause (seconds, 0 = default)</string>
+    <string name="settings_silence_timeout_desc">How long a pause may last before Ara assumes you have finished. Leave empty or 0 to use the recognizer\'s default.</string>
     <string name="settings_certificate">Client certificate</string>
     <string name="settings_certificate_none">None selected</string>
     <string name="settings_select_certificate">Select certificate</string>
