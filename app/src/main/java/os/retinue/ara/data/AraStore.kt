@@ -50,6 +50,8 @@ class AraStore(private val context: Context) {
             requestTimeoutMs = p[K.requestTimeout] ?: 30_000,
             overallJobTimeoutMs = p[K.overallTimeout] ?: 3_600_000,
             maxConsecutivePollFailures = p[K.maxFailures] ?: 10,
+            autoEndOfSpeech = p[K.autoEndOfSpeech] ?: true,
+            silenceTimeoutMs = p[K.silenceTimeout] ?: 0,
         )
     }
 
@@ -83,6 +85,8 @@ class AraStore(private val context: Context) {
         it[K.requestTimeout] = s.requestTimeoutMs
         it[K.overallTimeout] = s.overallJobTimeoutMs
         it[K.maxFailures] = s.maxConsecutivePollFailures
+        it[K.autoEndOfSpeech] = s.autoEndOfSpeech
+        it[K.silenceTimeout] = s.silenceTimeoutMs
     }
 
     suspend fun saveJob(record: JobRecord?) = edit {
@@ -109,6 +113,8 @@ class AraStore(private val context: Context) {
         val requestTimeout = longPreferencesKey("request_timeout_ms")
         val overallTimeout = longPreferencesKey("overall_timeout_ms")
         val maxFailures = intPreferencesKey("max_consecutive_poll_failures")
+        val autoEndOfSpeech = booleanPreferencesKey("auto_end_of_speech")
+        val silenceTimeout = longPreferencesKey("silence_timeout_ms")
         val jobJson = stringPreferencesKey("job_record_json")
     }
 }
