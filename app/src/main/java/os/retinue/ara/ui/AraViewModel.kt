@@ -74,6 +74,9 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
     private var carriedText: String = ""
 
     private var recognitionToken: Long = 0
+    // The recognizer mode the current session began with, so a silence-
+    // triggered restart resumes in the same mode rather than re-deciding.
+    private var recognitionMode: SpeechController.Mode = SpeechController.Mode.OnDevice
     private var ttsToken: Long = 0
 
     private var inForeground = false
@@ -397,12 +400,9 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
             // Start after the chime so Ara never captures its own chime.
             delay(chime.approxDurationMs + 150)
             if (recognitionToken == token && inForeground) {
-<<<<<<< HEAD
-                speech.start(token, mode, speechListener)
+                recognitionMode = mode
+                speech.start(token, mode, speechListener, settings.silenceTimeoutMs)
                 // Reflect the recognizer actually in use, not the one requested.
-=======
-                speech.start(token, speechListener, settings.silenceTimeoutMs)
->>>>>>> origin/main
                 privacy = speech.privacyState
                 emit()
             }
@@ -709,7 +709,7 @@ class AraViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             delay(150) // let the previous recognizer release the mic
             if (recognitionToken == token && inForeground && !speech.active) {
-                speech.start(token, speechListener, settings.silenceTimeoutMs)
+                speech.start(token, recognitionMode, speechListener, settings.silenceTimeoutMs)
                 privacy = speech.privacyState
                 emit()
             }
