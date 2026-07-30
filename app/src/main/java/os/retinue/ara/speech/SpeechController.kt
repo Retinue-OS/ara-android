@@ -73,11 +73,7 @@ class SpeechController(private val context: Context) {
      * the session fails closed with [SpeechError.Unavailable] rather than leaking
      * audio to the cloud.
      */
-<<<<<<< HEAD
-    fun start(sessionToken: Long, mode: Mode, listener: Listener) {
-=======
-    fun start(sessionToken: Long, listener: Listener, silenceTimeoutMs: Long = 0) {
->>>>>>> origin/main
+    fun start(sessionToken: Long, mode: Mode, listener: Listener, silenceTimeoutMs: Long = 0) {
         teardown()
         this.listener = listener
         this.token = sessionToken
