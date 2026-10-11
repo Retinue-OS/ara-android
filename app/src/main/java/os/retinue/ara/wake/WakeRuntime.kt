@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.security.SecureRandom
 import os.retinue.ara.audio.Chime
 import os.retinue.ara.ui.MainActivity
 
@@ -27,7 +28,9 @@ sealed class WakeStatus {
  * Process-wide owner of wake detection. It gathers the inputs of [WakeGate]
  * (mode, shell visibility, service, the web app's voice-active flag, mic
  * permission, models) and opens or closes the mic accordingly; in
- * [WakeMode.Always] it also starts and stops [WakeService]. Everything runs on
+ * [WakeMode.Always] it also starts and stops [WakeService]. A wake reaches the
+ * shell directly while it is visible, otherwise through [WakeAlert]; the wake
+ * intent carries a one-time token ([consumePendingWake]). Everything runs on
  * the main thread except the listener's own audio thread.
  */
 object WakeRuntime {
@@ -37,6 +40,9 @@ object WakeRuntime {
 
     private const val TAG = "WakeRuntime"
 
+    /** The wake intent's token extra (see [consumePendingWake]). */
+    const val EXTRA_WAKE_TOKEN = "os.retinue.ara.extra.WAKE_TOKEN"
+
     private lateinit var app: Context
     private val main = Handler(Looper.getMainLooper())
     private var chime: Chime? = null
@@ -44,25 +50,45 @@ object WakeRuntime {
     private var mode = WakeMode.Off
     private var threshold = 0.5f
     private var shellVisible = false
+    private var shellResumed = false
     private var serviceRunning = false
     private var serviceRequested = false
     private var holdUntilMs = 0L
     private var listener: WakeListener? = null
+
+    /** The last stopped listener: the next one waits for it to let go of the mic. */
+    private var retired: WakeListener? = null
     private var listenerThreshold = 0f
     private var listenerGen = 0
     private var lastError: String? = null
 
+    /** Retries after a mic error, and after the service failed to enter the foreground. */
+    private val micBackoff = Backoff()
+    private val serviceBackoff = Backoff()
+
+    private val random = SecureRandom()
+    private val ticket = WakeTicket {
+        val bytes = ByteArray(16)
+        random.nextBytes(bytes)
+        bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private val voice = VoiceActivity()
     private val _voiceActive = MutableStateFlow(false)
 
-    /** The web app reported the mic in use (`RetinueShell.setVoiceActive`). */
+    /**
+     * The web app has the mic (`RetinueShell.setVoiceActive`), or was just
+     * granted it ([pageMicGranted]).
+     */
     val voiceActive: StateFlow<Boolean> = _voiceActive.asStateFlow()
 
     private val _status = MutableStateFlow<WakeStatus>(WakeStatus.Idle)
     val status: StateFlow<WakeStatus> = _status.asStateFlow()
 
     /**
-     * Set by MainActivity while it exists: delivers a wake to the page directly.
-     * Without it (or while the shell is not visible) a wake starts the activity.
+     * Set by MainActivity while it exists: takes a wake directly while the shell
+     * is visible. Otherwise a wake goes out as a wake intent with a one-time
+     * token, through [WakeAlert] (or a direct start while visible).
      */
     var onWake: (() -> Unit)? = null
 
@@ -84,23 +110,74 @@ object WakeRuntime {
 
     fun setShellVisible(visible: Boolean) = onMain {
         shellVisible = visible
+        if (visible && lastError != null) {
+            // Coming back to the shell is a fresh chance for a mic that failed.
+            lastError = null
+            micBackoff.succeeded()
+        }
         evaluate()
     }
 
+    /** The shell activity is resumed: the only time the wake service is started. */
+    fun setShellResumed(resumed: Boolean) = onMain {
+        shellResumed = resumed
+        evaluate()
+    }
+
+    /** The page reported the mic in use or not; this holds until it reports again. */
     fun setVoiceActive(active: Boolean) = onMain {
-        _voiceActive.value = active
+        voice.pageReported(active)
+        evaluate()
+    }
+
+    /**
+     * The page was just granted the microphone: close the wake mic before the
+     * page opens its own, and count the page as using it until it reports (or
+     * for a few seconds if it never does).
+     */
+    fun pageMicGranted() = onMain {
+        voice.micGranted(SystemClock.elapsedRealtime())
         evaluate()
     }
 
     /** Microphone permission or the model files changed: re-check from scratch. */
     fun refresh() = onMain {
         lastError = null
+        micBackoff.succeeded()
+        serviceBackoff.succeeded()
         restartListener()
+    }
+
+    /**
+     * The shell received a wake intent: true when it carries the token of the
+     * wake announced last, within its lifetime. Main thread.
+     */
+    fun consumePendingWake(token: String?): Boolean =
+        ticket.consume(token, SystemClock.elapsedRealtime())
+
+    /**
+     * The shell took a wake (or is about to hand it to the page): the wake
+     * notification goes, and the mic stays closed a while longer so the page
+     * can take it.
+     */
+    fun wakeAccepted() = onMain {
+        if (!::app.isInitialized) return@onMain
+        WakeAlert.cancel(app)
+        holdUntilMs = SystemClock.elapsedRealtime() + HOLD_AFTER_WAKE_MS
+        evaluate()
     }
 
     internal fun serviceStarted() = onMain {
         serviceRunning = true
         serviceRequested = false
+        serviceBackoff.succeeded()
+        evaluate()
+    }
+
+    /** The service could not enter the foreground: try again later, not in a loop. */
+    internal fun serviceFailed() = onMain {
+        serviceRequested = false
+        serviceBackoff.failed(SystemClock.elapsedRealtime())
         evaluate()
     }
 
@@ -123,27 +200,38 @@ object WakeRuntime {
         main.removeCallbacks(reevaluate)
         val now = SystemClock.elapsedRealtime()
 
+        val mic = micGranted()
+
+        // A mic error is retried with a backoff, without a settings change.
+        if (lastError != null && micBackoff.ready(now)) lastError = null
+
         if (WakeGate.shouldStopService(mode, serviceRunning)) {
             app.stopService(Intent(app, WakeService::class.java))
-        } else if (!serviceRequested && WakeGate.shouldStartService(mode, shellVisible, serviceRunning) && micGranted()) {
+        } else if (!serviceRequested && mic && serviceBackoff.ready(now) &&
+            // Android 14 lets a microphone service start only from the foreground.
+            WakeGate.shouldStartService(mode, shellResumed, serviceRunning)
+        ) {
             serviceRequested = true
             try {
                 ContextCompat.startForegroundService(app, Intent(app, WakeService::class.java))
             } catch (e: Exception) {
                 // Android 12+ refuses some background starts; listening still works while visible.
                 serviceRequested = false
+                serviceBackoff.failed(now)
                 Log.w(TAG, "wake service could not start", e)
             }
         }
 
+        val voiceActive = voice.active(now)
+        _voiceActive.value = voiceActive
         val models = WakeModelFiles.status(app).ready
         val listen = lastError == null && WakeGate.shouldListen(
             WakeGate.Inputs(
                 mode = mode,
                 shellVisible = shellVisible,
                 serviceRunning = serviceRunning,
-                voiceActive = _voiceActive.value,
-                micPermission = micGranted(),
+                voiceActive = voiceActive,
+                micPermission = mic,
                 modelsReady = models,
                 nowMs = now,
                 holdUntilMs = holdUntilMs,
@@ -151,13 +239,22 @@ object WakeRuntime {
         )
         if (listen) startListener() else stopListener()
 
+        val error = lastError
         _status.value = when {
-            lastError != null -> WakeStatus.Error(lastError!!)
+            error != null -> WakeStatus.Error(error)
             listen -> WakeStatus.Listening
-            mode != WakeMode.Off && _voiceActive.value -> WakeStatus.PausedForVoice
+            mode != WakeMode.Off && voiceActive -> WakeStatus.PausedForVoice
             else -> WakeStatus.Idle
         }
-        if (now < holdUntilMs) main.postDelayed(reevaluate, holdUntilMs - now)
+
+        // Look again when something changes by the clock alone.
+        val next = listOfNotNull(
+            holdUntilMs.takeIf { it > now },
+            voice.changesAt(now),
+            micBackoff.retryAt.takeIf { error != null && it > now },
+            serviceBackoff.retryAt.takeIf { mode == WakeMode.Always && !serviceRunning && it > now },
+        ).minOrNull()
+        if (next != null) main.postDelayed(reevaluate, next - now)
     }
 
     private fun startListener() {
@@ -168,11 +265,13 @@ object WakeRuntime {
         listener = WakeListener(
             app,
             threshold,
+            previous = retired,
             onDetected = { main.post { if (gen == listenerGen) detected() } },
             onError = { message ->
                 main.post {
                     if (gen == listenerGen) {
                         lastError = message
+                        micBackoff.failed(SystemClock.elapsedRealtime())
                         listener = null
                         evaluate()
                     }
@@ -183,30 +282,45 @@ object WakeRuntime {
 
     private fun stopListener() {
         listenerGen++
-        listener?.stop()
+        listener?.let {
+            // Signals only: the listener's thread releases the mic on its own.
+            it.stop()
+            retired = it
+        }
         listener = null
     }
 
     private fun detected() {
         // The listener ended itself and released the mic.
         listenerGen++
+        retired = listener
         listener = null
-        holdUntilMs = SystemClock.elapsedRealtime() + HOLD_AFTER_WAKE_MS
+        val now = SystemClock.elapsedRealtime()
+        holdUntilMs = now + HOLD_AFTER_WAKE_MS
+        micBackoff.succeeded()
         evaluate()
         chime?.play()
         val direct = onWake
         if (shellVisible && direct != null) {
             direct()
-        } else {
-            val intent = Intent(app, MainActivity::class.java)
-                .setAction(MainActivity.ACTION_WAKE)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            return
+        }
+        val intent = Intent(app, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_WAKE)
+            .putExtra(EXTRA_WAKE_TOKEN, ticket.issue(now))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        if (shellVisible) {
+            // A visible app may still start its activity directly.
             try {
                 app.startActivity(intent)
+                return
             } catch (e: Exception) {
                 Log.w(TAG, "could not bring the shell to front", e)
             }
         }
+        // From the background (Android 10+ blocks activity starts there): a
+        // full-screen notification opens the shell, or the user taps it.
+        WakeAlert.show(app, intent)
     }
 
     private inline fun onMain(crossinline block: () -> Unit) {

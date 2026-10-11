@@ -1,12 +1,14 @@
 package os.retinue.ara
 
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellDecisions.BackAction
 import os.retinue.ara.shell.ShellDecisions.IntentAction
+import os.retinue.ara.shell.ShellDecisions.PendingWake
 import os.retinue.ara.shell.ShellDecisions.WakeDelivery
 import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellVoice
@@ -91,5 +93,39 @@ class ShellMessagesTest {
         assertTrue(s.contains("\"error\":\"it's \\\"bad\\\"\\n\""))
         val v = ShellMessages.voices(listOf(ShellVoice("de-de-x-nfh-local", "de-DE", localService = true, isDefault = false)))
         assertTrue(v.contains("\"voices\":[{\"name\":\"de-de-x-nfh-local\",\"lang\":\"de-DE\",\"localService\":true,\"default\":false}]"))
+    }
+}
+
+class WakeTimingTest {
+
+    private fun decide(
+        age: Long = 0,
+        loaded: Boolean = true,
+        resumed: Boolean = true,
+        focused: Boolean = true,
+        locked: Boolean = false,
+    ) = ShellDecisions.pendingWake(age, loaded, resumed, focused, locked)
+
+    @Test
+    fun deliversOnlyToAVisibleFocusedShell() {
+        assertEquals(PendingWake.Deliver, decide())
+        assertEquals(PendingWake.Wait, decide(resumed = false))
+        assertEquals(PendingWake.Wait, decide(focused = false))
+        assertEquals(PendingWake.Wait, decide(locked = true))
+        assertEquals(PendingWake.Wait, decide(loaded = false))
+    }
+
+    @Test
+    fun staleWakesAreDropped() {
+        assertEquals(PendingWake.Deliver, decide(age = ShellDecisions.PENDING_WAKE_MAX_MS))
+        assertEquals(PendingWake.Drop, decide(age = ShellDecisions.PENDING_WAKE_MAX_MS + 1))
+        assertEquals(PendingWake.Drop, decide(age = ShellDecisions.PENDING_WAKE_MAX_MS + 1, resumed = false))
+    }
+
+    @Test
+    fun replayedIntents() {
+        assertFalse(ShellDecisions.isReplayedIntent(restored = false, launchedFromHistory = false))
+        assertTrue(ShellDecisions.isReplayedIntent(restored = true, launchedFromHistory = false))
+        assertTrue(ShellDecisions.isReplayedIntent(restored = false, launchedFromHistory = true))
     }
 }

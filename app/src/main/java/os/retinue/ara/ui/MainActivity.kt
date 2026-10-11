@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
 import android.view.ViewGroup
@@ -77,6 +78,7 @@ import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
+import os.retinue.ara.wake.WakeAlert
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeRuntime
 import os.retinue.ara.web.NativeSpeech
@@ -95,7 +97,11 @@ import os.retinue.ara.web.configureShellWebView
 class MainActivity : ComponentActivity(), ShellHost {
 
     companion object {
-        /** Started by the wake detector: bring the shell up and dispatch `wake`. */
+        /**
+         * Started by the wake detector: bring the shell up and dispatch `wake`.
+         * Honoured only with the detector's one-time token
+         * ([WakeRuntime.EXTRA_WAKE_TOKEN]): the activity is exported.
+         */
         const val ACTION_WAKE = "os.retinue.ara.action.WAKE"
     }
 
@@ -119,10 +125,39 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
     private var isDefaultHome by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
+    private var fullScreenIntentAllowed by mutableStateOf(true)
 
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
-    private var wakeWhenReady = false
+
+    /** Asked for after the mic permission (two requests at once lose the second). */
+    private var askNotificationsAfterMic = false
+
+    /**
+     * An accepted wake the page has not had yet (elapsedRealtime when accepted,
+     * 0 for none): it waits until the page can open the mic (see [tryDeliverWake]).
+     */
+    private var pendingWakeAt = 0L
+    private var settingsLoaded = false
+    private var resumed = false
+
+    /** This instance's wake handler, so onDestroy clears only its own. */
+    private val onWakeHandler: () -> Unit = { acceptWake(fromIntent = false) }
+
+    private val keyguardCallback = object : KeyguardManager.KeyguardDismissCallback() {
+        override fun onDismissSucceeded() {
+            runOnUiThread { tryDeliverWake() }
+        }
+
+        override fun onDismissCancelled() {
+            // The user did not unlock: the wake is abandoned, the shell leaves the lock screen.
+            runOnUiThread { if (pendingWakeAt != 0L) endWake() }
+        }
+
+        override fun onDismissError() {
+            runOnUiThread { tryDeliverWake() }
+        }
+    }
 
     private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         deliverFiles(result)
@@ -131,10 +166,14 @@ class MainActivity : ComponentActivity(), ShellHost {
     private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         micGranted = granted
         pendingAudioRequest?.let { request ->
-            if (granted) request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else request.deny()
+            if (granted) grantAudio(request) else request.deny()
         }
         pendingAudioRequest = null
         WakeRuntime.refresh()
+        if (askNotificationsAfterMic) {
+            askNotificationsAfterMic = false
+            requestNotificationsIfNeeded()
+        }
     }
 
     private val notificationPermission =
@@ -158,7 +197,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         micGranted = hasMic()
 
         onBackPressedDispatcher.addCallback(this, backCallback)
-        WakeRuntime.onWake = { deliverWake() }
+        WakeRuntime.onWake = onWakeHandler
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
@@ -201,7 +240,7 @@ class MainActivity : ComponentActivity(), ShellHost {
             }
         }
 
-        handleIntent(intent, initial = true)
+        handleIntent(intent, initial = true, restored = savedInstanceState != null)
     }
 
     // --- Layout --------------------------------------------------------------
@@ -256,6 +295,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     modelMessage = message,
                     wakeStatus = wakeStatus,
                     micGranted = micGranted,
+                    fullScreenIntentAllowed = fullScreenIntentAllowed,
                 ),
                 actions = settingsActions,
             )
@@ -301,12 +341,13 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
 
         override fun setWakeMode(mode: WakeMode) {
-            if (mode != WakeMode.Off && !hasMic()) micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            if (mode == WakeMode.Always && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            val wantsNotifications = mode == WakeMode.Always
+            if (mode != WakeMode.Off && !hasMic()) {
+                // One request at a time: the notification request follows the mic's answer.
+                askNotificationsAfterMic = wantsNotifications
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            } else if (wantsNotifications) {
+                requestNotificationsIfNeeded()
             }
             viewModel.setWakeMode(mode)
         }
@@ -330,6 +371,24 @@ class MainActivity : ComponentActivity(), ShellHost {
                 Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
             }
         }
+
+        override fun allowFullScreenIntent() {
+            val intent = WakeAlert.fullScreenIntentSettings(this@MainActivity) ?: return
+            try {
+                startActivity(intent)
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun requestNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     // --- Lifecycle -----------------------------------------------------------
@@ -343,13 +402,26 @@ class MainActivity : ComponentActivity(), ShellHost {
         super.onResume()
         refreshHomeRole()
         micGranted = hasMic()
+        fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
         viewModel.refreshModels()
         webView?.onResume()
+        resumed = true
+        WakeRuntime.setShellResumed(true)
+        tryDeliverWake()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) tryDeliverWake()
     }
 
     override fun onPause() {
+        resumed = false
+        WakeRuntime.setShellResumed(false)
         webView?.onPause()
-        // Only a wake turns the screen on (see handleIntent).
+        // Only a wake shows the shell over the keyguard and turns the screen on
+        // (see acceptWake); a pending wake keeps waiting for the unlock.
+        setShowWhenLocked(false)
         setTurnScreenOn(false)
         super.onPause()
     }
@@ -360,7 +432,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     override fun onDestroy() {
-        if (WakeRuntime.onWake != null) WakeRuntime.onWake = null
+        if (WakeRuntime.onWake === onWakeHandler) WakeRuntime.onWake = null
         speech.shutdown()
         webView?.let { destroyWebView(it) }
         webView = null
@@ -376,18 +448,26 @@ class MainActivity : ComponentActivity(), ShellHost {
         handleIntent(intent, initial = false, alreadyInFront = alreadyInFront)
     }
 
-    private fun handleIntent(intent: Intent?, initial: Boolean, alreadyInFront: Boolean = false) {
-        val isWake = intent?.action == ACTION_WAKE
+    private fun handleIntent(
+        intent: Intent?,
+        initial: Boolean,
+        alreadyInFront: Boolean = false,
+        restored: Boolean = false,
+    ) {
+        val wakeAction = intent?.action == ACTION_WAKE
+        val fromHistory = intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        // The activity is exported: a wake counts only with the detector's fresh
+        // one-time token, and never when an old intent is replayed.
+        val isWake = wakeAction &&
+            !ShellDecisions.isReplayedIntent(restored, fromHistory) &&
+            WakeRuntime.consumePendingWake(intent?.getStringExtra(WakeRuntime.EXTRA_WAKE_TOKEN))
+        if (wakeAction && intent != null) {
+            // A recreated activity must not see this wake again.
+            setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).apply { removeExtra(WakeRuntime.EXTRA_WAKE_TOKEN) })
+        }
         val isHome = intent?.hasCategory(Intent.CATEGORY_HOME) == true
         when (ShellDecisions.onNewIntent(isWake, isHome, alreadyInFront && !initial)) {
-            ShellDecisions.IntentAction.Wake -> {
-                // Turn the screen on and ask for the keyguard to go, so the page
-                // can open the mic (it stops listening while hidden).
-                setTurnScreenOn(true)
-                getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, null)
-                closeOverlays()
-                if (initial) wakeWhenReady = true else deliverWake()
-            }
+            ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true)
             ShellDecisions.IntentAction.HomeEvent -> {
                 closeOverlays()
                 bridge.dispatchEvent("home")
@@ -404,6 +484,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     private fun applySettings(s: ShellSettings) {
         val aliasChanged = s.certificateAlias != settings.certificateAlias
         settings = s
+        settingsLoaded = true
         currentRouter = UrlRouter(s.baseUrl)
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
@@ -411,19 +492,81 @@ class MainActivity : ComponentActivity(), ShellHost {
             loadedBase = null
             showSettings = true
             webView?.loadUrl("about:blank")
+            tryDeliverWake()
             return
         }
         if (base != loadedBase || aliasChanged) {
             loadedBase = base
             bridge.install()
             pageReady = false
-            val target = if (wakeWhenReady) ShellUrls.wakeUrl(base) else ShellUrls.startUrl(base)
-            wakeWhenReady = false
-            webView?.loadUrl(target)
+            // A wake that can go to the page now loads the wake page directly.
+            val wakeNow = pendingWakeDecision() == ShellDecisions.PendingWake.Deliver
+            if (wakeNow) completeWake()
+            webView?.loadUrl(if (wakeNow) ShellUrls.wakeUrl(base) else ShellUrls.startUrl(base))
+        } else {
+            tryDeliverWake()
         }
     }
 
     // --- Wake / home ---------------------------------------------------------
+
+    /**
+     * A wake for this shell: from the detector directly ([fromIntent] false,
+     * the shell is visible) or through an intent that may have to turn the
+     * screen on and get past the keyguard first. It reaches the page once the
+     * page can open the mic ([tryDeliverWake]).
+     */
+    private fun acceptWake(fromIntent: Boolean) {
+        closeOverlays()
+        pendingWakeAt = SystemClock.elapsedRealtime()
+        WakeRuntime.wakeAccepted()
+        if (fromIntent) {
+            // Show over the keyguard, turn the screen on and ask for the unlock.
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, keyguardCallback)
+        }
+        tryDeliverWake()
+    }
+
+    private fun pendingWakeDecision(): ShellDecisions.PendingWake? {
+        val since = pendingWakeAt
+        if (since == 0L) return null
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        return ShellDecisions.pendingWake(
+            ageMs = SystemClock.elapsedRealtime() - since,
+            settingsLoaded = settingsLoaded,
+            resumed = resumed,
+            windowFocused = hasWindowFocus(),
+            keyguardLocked = keyguardLocked,
+        )
+    }
+
+    /** Hand a pending wake to the page if it can open the mic now (see [ShellDecisions.pendingWake]). */
+    private fun tryDeliverWake() {
+        when (pendingWakeDecision()) {
+            ShellDecisions.PendingWake.Deliver -> {
+                completeWake()
+                deliverWake()
+            }
+            ShellDecisions.PendingWake.Drop -> endWake()
+            ShellDecisions.PendingWake.Wait, null -> Unit
+        }
+    }
+
+    /** The pending wake goes to the page now (the caller delivers it). */
+    private fun completeWake() {
+        endWake()
+        // Restart the hold: the page takes the mic from here.
+        WakeRuntime.wakeAccepted()
+    }
+
+    /** No wake pending any more: the shell stops showing over the keyguard. */
+    private fun endWake() {
+        pendingWakeAt = 0L
+        setShowWhenLocked(false)
+        setTurnScreenOn(false)
+    }
 
     private fun deliverWake() {
         closeOverlays()
@@ -431,16 +574,15 @@ class MainActivity : ComponentActivity(), ShellHost {
         val onOrigin = pageReady && router.isConfiguredOrigin(webView?.url)
         when (ShellDecisions.wakeDelivery(base != null, onOrigin)) {
             ShellDecisions.WakeDelivery.DispatchEvent -> bridge.dispatchEvent("wake")
-            ShellDecisions.WakeDelivery.LoadWakeUrl -> {
-                if (base != null) {
-                    pageReady = false
-                    webView?.loadUrl(ShellUrls.wakeUrl(base))
-                } else {
-                    wakeWhenReady = true
-                }
-            }
+            ShellDecisions.WakeDelivery.LoadWakeUrl -> loadWakePage()
             ShellDecisions.WakeDelivery.OpenSettings -> showSettings = true
         }
+    }
+
+    private fun loadWakePage() {
+        val base = settings.base ?: return
+        pageReady = false
+        webView?.loadUrl(ShellUrls.wakeUrl(base))
     }
 
     private fun closeOverlays() {
@@ -621,12 +763,18 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     override fun onAudioPermission(request: PermissionRequest) {
         if (hasMic()) {
-            request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+            grantAudio(request)
         } else {
             pendingAudioRequest?.deny()
             pendingAudioRequest = request
             micPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    /** Close the wake mic first: the page is about to open its own. */
+    private fun grantAudio(request: PermissionRequest) {
+        WakeRuntime.pageMicGranted()
+        request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
     }
 
     override fun onRenderProcessGone() {

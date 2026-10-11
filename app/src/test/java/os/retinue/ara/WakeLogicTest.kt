@@ -3,12 +3,16 @@ package os.retinue.ara
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
+import os.retinue.ara.wake.Backoff
+import os.retinue.ara.wake.VoiceActivity
 import os.retinue.ara.wake.WakeFeatures
 import os.retinue.ara.wake.WakeGate
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeScorer
+import os.retinue.ara.wake.WakeTicket
 
 class WakeScorerTest {
 
@@ -220,5 +224,114 @@ class WakeFeaturesTest {
         f.push(ShortArray(1280)) { }
         // Second window is the first shifted by 8 frames.
         assertContentEquals(windows[0][8], windows[1][0])
+    }
+}
+
+class WakeTicketTest {
+
+    private var counter = 0
+    private fun ticket(maxAgeMs: Long = 30_000) = WakeTicket(maxAgeMs) { "token-${++counter}" }
+
+    @Test
+    fun acceptsTheIssuedTokenOnce() {
+        val t = ticket()
+        val token = t.issue(nowMs = 1_000)
+        assertTrue(t.consume(token, nowMs = 2_000))
+        assertFalse(t.consume(token, nowMs = 2_001))
+    }
+
+    @Test
+    fun refusesWithoutAWake() {
+        val t = ticket()
+        assertFalse(t.consume(null, nowMs = 0))
+        assertFalse(t.consume("token-1", nowMs = 0))
+    }
+
+    @Test
+    fun wrongTokensDoNotBurnThePendingOne() {
+        val t = ticket()
+        val token = t.issue(nowMs = 0)
+        assertFalse(t.consume(null, nowMs = 10))
+        assertFalse(t.consume("forged", nowMs = 10))
+        assertTrue(t.consume(token, nowMs = 20))
+    }
+
+    @Test
+    fun expiresAfterMaxAge() {
+        val t = ticket(maxAgeMs = 30_000)
+        val onTime = t.issue(nowMs = 0)
+        assertTrue(t.consume(onTime, nowMs = 30_000))
+        val late = t.issue(nowMs = 0)
+        assertFalse(t.consume(late, nowMs = 30_001))
+        // The expired token is used up too.
+        assertFalse(t.consume(late, nowMs = 30_002))
+    }
+
+    @Test
+    fun aNewWakeReplacesTheOldToken() {
+        val t = ticket()
+        val first = t.issue(nowMs = 0)
+        val second = t.issue(nowMs = 5)
+        assertFalse(t.consume(first, nowMs = 10))
+        assertTrue(t.consume(second, nowMs = 10))
+    }
+}
+
+class BackoffTest {
+
+    @Test
+    fun doublesUpToTheCapAndResets() {
+        val b = Backoff(initialMs = 30_000, maxMs = 100_000)
+        assertTrue(b.ready(0))
+        assertEquals(30_000L, b.failed(0))
+        assertFalse(b.ready(29_999))
+        assertTrue(b.ready(30_000))
+        assertEquals(90_000L, b.failed(30_000))
+        assertEquals(190_000L, b.failed(90_000))
+        assertEquals(290_000L, b.failed(190_000))
+        b.succeeded()
+        assertTrue(b.ready(190_001))
+        assertEquals(0L, b.retryAt)
+        assertEquals(230_000L, b.failed(200_000))
+    }
+}
+
+class VoiceActivityTest {
+
+    @Test
+    fun reportedActivityHoldsWithoutExpiry() {
+        val v = VoiceActivity(inferredMs = 10_000)
+        v.pageReported(true)
+        assertTrue(v.active(1_000_000))
+        assertNull(v.changesAt(0))
+        v.pageReported(false)
+        assertFalse(v.active(0))
+    }
+
+    @Test
+    fun aMicGrantCountsAsUseUntilReportedOrExpired() {
+        val v = VoiceActivity(inferredMs = 10_000)
+        v.micGranted(nowMs = 1_000)
+        assertTrue(v.active(1_000))
+        assertTrue(v.active(10_999))
+        assertEquals(11_000L, v.changesAt(5_000))
+        assertFalse(v.active(11_000))
+        assertNull(v.changesAt(11_000))
+    }
+
+    @Test
+    fun aReportReplacesTheInference() {
+        val v = VoiceActivity(inferredMs = 10_000)
+        v.micGranted(nowMs = 0)
+        v.pageReported(false)
+        assertFalse(v.active(1))
+        v.micGranted(nowMs = 0)
+        v.pageReported(true)
+        assertTrue(v.active(60_000))
+        // A grant while the page reports use leaves it in use.
+        v.micGranted(nowMs = 60_000)
+        assertTrue(v.active(200_000))
+        v.reset()
+        assertFalse(v.active(200_000))
     }
 }

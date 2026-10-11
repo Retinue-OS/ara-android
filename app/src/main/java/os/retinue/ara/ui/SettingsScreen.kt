@@ -65,6 +65,8 @@ data class SettingsState(
     val modelMessage: String?,
     val wakeStatus: WakeStatus,
     val micGranted: Boolean,
+    /** Android 14+: the wake alert may open the shell full-screen (see WakeAlert). */
+    val fullScreenIntentAllowed: Boolean,
 )
 
 /** What the settings screen can ask for. */
@@ -84,6 +86,7 @@ interface SettingsActions {
     fun downloadFeatureModels()
     fun downloadPhraseModel(url: String)
     fun pickPhraseModel()
+    fun allowFullScreenIntent()
 }
 
 /**
@@ -272,6 +275,12 @@ private fun WakeSection(state: SettingsState, actions: SettingsActions) {
     }
     if (state.settings.wakeMode != WakeMode.Off && !state.models.ready) {
         Text(stringResource(R.string.wake_needs_models), style = MaterialTheme.typography.bodySmall)
+    }
+    if (state.settings.wakeMode == WakeMode.Always && !state.fullScreenIntentAllowed) {
+        Text(stringResource(R.string.wake_full_screen_needed), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = actions::allowFullScreenIntent) {
+            Text(stringResource(R.string.wake_full_screen_allow))
+        }
     }
 
     var threshold by remember(state.settings.wakeThreshold) { mutableFloatStateOf(state.settings.wakeThreshold) }

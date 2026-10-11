@@ -13,10 +13,14 @@ import java.io.File
  * One listening session: opens the microphone (16 kHz mono PCM16), runs
  * openWakeWord's pipeline on a dedicated thread, and reports a detection. The
  * mic is held only between [start] and [stop]; [WakeRuntime] decides when.
+ * [stop] only signals: the thread lets go of the mic within one read (80 ms).
+ * A listener started right after another waits for [previous] to let go first,
+ * on its own thread, so the main thread never blocks on the audio thread.
  */
 class WakeListener(
     context: Context,
     private val threshold: Float,
+    private var previous: WakeListener? = null,
     private val onDetected: () -> Unit,
     private val onError: (String) -> Unit,
 ) {
@@ -25,7 +29,7 @@ class WakeListener(
     private val phraseFile: File = WakeModelFiles.phraseFile(context)
 
     @Volatile private var running = false
-    private var thread: Thread? = null
+    @Volatile private var thread: Thread? = null
 
     fun start() {
         if (running) return
@@ -36,14 +40,21 @@ class WakeListener(
         }
     }
 
-    /** Stop and release the mic; returns once the thread has let go of it. */
+    /** Stop and release the mic. Returns at once; the thread lets go of the mic shortly. */
     fun stop() {
         running = false
-        thread?.let { t ->
-            t.interrupt()
-            runCatching { t.join(1_000) }
+        thread?.interrupt()
+    }
+
+    /** Wait (off the main thread) until this listener's thread has released the mic. */
+    private fun awaitReleased(timeoutMs: Long) {
+        val t = thread ?: return
+        if (t === Thread.currentThread()) return
+        try {
+            t.join(timeoutMs)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
-        thread = null
     }
 
     // The caller (WakeRuntime) only starts a listener with RECORD_AUDIO granted.
@@ -52,6 +63,11 @@ class WakeListener(
         var models: OnnxWakeModels? = null
         var record: AudioRecord? = null
         try {
+            previous?.awaitReleased(1_000)
+            previous = null
+            // Clear an interrupt from stop(); `running` says whether to go on.
+            Thread.interrupted()
+            if (!running) return
             models = OnnxWakeModels(melFile, embeddingFile, phraseFile)
             val m = models
             val features = WakeFeatures(m::melspectrogram, m::embedding, m.keywordFrames)

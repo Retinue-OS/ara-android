@@ -106,3 +106,103 @@ object WakeGate {
     fun shouldStopService(mode: WakeMode, serviceRunning: Boolean): Boolean =
         serviceRunning && mode != WakeMode.Always
 }
+
+/**
+ * The one wake the detector has announced and the shell has not yet accepted.
+ * The wake action reaches an exported activity, so any app could send it; the
+ * activity honours it only with the token issued here, within [maxAgeMs]
+ * (long enough to unlock the phone or tap the notification). A token is good
+ * for one wake.
+ */
+class WakeTicket(
+    private val maxAgeMs: Long = 30_000L,
+    private val newToken: () -> String,
+) {
+    private var token: String? = null
+    private var issuedAtMs = 0L
+
+    /** Announce a wake at [nowMs]; returns the token to put into the wake intent. */
+    @Synchronized
+    fun issue(nowMs: Long): String {
+        val t = newToken()
+        token = t
+        issuedAtMs = nowMs
+        return t
+    }
+
+    /**
+     * True when [presented] is the pending token and still fresh; the token is
+     * then used up. A wrong token leaves the pending one alone.
+     */
+    @Synchronized
+    fun consume(presented: String?, nowMs: Long): Boolean {
+        val expected = token ?: return false
+        if (presented == null || !constantTimeEquals(expected, presented)) return false
+        token = null
+        val age = nowMs - issuedAtMs
+        return age in 0..maxAgeMs
+    }
+
+    private fun constantTimeEquals(a: String, b: String): Boolean =
+        java.security.MessageDigest.isEqual(a.toByteArray(), b.toByteArray())
+}
+
+/**
+ * Retry timing after a failure: the first retry after [initialMs], each further
+ * failure doubling the wait up to [maxMs]; a success starts over.
+ */
+class Backoff(private val initialMs: Long = 30_000L, private val maxMs: Long = 10 * 60_000L) {
+    private var delayMs = 0L
+    private var retryAtMs = 0L
+
+    /** A failure at [nowMs]; returns when the next attempt may be made. */
+    fun failed(nowMs: Long): Long {
+        delayMs = if (delayMs == 0L) initialMs else minOf(delayMs * 2, maxMs)
+        retryAtMs = nowMs + delayMs
+        return retryAtMs
+    }
+
+    fun succeeded() {
+        delayMs = 0L
+        retryAtMs = 0L
+    }
+
+    /** True when an attempt may be made at [nowMs]. */
+    fun ready(nowMs: Long): Boolean = nowMs >= retryAtMs
+
+    /** When the next attempt may be made (0 when it may be made now or never failed). */
+    val retryAt: Long get() = retryAtMs
+}
+
+/**
+ * Whether the web app is using the microphone, for [WakeGate]. What the page
+ * reports through `RetinueShell.setVoiceActive` holds until it reports again.
+ * A microphone grant to the page counts as use for [inferredMs] on its own, as
+ * the page may open the mic before (or without) reporting it.
+ */
+class VoiceActivity(private val inferredMs: Long = 10_000L) {
+    private var reported = false
+    private var inferredUntilMs = 0L
+
+    /** The page reported the mic in use or not; this replaces any inference. */
+    fun pageReported(active: Boolean) {
+        reported = active
+        inferredUntilMs = 0L
+    }
+
+    /** The page was just granted the microphone. */
+    fun micGranted(nowMs: Long) {
+        inferredUntilMs = nowMs + inferredMs
+    }
+
+    /** A new document: nothing of the old page's state carries over. */
+    fun reset() {
+        reported = false
+        inferredUntilMs = 0L
+    }
+
+    fun active(nowMs: Long): Boolean = reported || nowMs < inferredUntilMs
+
+    /** When [active] may change by itself (the inference ends), or null. */
+    fun changesAt(nowMs: Long): Long? = inferredUntilMs.takeIf { !reported && nowMs < it }
+}

@@ -9,8 +9,11 @@
     <!-- Wake mode "always": a foreground service of type microphone. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <!-- The ongoing wake notification (Android 13+ asks at runtime). -->
+    <!-- The ongoing wake notification and the wake alert (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- A wake heard in the background opens the shell through a full-screen
+         notification (Android 14+: the user allows it in the system settings). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -85,11 +88,13 @@
             </intent-filter>
         </activity>
 
-        <!-- Wake mode "always". Started only while the shell is visible. -->
+        <!-- Wake mode "always". Started only while the shell is in front. The
+             short-service type is only for leaving cleanly when the microphone
+             type is refused (see WakeService). -->
         <service
             android:name=".wake.WakeService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="microphone|shortService" />
 
     </application>
 

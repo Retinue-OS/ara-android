@@ -71,4 +71,45 @@ object ShellDecisions {
         pageLoadedOnOrigin -> WakeDelivery.DispatchEvent
         else -> WakeDelivery.LoadWakeUrl
     }
+
+    /**
+     * A wake intent that is not a new wake: the activity was recreated (saved
+     * state present) or the task was relaunched from Recents, which replays the
+     * intent that last started it.
+     */
+    fun isReplayedIntent(restored: Boolean, launchedFromHistory: Boolean): Boolean =
+        restored || launchedFromHistory
+
+    /** How long an accepted wake may wait for the shell to come up (screen on, unlock). */
+    const val PENDING_WAKE_MAX_MS = 60_000L
+
+    enum class PendingWake {
+        /** Hand the wake to the page now. */
+        Deliver,
+
+        /** Keep it: the page could not open the mic yet. */
+        Wait,
+
+        /** Too old: forget it (the user never got to the shell). */
+        Drop,
+    }
+
+    /**
+     * When an accepted wake reaches the page. The page opens the mic only while
+     * its document is visible, so the wake waits until the activity is resumed,
+     * its window has focus and the keyguard is gone — and until the settings
+     * are read, so an unconfigured base URL is not mistaken for a missing one.
+     */
+    fun pendingWake(
+        ageMs: Long,
+        settingsLoaded: Boolean,
+        resumed: Boolean,
+        windowFocused: Boolean,
+        keyguardLocked: Boolean,
+        maxAgeMs: Long = PENDING_WAKE_MAX_MS,
+    ): PendingWake = when {
+        ageMs > maxAgeMs -> PendingWake.Drop
+        settingsLoaded && resumed && windowFocused && !keyguardLocked -> PendingWake.Deliver
+        else -> PendingWake.Wait
+    }
 }
