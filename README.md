@@ -105,12 +105,15 @@ The web app detects the shell and talks to it through:
 - Shell → web events:
   `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))` with
   `type` `wake` (the phrase was heard) or `home` (Home pressed while Ara was
-  already in front). A wake while the page is not loaded loads `<base>/?wake=1`.
+  already in front). A wake while the page is not loaded loads `<base>/` and
+  dispatches `wake` once it has finished loading, so no wake flag lands in the
+  WebView history.
   The event is cancelable, and the shell checks whether the page handled it:
   the page script counts `retinue-shell` listeners on `window` (a page may also
   call `preventDefault()`). On a page of the origin without a listener (a
-  gateway page such as `/sends`), a wake loads `<base>/?wake=1` and Home loads
-  `<base>/` (Home on the start page leaves it alone).
+  gateway page such as `/sends`), a wake loads `<base>/?wake=1` (the web app
+  strips the flag with `history.replaceState` on load) and Home loads `<base>/`
+  (Home on the start page leaves it alone).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,

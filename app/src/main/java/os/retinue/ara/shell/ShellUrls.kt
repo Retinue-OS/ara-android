@@ -93,7 +93,12 @@ object ShellUrls {
     /** The page the shell opens on launch: the web app's home. */
     fun startUrl(base: String): String = "$base/"
 
-    /** The page a wake loads when the web app is not on screen (contract §4). */
+    /**
+     * The page a wake loads when the page on screen did not take the `wake`
+     * event (contract §4). The web app strips the flag with
+     * `history.replaceState` on load; a wake for a page that is not loaded goes
+     * to [startUrl] and the event instead, so no flag lands in the history.
+     */
     fun wakeUrl(base: String): String = "$base/?wake=1"
 
     /**

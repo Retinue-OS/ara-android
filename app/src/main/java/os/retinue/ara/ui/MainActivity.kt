@@ -118,6 +118,9 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var loadedBase: String? = null
     private var pageReady = false
 
+    /** Between onPageStarted and onPageFinished of the main frame. */
+    private var pageLoading = false
+
     // --- Native overlays -----------------------------------------------------
     private var showSettings by mutableStateOf(false)
     private var showDrawer by mutableStateOf(false)
@@ -138,8 +141,13 @@ class MainActivity : ComponentActivity(), ShellHost {
      * 0 for none): it waits until the page can open the mic (see [tryDeliverWake]).
      */
     private var pendingWakeAt = 0L
+
+    /** The pending wake has loaded the start page (once per wake) and waits for it. */
+    private var wakeLoadIssued = false
     private var settingsLoaded = false
     private var resumed = false
+
+    private val wakeExpiry = Runnable { tryDeliverWake() }
 
     /** This instance's wake handler, so onDestroy clears only its own. */
     private val onWakeHandler: () -> Unit = { acceptWake(fromIntent = false) }
@@ -433,6 +441,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     override fun onDestroy() {
         if (WakeRuntime.onWake === onWakeHandler) WakeRuntime.onWake = null
+        window.decorView.removeCallbacks(wakeExpiry)
         speech.shutdown()
         webView?.let { destroyWebView(it) }
         webView = null
@@ -499,10 +508,9 @@ class MainActivity : ComponentActivity(), ShellHost {
             loadedBase = base
             bridge.install()
             pageReady = false
-            // A wake that can go to the page now loads the wake page directly.
-            val wakeNow = pendingWakeDecision() == ShellDecisions.PendingWake.Deliver
-            if (wakeNow) completeWake()
-            webView?.loadUrl(if (wakeNow) ShellUrls.wakeUrl(base) else ShellUrls.startUrl(base))
+            // A pending wake waits for this load and goes out as the event (onPageFinished).
+            if (pendingWakeAt != 0L) wakeLoadIssued = true
+            webView?.loadUrl(ShellUrls.startUrl(base))
         } else {
             tryDeliverWake()
         }
@@ -520,6 +528,9 @@ class MainActivity : ComponentActivity(), ShellHost {
         closeOverlays()
         pendingWakeAt = SystemClock.elapsedRealtime()
         WakeRuntime.wakeAccepted()
+        // A wake still waiting when its window ends is dropped then, not on the next event.
+        window.decorView.removeCallbacks(wakeExpiry)
+        window.decorView.postDelayed(wakeExpiry, ShellDecisions.PENDING_WAKE_MAX_MS + 1)
         if (fromIntent) {
             // Show over the keyguard, turn the screen on and ask for the unlock.
             setShowWhenLocked(true)
@@ -545,16 +556,13 @@ class MainActivity : ComponentActivity(), ShellHost {
     /** Hand a pending wake to the page if it can open the mic now (see [ShellDecisions.pendingWake]). */
     private fun tryDeliverWake() {
         when (pendingWakeDecision()) {
-            ShellDecisions.PendingWake.Deliver -> {
-                completeWake()
-                deliverWake()
-            }
+            ShellDecisions.PendingWake.Deliver -> deliverWake()
             ShellDecisions.PendingWake.Drop -> endWake()
             ShellDecisions.PendingWake.Wait, null -> Unit
         }
     }
 
-    /** The pending wake goes to the page now (the caller delivers it). */
+    /** The pending wake goes to the page (or settings) now; the caller delivers it. */
     private fun completeWake() {
         endWake()
         // Restart the hold: the page takes the mic from here.
@@ -564,18 +572,38 @@ class MainActivity : ComponentActivity(), ShellHost {
     /** No wake pending any more: the shell stops showing over the keyguard. */
     private fun endWake() {
         pendingWakeAt = 0L
+        wakeLoadIssued = false
         setShowWhenLocked(false)
         setTurnScreenOn(false)
     }
 
+    /**
+     * A wake that may reach the page now. A page that is not loaded gets the
+     * start page first; the wake stays pending and goes out as the event once
+     * that page has finished loading ([onPageFinished]) — or is dropped when
+     * the pending-wake window runs out.
+     */
     private fun deliverWake() {
         closeOverlays()
         val base = settings.base
-        val onOrigin = pageReady && router.isConfiguredOrigin(webView?.url)
-        when (ShellDecisions.wakeDelivery(base != null, onOrigin)) {
-            ShellDecisions.WakeDelivery.DispatchEvent -> bridge.dispatchEvent("wake") { onUnhandledEvent(isWake = true) }
-            ShellDecisions.WakeDelivery.LoadWakeUrl -> loadWakePage()
-            ShellDecisions.WakeDelivery.OpenSettings -> showSettings = true
+        val url = webView?.url
+        val onOrigin = pageReady && router.isConfiguredOrigin(url)
+        val startLoading = wakeLoadIssued || (pageLoading && base != null && ShellUrls.isStartPage(base, url))
+        when (ShellDecisions.wakeDelivery(base != null, onOrigin, startLoading)) {
+            ShellDecisions.WakeDelivery.DispatchEvent -> {
+                completeWake()
+                bridge.dispatchEvent("wake") { onUnhandledEvent(isWake = true) }
+            }
+            ShellDecisions.WakeDelivery.LoadStartPage -> if (base != null) {
+                wakeLoadIssued = true
+                pageReady = false
+                webView?.loadUrl(ShellUrls.startUrl(base))
+            }
+            ShellDecisions.WakeDelivery.WaitForPage -> Unit
+            ShellDecisions.WakeDelivery.OpenSettings -> {
+                completeWake()
+                showSettings = true
+            }
         }
     }
 
@@ -585,7 +613,10 @@ class MainActivity : ComponentActivity(), ShellHost {
         webView?.loadUrl(ShellUrls.wakeUrl(base))
     }
 
-    /** The page did not take a `wake` or `home` event: go to the web app itself. */
+    /**
+     * The page did not take a `wake` or `home` event: go to the web app itself.
+     * A wake falls back to `?wake=1`, which the web app strips from its URL.
+     */
     private fun onUnhandledEvent(isWake: Boolean) {
         val base = settings.base ?: return
         when (ShellDecisions.onUnhandledEvent(isWake, ShellUrls.isStartPage(base, webView?.url))) {
@@ -721,6 +752,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     override fun onPageStarted(url: String?) {
         pageReady = false
+        pageLoading = true
         // A new document has no microphone open: never stay paused for a page that left.
         WakeRuntime.setVoiceActive(false)
         speech.reset()
@@ -729,7 +761,10 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     override fun onPageFinished(url: String?) {
         pageReady = router.isConfiguredOrigin(url)
+        pageLoading = false
         bridge.onPageFinished(url)
+        // A wake waiting for this page goes out now.
+        if (pendingWakeAt != 0L) tryDeliverWake()
     }
 
     override fun onUrlChanged(url: String?) {
@@ -795,6 +830,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         createWebView()
         bridge.install()
         pageReady = false
+        pageLoading = false
         settings.base?.let { webView?.loadUrl(ShellUrls.startUrl(it)) }
     }
 

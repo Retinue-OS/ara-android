@@ -40,9 +40,26 @@ class ShellDecisionsTest {
 
     @Test
     fun wakeDelivery() {
-        assertEquals(WakeDelivery.DispatchEvent, ShellDecisions.wakeDelivery(baseConfigured = true, pageLoadedOnOrigin = true))
-        assertEquals(WakeDelivery.LoadWakeUrl, ShellDecisions.wakeDelivery(baseConfigured = true, pageLoadedOnOrigin = false))
-        assertEquals(WakeDelivery.OpenSettings, ShellDecisions.wakeDelivery(baseConfigured = false, pageLoadedOnOrigin = false))
+        fun d(base: Boolean = true, loaded: Boolean = false, loading: Boolean = false) =
+            ShellDecisions.wakeDelivery(baseConfigured = base, pageLoadedOnOrigin = loaded, startPageLoading = loading)
+        assertEquals(WakeDelivery.DispatchEvent, d(loaded = true))
+        assertEquals(WakeDelivery.DispatchEvent, d(loaded = true, loading = true))
+        // Not loaded: the start page (no wake flag in the history), once.
+        assertEquals(WakeDelivery.LoadStartPage, d())
+        assertEquals(WakeDelivery.WaitForPage, d(loading = true))
+        assertEquals(WakeDelivery.OpenSettings, d(base = false))
+        assertEquals(WakeDelivery.OpenSettings, d(base = false, loaded = true, loading = true))
+    }
+
+    @Test
+    fun wakeWaitsForThePageItLoadedThenGoesOut() {
+        // The page-load path: accepted, start page loaded, waiting, then the event.
+        assertEquals(PendingWake.Deliver, ShellDecisions.pendingWake(1_000, true, true, true, false))
+        assertEquals(WakeDelivery.LoadStartPage, ShellDecisions.wakeDelivery(true, false, false))
+        assertEquals(WakeDelivery.WaitForPage, ShellDecisions.wakeDelivery(true, false, true))
+        assertEquals(WakeDelivery.DispatchEvent, ShellDecisions.wakeDelivery(true, true, true))
+        // A page that never comes up within the window: the wake is dropped.
+        assertEquals(PendingWake.Drop, ShellDecisions.pendingWake(ShellDecisions.PENDING_WAKE_MAX_MS + 1, true, true, true, false))
     }
 }
 

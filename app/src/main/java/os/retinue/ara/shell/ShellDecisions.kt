@@ -59,17 +59,30 @@ object ShellDecisions {
         /** The page is loaded on the configured origin: dispatch the `wake` event. */
         DispatchEvent,
 
-        /** Not loaded (or elsewhere): load `<base>/?wake=1`. */
-        LoadWakeUrl,
+        /**
+         * Not loaded (or elsewhere): load the start page — without a wake flag,
+         * so no `?wake=1` entry lands in the history — and keep the wake pending
+         * until the page has finished loading.
+         */
+        LoadStartPage,
+
+        /** The start page is already loading (for this wake or not): wait for it. */
+        WaitForPage,
 
         /** No base URL configured: open native settings instead. */
         OpenSettings,
     }
 
-    fun wakeDelivery(baseConfigured: Boolean, pageLoadedOnOrigin: Boolean): WakeDelivery = when {
+    /**
+     * How a wake that may go to the page now gets there. [startPageLoading] is
+     * true while the start page is loading — the shell loaded it for this wake
+     * (once per wake) or it was loading anyway — so it is not loaded again.
+     */
+    fun wakeDelivery(baseConfigured: Boolean, pageLoadedOnOrigin: Boolean, startPageLoading: Boolean): WakeDelivery = when {
         !baseConfigured -> WakeDelivery.OpenSettings
         pageLoadedOnOrigin -> WakeDelivery.DispatchEvent
-        else -> WakeDelivery.LoadWakeUrl
+        startPageLoading -> WakeDelivery.WaitForPage
+        else -> WakeDelivery.LoadStartPage
     }
 
     /**
@@ -117,7 +130,11 @@ object ShellDecisions {
         /** Load the web app's start page (a Home press). */
         LoadStart,
 
-        /** Load `<base>/?wake=1` (a wake). */
+        /**
+         * Load `<base>/?wake=1` (a wake): the fallback for a page that does not
+         * take the event. The web app opens the mic for the flag and strips it
+         * with `history.replaceState` on load.
+         */
         LoadWake,
 
         /** Leave the page alone. */
