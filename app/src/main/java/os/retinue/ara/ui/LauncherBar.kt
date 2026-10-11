@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -52,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import os.retinue.ara.R
 import os.retinue.ara.launcher.AppCatalog
@@ -60,6 +62,18 @@ import os.retinue.ara.launcher.LauncherLinks
 
 /** Height of the launcher bar (plan §1: about 64 dp, above the gesture inset). */
 val LauncherBarHeight = 68.dp
+
+/** Slot width bounds: slots share the bar's width evenly, and scroll only below the minimum. */
+private val SlotMinWidth = 60.dp
+private val SlotMaxWidth = 88.dp
+
+/**
+ * The width of one slot when [slots] share [available]: an even share, so a
+ * few entries fill the bar without gaps, but never narrower than a readable
+ * minimum (the entries scroll then) and never wider than the maximum.
+ */
+internal fun slotWidth(available: Dp, slots: Int): Dp =
+    (available / slots.coerceAtLeast(1)).coerceIn(SlotMinWidth, SlotMaxWidth)
 
 /**
  * The bottom launcher bar: the configured entries (scrolling horizontally when
@@ -78,53 +92,60 @@ fun LauncherBar(
     modifier: Modifier = Modifier,
 ) {
     Surface(modifier = modifier.fillMaxWidth(), tonalElevation = 3.dp) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // The entries plus "All apps".
+            val width = slotWidth(maxWidth, entries.size + 1)
             Row(
-                modifier = Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
             ) {
-                entries.forEachIndexed { index, entry ->
-                    var menu by remember(entry.id) { mutableStateOf(false) }
-                    Box {
-                        LauncherSlot(
-                            label = entry.label,
-                            icon = { EntryIcon(entry) },
-                            onClick = { onOpen(entry) },
-                            onLongClick = { menu = true },
-                        )
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
-                            if (index > 0) {
-                                MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
-                                    menu = false
-                                    onMove(entry, -1)
+                Row(
+                    modifier = Modifier.weight(1f, fill = false).fillMaxHeight().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    entries.forEachIndexed { index, entry ->
+                        var menu by remember(entry.id) { mutableStateOf(false) }
+                        Box {
+                            LauncherSlot(
+                                label = entry.label,
+                                icon = { EntryIcon(entry) },
+                                onClick = { onOpen(entry) },
+                                onLongClick = { menu = true },
+                                width = width,
+                            )
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
+                                if (index > 0) {
+                                    MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
+                                        menu = false
+                                        onMove(entry, -1)
+                                    }
                                 }
-                            }
-                            if (index < entries.lastIndex) {
-                                MenuItem(R.string.launcher_move_right, Icons.AutoMirrored.Filled.KeyboardArrowRight) {
-                                    menu = false
-                                    onMove(entry, 1)
+                                if (index < entries.lastIndex) {
+                                    MenuItem(R.string.launcher_move_right, Icons.AutoMirrored.Filled.KeyboardArrowRight) {
+                                        menu = false
+                                        onMove(entry, 1)
+                                    }
                                 }
+                                MenuItem(R.string.launcher_remove, Icons.Filled.Delete) { menu = false; onRemove(entry) }
+                                MenuItem(R.string.settings_title, Icons.Filled.Settings) { menu = false; onSettings() }
                             }
-                            MenuItem(R.string.launcher_remove, Icons.Filled.Delete) { menu = false; onRemove(entry) }
-                            MenuItem(R.string.settings_title, Icons.Filled.Settings) { menu = false; onSettings() }
                         }
                     }
                 }
-            }
-            var allMenu by remember { mutableStateOf(false) }
-            Box {
-                LauncherSlot(
-                    label = stringResource(R.string.launcher_all_apps),
-                    icon = { Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(30.dp)) },
-                    onClick = onAllApps,
-                    onLongClick = { allMenu = true },
-                )
-                DropdownMenu(expanded = allMenu, onDismissRequest = { allMenu = false }) {
-                    MenuItem(R.string.settings_title, Icons.Filled.Settings) { allMenu = false; onSettings() }
+                var allMenu by remember { mutableStateOf(false) }
+                Box {
+                    LauncherSlot(
+                        label = stringResource(R.string.launcher_all_apps),
+                        icon = { Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(30.dp)) },
+                        onClick = onAllApps,
+                        onLongClick = { allMenu = true },
+                        width = width,
+                    )
+                    DropdownMenu(expanded = allMenu, onDismissRequest = { allMenu = false }) {
+                        MenuItem(R.string.settings_title, Icons.Filled.Settings) { allMenu = false; onSettings() }
+                    }
                 }
             }
         }
@@ -148,10 +169,11 @@ fun LauncherSlot(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    width: Dp = 76.dp,
 ) {
     Column(
         modifier = modifier
-            .width(76.dp)
+            .width(width)
             .fillMaxHeight()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onClickLabel = label)
             .padding(vertical = 6.dp),
