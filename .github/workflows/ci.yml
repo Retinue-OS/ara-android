@@ -38,6 +38,15 @@ jobs:
       - name: Test the page-side shell script
         run: node app/src/test/js/retinue-shell.test.mjs
 
+      # The debug APK of every run, for installing a branch on a phone before it
+      # is merged (debug-signed, so it does not install over a nightly build).
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@v4
