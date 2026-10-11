@@ -24,17 +24,33 @@ import java.nio.FloatBuffer
 class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Closeable {
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val options = OrtSession.SessionOptions().apply {
-        setIntraOpNumThreads(1)
-        setInterOpNumThreads(1)
-    }
-    private val mel: OrtSession = env.createSession(melFile.absolutePath, options)
-    private val embed: OrtSession = env.createSession(embeddingFile.absolutePath, options)
-    private val keyword: OrtSession = env.createSession(keywordFile.absolutePath, options)
+    private val options: OrtSession.SessionOptions
+    private val mel: OrtSession
+    private val embed: OrtSession
+    private val keyword: OrtSession
 
-    private val melInput = mel.inputNames.first()
-    private val embedInput = embed.inputNames.first()
-    private val keywordInput = keyword.inputNames.first()
+    private val melInput: String
+    private val embedInput: String
+    private val keywordInput: String
+
+    init {
+        // A file that fails to load must not leak the sessions opened before it.
+        val opened = mutableListOf<AutoCloseable>()
+        try {
+            options = OrtSession.SessionOptions().also { opened += it }
+            options.setIntraOpNumThreads(1)
+            options.setInterOpNumThreads(1)
+            mel = env.createSession(melFile.absolutePath, options).also { opened += it }
+            embed = env.createSession(embeddingFile.absolutePath, options).also { opened += it }
+            keyword = env.createSession(keywordFile.absolutePath, options).also { opened += it }
+            melInput = mel.inputNames.first()
+            embedInput = embed.inputNames.first()
+            keywordInput = keyword.inputNames.first()
+        } catch (e: Throwable) {
+            opened.asReversed().forEach { runCatching { it.close() } }
+            throw e
+        }
+    }
 
     /** How many embeddings the keyword model reads (16 for the stock models). */
     val keywordFrames: Int = run {
@@ -77,6 +93,16 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
                 val out = FloatArray(buffer.remaining())
                 buffer.get(out)
                 return out
+            }
+        }
+    }
+
+    companion object {
+        /** Throws unless [file] loads as an ONNX model (used before a model replaces another). */
+        fun checkLoads(file: File) {
+            val env = OrtEnvironment.getEnvironment()
+            OrtSession.SessionOptions().use { options ->
+                env.createSession(file.absolutePath, options).close()
             }
         }
     }

@@ -14,6 +14,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.net.AraHttp
@@ -67,7 +68,12 @@ fun configureShellWebView(webView: WebView) {
 
 class ShellWebViewClient(private val context: Context, private val host: ShellHost) : WebViewClient() {
 
-    private val keyExecutor = Executors.newSingleThreadExecutor()
+    private companion object {
+        /** One thread for KeyChain lookups, shared by every WebView the shell creates. */
+        val keyExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "client-cert").apply { isDaemon = true }
+        }
+    }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()

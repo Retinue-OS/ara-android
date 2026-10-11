@@ -34,6 +34,7 @@ object WakeModelFiles {
 
     /** Refuse anything larger: the stock models are about 1.3 MB each. */
     private const val MAX_BYTES = 50L * 1024 * 1024
+    private const val MAX_REDIRECTS = 5
 
     fun dir(context: Context): File = File(context.filesDir, DIR).apply { mkdirs() }
     fun melFile(context: Context) = File(dir(context), MEL)
@@ -48,21 +49,48 @@ object WakeModelFiles {
 
     /** Download melspectrogram.onnx and embedding_model.onnx from the openWakeWord release. */
     suspend fun downloadFeatureModels(context: Context, settings: ShellSettings) {
-        download(context, settings, ShellSettings.MELSPECTROGRAM_URL, melFile(context))
-        download(context, settings, ShellSettings.EMBEDDING_URL, embeddingFile(context))
+        val mel = melFile(context)
+        val embedding = embeddingFile(context)
+        val melTmp = download(context, settings, ShellSettings.MELSPECTROGRAM_URL, mel)
+        try {
+            val embeddingTmp = download(context, settings, ShellSettings.EMBEDDING_URL, embedding)
+            try {
+                check(melTmp, embeddingTmp, phraseFile(context))
+                commit(melTmp, mel)
+                commit(embeddingTmp, embedding)
+            } finally {
+                embeddingTmp.delete()
+            }
+        } finally {
+            melTmp.delete()
+        }
     }
 
-    /** Download the phrase (keyword) model from [url], then check that it loads. */
+    /** Download the phrase (keyword) model from [url]; it replaces the old one only if it loads. */
     suspend fun downloadPhraseModel(context: Context, settings: ShellSettings, url: String) {
-        download(context, settings, url.trim(), phraseFile(context))
-        validate(context)
+        val dest = phraseFile(context)
+        val tmp = download(context, settings, url.trim(), dest)
+        try {
+            check(melFile(context), embeddingFile(context), tmp)
+            commit(tmp, dest)
+        } finally {
+            tmp.delete()
+        }
     }
 
-    /** Copy a phrase model the user picked (Storage Access Framework). */
-    suspend fun importPhraseModel(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
-        val input = context.contentResolver.openInputStream(uri) ?: throw IOException("The file could not be opened")
-        input.use { writeAtomically(it, phraseFile(context)) }
-        validate(context)
+    /** Copy a phrase model the user picked (Storage Access Framework); it replaces the old one only if it loads. */
+    suspend fun importPhraseModel(context: Context, uri: Uri) {
+        val dest = phraseFile(context)
+        val tmp = withContext(Dispatchers.IO) {
+            val input = context.contentResolver.openInputStream(uri) ?: throw IOException("The file could not be opened")
+            input.use { writeTemp(it, dest) }
+        }
+        try {
+            check(melFile(context), embeddingFile(context), tmp)
+            commit(tmp, dest)
+        } finally {
+            tmp.delete()
+        }
     }
 
     /**
@@ -79,23 +107,61 @@ object WakeModelFiles {
         }
     }
 
-    private suspend fun download(context: Context, settings: ShellSettings, url: String, dest: File) =
-        withContext(Dispatchers.IO) {
-            val scheme = UrlRouter.schemeOf(url)
-            if (scheme != "https" && scheme != "http") throw IOException("Not an http(s) URL: $url")
-            val request = Request.Builder().url(url).get().build()
-            clientFor(context, settings, url).newCall(request).execute().use { resp ->
-                if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} for $url")
-                val body = resp.body ?: throw IOException("Empty response for $url")
-                if (body.contentLength() > MAX_BYTES) throw IOException("File too large")
-                body.byteStream().use { writeAtomically(it, dest) }
+    /**
+     * Check candidate files before they replace anything: all three together
+     * when all are present, otherwise each present one on its own.
+     */
+    private suspend fun check(mel: File, embedding: File, phrase: File) = withContext(Dispatchers.IO) {
+        val files = listOf(mel, embedding, phrase)
+        try {
+            if (files.all { it.length() > 0 }) {
+                OnnxWakeModels(mel, embedding, phrase).close()
+            } else {
+                files.filter { it.length() > 0 }.forEach { OnnxWakeModels.checkLoads(it) }
             }
+        } catch (e: Exception) {
+            throw IOException("The model files could not be loaded: ${e.message}", e)
         }
+    }
+
+    /**
+     * Fetch [url] into a temporary file next to [dest] and return it (the
+     * caller checks it, then [commit]s or deletes it). A redirect from the
+     * client-certificate client is followed by hand: on the configured origin
+     * with the certificate, anywhere else without it.
+     */
+    private suspend fun download(context: Context, settings: ShellSettings, url: String, dest: File): File =
+        withContext(Dispatchers.IO) {
+            requireHttp(url)
+            var target = url
+            repeat(MAX_REDIRECTS + 1) {
+                val request = Request.Builder().url(target).get().build()
+                val location: String = clientFor(context, settings, target).newCall(request).execute().use { resp ->
+                    if (!resp.isRedirect) {
+                        if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} for $target")
+                        val body = resp.body ?: throw IOException("Empty response for $target")
+                        if (body.contentLength() > MAX_BYTES) throw IOException("File too large")
+                        return@withContext body.byteStream().use { writeTemp(it, dest) }
+                    }
+                    val header = resp.header("Location") ?: throw IOException("Redirect without a location for $target")
+                    resp.request.url.resolve(header)?.toString() ?: throw IOException("Bad redirect for $target")
+                }
+                requireHttp(location)
+                target = location
+            }
+            throw IOException("Too many redirects for $url")
+        }
+
+    private fun requireHttp(url: String) {
+        val scheme = UrlRouter.schemeOf(url)
+        if (scheme != "https" && scheme != "http") throw IOException("Not an http(s) URL: $url")
+    }
 
     /**
      * A model hosted on the configured Retinue origin (e.g. a trained "Hey
-     * Retinue") is fetched with the client certificate; anything else with a
-     * plain client.
+     * Retinue") is fetched with the client certificate — by a client that
+     * follows no redirects, so the certificate never goes to another host;
+     * anything else with a plain client.
      */
     private fun clientFor(context: Context, settings: ShellSettings, url: String): OkHttpClient {
         val alias = settings.certificateAlias
@@ -109,27 +175,33 @@ object WakeModelFiles {
             .build()
     }
 
-    private fun writeAtomically(input: InputStream, dest: File) {
+    /** Write [input] to `<dest>.part`; returns that file. Nothing of [dest] is touched. */
+    private fun writeTemp(input: InputStream, dest: File): File {
         val tmp = File(dest.parentFile, dest.name + ".part")
         var total = 0L
-        tmp.outputStream().use { out ->
-            val buf = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                total += n
-                if (total > MAX_BYTES) {
-                    tmp.delete()
-                    throw IOException("File too large")
+        try {
+            tmp.outputStream().use { out ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_BYTES) throw IOException("File too large")
+                    out.write(buf, 0, n)
                 }
-                out.write(buf, 0, n)
             }
-        }
-        if (total == 0L) {
+            if (total == 0L) throw IOException("The file is empty")
+        } catch (e: Exception) {
             tmp.delete()
-            throw IOException("The file is empty")
+            throw e
         }
+        return tmp
+    }
+
+    /** Replace [dest] with the checked [tmp] (a rename within the same directory). */
+    private fun commit(tmp: File, dest: File) {
         if (!tmp.renameTo(dest)) {
+            // Some file systems refuse to rename over an existing file.
             dest.delete()
             if (!tmp.renameTo(dest)) throw IOException("Could not store ${dest.name}")
         }

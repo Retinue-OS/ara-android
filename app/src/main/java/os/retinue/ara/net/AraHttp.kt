@@ -62,6 +62,10 @@ object AraHttp {
             .readTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .writeTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .retryOnConnectionFailure(false)
+            // The client certificate is for the configured origin only: never
+            // follow a redirect (callers follow same-origin ones themselves).
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 
