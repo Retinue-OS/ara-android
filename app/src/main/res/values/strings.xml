@@ -19,6 +19,13 @@
     <string name="launcher_uri">URI</string>
     <string name="launcher_path">Path in the web app</string>
 
+    <!-- Downloads the page starts. -->
+    <string name="download_started">Downloading %1$s…</string>
+    <string name="download_done">%1$s saved to Downloads</string>
+    <string name="download_failed">Could not download %1$s</string>
+    <string name="download_too_large">%1$s is too large to download here (over 200 MB)</string>
+    <string name="download_unsupported">This download cannot be saved by the shell.</string>
+
     <!-- App drawer. -->
     <string name="drawer_search">Search apps</string>
     <string name="drawer_hint">Tap to open, long-press to pin to the bar.</string>

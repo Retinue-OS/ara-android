@@ -84,6 +84,7 @@ import os.retinue.ara.wake.WakeRuntime
 import os.retinue.ara.web.NativeSpeech
 import os.retinue.ara.web.ShellBridge
 import os.retinue.ara.web.ShellChromeClient
+import os.retinue.ara.web.ShellDownloads
 import os.retinue.ara.web.ShellHost
 import os.retinue.ara.web.ShellIntents
 import os.retinue.ara.web.ShellWebViewClient
@@ -743,6 +744,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         configureShellWebView(view)
         view.webViewClient = ShellWebViewClient(this, this)
         view.webChromeClient = ShellChromeClient(this)
+        view.setDownloadListener(ShellDownloads(this, this))
         bridge = ShellBridge(this, view, { router }, ::onWebMessage)
         webView = view
     }

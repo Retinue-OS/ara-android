@@ -176,6 +176,11 @@ without one (and is asked again later). The same certificate is used for model
 downloads from the configured origin; that client follows no redirects itself,
 so a redirect to another host is fetched without the certificate.
 
+Files the page downloads from the configured origin are fetched the same way
+(with the WebView's cookies) into the phone's **Downloads** (MediaStore, up to
+200 MB, the name from `Content-Disposition` made safe); a redirect to another
+host, and any download from another origin, opens in the browser instead.
+
 ---
 
 ## Wake phrase
@@ -253,7 +258,6 @@ if it wakes too easily, lower it if it is hard to trigger.
 - **Web Push does not work inside Android WebView.** In the shell, push
   notifications still need the PWA installed in Chrome, or a follow-up
   (UnifiedPush, or a light poll of `/attention`).
-- **Downloads** started by the page are not handled by the shell.
 - With the phone **locked**, a wake in mode *Always* turns the screen on, shows
   Ara over the lock screen and asks to unlock; the wake reaches the web app
   (which then opens the mic) once the phone is unlocked. Without the
@@ -269,7 +273,8 @@ if it wakes too easily, lower it if it is hard to trigger.
 
 ```
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
-           ShellMessages                              decisions, the bridge wire format (unit-tested)
+           ShellMessages, FileNames                   decisions, the bridge wire format, download
+                                                      file names (unit-tested)
 launcher/  LauncherEntry, LauncherConfig            — pure: entry types, JSON codec, edits (unit-tested)
            AppCatalog                               — launchable apps and their icons
 wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic gate (unit-tested)
@@ -278,7 +283,8 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
            WakeListener, WakeRuntime, WakeService,  — mic thread, process-wide owner, foreground service,
            WakeModelFiles                             model download/import
 web/       ShellWebClients, ShellBridge,            — WebView setup and callbacks, the bridge,
-           NativeSpeech, ShellIntents                 TextToSpeech, intents to Android
+           NativeSpeech, ShellIntents,                TextToSpeech, intents to Android,
+           ShellDownloads                             page downloads into Downloads
 data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
 ui/        MainActivity, ShellViewModel,            — the Compose shell, settings, bar, drawer
