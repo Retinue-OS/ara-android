@@ -1,23 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Speech capture. -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- Retinue HTTPS calls and job polling. -->
+    <!-- The web app, model downloads. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- Foreground service that owns background job polling (data synchronization). -->
+    <!-- The web app's voice input (granted to the configured origin only) and the wake phrase. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Wake mode "always": a foreground service of type microphone. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <!-- Completion/active-job notifications. Runtime-requested on Android 13+. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- The ongoing wake notification (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- A microphone is required for the app's purpose but recognition degrades
-         gracefully if unavailable, so it is not marked strictly required. -->
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
+
+    <!-- Package visibility (Android 11+): the app drawer lists launchable apps,
+         and launcher links resolve their handlers. No QUERY_ALL_PACKAGES. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="sms" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
 
     <application
         android:name=".AraApp"
@@ -27,30 +60,36 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Ara">
 
-        <!-- The launcher label is "Ara" (see @string/app_name) so the user can say
-             "Hi Bixby, start Ara" and Bixby launches this activity by name.
-             singleTask: a Bixby relaunch resumes the existing instance rather than
-             stacking a new one, so persisted job/answer state is presented. -->
+        <!-- The shell. MAIN/LAUNCHER for the app list; MAIN/HOME/DEFAULT so Android
+             offers it as the default home app. singleTask: Home presses, launcher
+             taps and wakes reach the one instance (onNewIntent). The config
+             changes are handled in place so the WebView and its page survive
+             rotation, resizing and theme switches. -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale"
             android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
-        <!-- Background job-polling service. dataSync type is the correct category
-             for polling a network job to completion. stopWithTask=true ties its
-             lifetime to the task so a Recents swipe tears it down; onTaskRemoved
-             still runs first to cancel polling and clear notifications. -->
+        <!-- Wake mode "always". Started only while the shell is visible. -->
         <service
-            android:name=".service.PollingService"
+            android:name=".wake.WakeService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="true" />
+            android:foregroundServiceType="microphone" />
 
     </application>
 

@@ -1,27 +1,31 @@
 package os.retinue.ara
 
 import android.app.Application
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
-import os.retinue.ara.service.AraForeground
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import os.retinue.ara.data.AraStore
+import os.retinue.ara.wake.WakeRuntime
 
 /**
- * Maintains the process-level foreground flag the polling service reads to
- * decide whether a completed job should raise a background answer-ready
- * notification.
+ * Process start: wake detection follows the stored wake settings for as long as
+ * the process lives (the activity and the wake service come and go).
  */
 class AraApp : Application() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     override fun onCreate() {
         super.onCreate()
-        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
-            override fun onStart(owner: LifecycleOwner) {
-                AraForeground.inForeground = true
-            }
-
-            override fun onStop(owner: LifecycleOwner) {
-                AraForeground.inForeground = false
-            }
-        })
+        WakeRuntime.init(this)
+        scope.launch {
+            AraStore(this@AraApp).settings
+                .map { it.wakeMode to it.wakeThreshold }
+                .distinctUntilChanged()
+                .collect { (mode, threshold) -> WakeRuntime.configure(mode, threshold) }
+        }
     }
 }

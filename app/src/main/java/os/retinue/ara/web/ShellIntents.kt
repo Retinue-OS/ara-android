@@ -1,0 +1,128 @@
+package os.retinue.ara.web
+
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.util.Log
+import android.widget.Toast
+import java.net.URISyntaxException
+import os.retinue.ara.R
+import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.launcher.LauncherLinks
+import os.retinue.ara.launcher.LinkAction
+import os.retinue.ara.shell.Route
+import os.retinue.ara.shell.UrlRouter
+
+/**
+ * Everything the shell hands to Android: web links for the browser, other
+ * schemes, sanitized `intent:` URLs, and launcher entries.
+ */
+object ShellIntents {
+
+    private const val TAG = "ShellIntents"
+
+    /** Open an http(s) URL in the user's default browser. */
+    fun openInBrowser(context: Context, url: String): Boolean = start(
+        context,
+        Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE),
+    )
+
+    /** A non-http scheme from a page (`tel:`, `mailto:`, `geo:` …). */
+    fun openExternal(context: Context, url: String): Boolean = startLink(context, url)
+
+    /**
+     * An `intent:` URL, parsed with [Intent.URI_INTENT_SCHEME] and sanitized the
+     * way Chrome does: browsable only, no explicit component or selector (a page
+     * must not address a non-exported or arbitrary activity). When nothing
+     * handles it, `browser_fallback_url` is honoured through [router].
+     * Returns the fallback route the caller should carry out (Stay = load in view).
+     */
+    fun openIntentUrl(context: Context, url: String, router: UrlRouter): Route {
+        val intent = try {
+            Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+        } catch (e: URISyntaxException) {
+            Log.w(TAG, "bad intent URL", e)
+            return Route.Block
+        }
+        val fallback = intent.getStringExtra("browser_fallback_url")
+        sanitize(intent)
+        if (start(context, intent, toastOnFailure = false)) return Route.Block
+        val route = router.fallback(fallback)
+        if (route == Route.Block) toast(context)
+        return route
+    }
+
+    private fun sanitize(intent: Intent) {
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        intent.component = null
+        intent.selector = null
+        // Never let a page grant itself access to our content.
+        intent.flags = intent.flags and
+            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION).inv()
+    }
+
+    /** Start a launcher entry; WebPage entries are the caller's (they load in the WebView). */
+    fun launch(context: Context, entry: LauncherEntry, router: UrlRouter): Route = when (entry) {
+        is LauncherEntry.App -> {
+            launchApp(context, entry.packageName, entry.activityName)
+            Route.Block
+        }
+        is LauncherEntry.Link -> {
+            if (LauncherLinks.actionFor(entry.uri) == LinkAction.ParseIntent) {
+                openIntentUrl(context, entry.uri, router)
+            } else {
+                startLink(context, entry.uri)
+                Route.Block
+            }
+        }
+        is LauncherEntry.WebPage -> Route.Stay
+    }
+
+    fun launchApp(context: Context, packageName: String, activityName: String): Boolean {
+        val explicit = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .setComponent(ComponentName(packageName, activityName))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        if (start(context, explicit, toastOnFailure = false)) return true
+        // The activity moved in an update: fall back to the package's launch intent.
+        val byPackage = context.packageManager.getLaunchIntentForPackage(packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return if (byPackage != null) start(context, byPackage) else {
+            toast(context)
+            false
+        }
+    }
+
+    private fun startLink(context: Context, uri: String): Boolean {
+        val parsed = Uri.parse(uri.trim())
+        val intent = when (LauncherLinks.actionFor(uri)) {
+            LinkAction.Dial -> Intent(Intent.ACTION_DIAL, parsed)
+            LinkAction.SendTo -> Intent(Intent.ACTION_SENDTO, parsed)
+            LinkAction.ParseIntent -> return openIntentUrl(context, uri, UrlRouter(null)) == Route.Block
+            LinkAction.View -> Intent(Intent.ACTION_VIEW, parsed)
+        }
+        return start(context, intent)
+    }
+
+    private fun start(context: Context, intent: Intent, toastOnFailure: Boolean = true): Boolean {
+        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            context.startActivity(intent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            if (toastOnFailure) toast(context)
+            false
+        } catch (e: SecurityException) {
+            Log.w(TAG, "not allowed: $intent", e)
+            if (toastOnFailure) toast(context)
+            false
+        }
+    }
+
+    private fun toast(context: Context) {
+        Toast.makeText(context, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+    }
+}

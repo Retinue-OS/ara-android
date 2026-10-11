@@ -13,3 +13,8 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# The WebView bridge fallback (addJavascriptInterface) is called by name from JS.
+-keepclassmembers class os.retinue.ara.web.** {
+    @android.webkit.JavascriptInterface <methods>;
+}

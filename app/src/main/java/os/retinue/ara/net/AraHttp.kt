@@ -24,8 +24,10 @@ class CertificateUnavailableException(cause: Throwable?) :
     Exception("Selected client certificate is unavailable", cause)
 
 /**
- * Builds the OkHttp client used for every Retinue call, configured for mutual
- * TLS with a certificate the user selected from the Android KeyChain.
+ * Builds an OkHttp client configured for mutual TLS with a certificate the user
+ * selected from the Android KeyChain. The shell uses it for downloads from the
+ * configured Retinue origin (e.g. a phrase model hosted there); the WebView
+ * presents the same certificate through [clientKey].
  *
  * Security posture (per spec):
  *  - the private key and chain are fetched from KeyChain by alias — never
@@ -46,20 +48,7 @@ object AraHttp {
     fun build(context: Context, alias: String?, requestTimeoutMs: Long): OkHttpClient {
         if (alias == null) throw MissingCertificateException()
 
-        val chain: Array<X509Certificate>
-        val key: PrivateKey
-        try {
-            chain = KeyChain.getCertificateChain(context, alias)
-                ?: throw CertificateUnavailableException(null)
-            key = KeyChain.getPrivateKey(context, alias)
-                ?: throw CertificateUnavailableException(null)
-        } catch (e: CertificateUnavailableException) {
-            throw e
-        } catch (e: Exception) {
-            // KeyChainException / InterruptedException / IllegalStateException
-            throw CertificateUnavailableException(e)
-        }
-
+        val (key, chain) = clientKey(context, alias)
         val keyManager = FixedClientKeyManager(alias, chain, key)
         val trustManager = defaultTrustManager()
         val sslContext = SSLContext.getInstance("TLS").apply {
@@ -68,13 +57,34 @@ object AraHttp {
 
         return OkHttpClient.Builder()
             .sslSocketFactory(sslContext.socketFactory, trustManager)
-            // Per-request timeout from settings, applied to each poll/submit call.
             .callTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .connectTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .readTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .writeTimeout(requestTimeoutMs, TimeUnit.MILLISECONDS)
             .retryOnConnectionFailure(false)
             .build()
+    }
+
+    /**
+     * The private key and certificate chain stored under [alias] in the Android
+     * KeyChain — what both this OkHttp client and the WebView's client-certificate
+     * callback present. Blocks: never call on the main thread.
+     *
+     * @throws CertificateUnavailableException when the alias no longer resolves.
+     */
+    fun clientKey(context: Context, alias: String): Pair<PrivateKey, Array<X509Certificate>> {
+        try {
+            val chain = KeyChain.getCertificateChain(context, alias)
+                ?: throw CertificateUnavailableException(null)
+            val key = KeyChain.getPrivateKey(context, alias)
+                ?: throw CertificateUnavailableException(null)
+            return key to chain
+        } catch (e: CertificateUnavailableException) {
+            throw e
+        } catch (e: Exception) {
+            // KeyChainException / InterruptedException / IllegalStateException
+            throw CertificateUnavailableException(e)
+        }
     }
 
     private fun defaultTrustManager(): X509TrustManager {
