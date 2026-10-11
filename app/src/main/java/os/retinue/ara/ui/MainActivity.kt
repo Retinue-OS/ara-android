@@ -244,6 +244,10 @@ class MainActivity : ComponentActivity(), ShellHost {
                             onLaunch = ::launchApp,
                             onPin = ::pinApp,
                             onDismiss = { showDrawer = false },
+                            onSettings = {
+                                showDrawer = false
+                                openSettings()
+                            },
                         )
                     }
                     if (showSettings) SettingsOverlay(launcher)
