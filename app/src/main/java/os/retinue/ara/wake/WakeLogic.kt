@@ -96,15 +96,16 @@ object WakeGate {
     }
 
     /**
-     * Whether the foreground service should run: only in [WakeMode.Always], and
-     * it may only be *started* while the shell is visible (Android 14 refuses a
-     * microphone foreground service started from the background).
+     * Whether the foreground service should run: only in [WakeMode.Always] with
+     * the models present (without them it could never listen), and it may only
+     * be *started* while the shell is visible (Android 14 refuses a microphone
+     * foreground service started from the background).
      */
-    fun shouldStartService(mode: WakeMode, shellVisible: Boolean, serviceRunning: Boolean): Boolean =
-        mode == WakeMode.Always && shellVisible && !serviceRunning
+    fun shouldStartService(mode: WakeMode, shellVisible: Boolean, serviceRunning: Boolean, modelsReady: Boolean): Boolean =
+        mode == WakeMode.Always && modelsReady && shellVisible && !serviceRunning
 
-    fun shouldStopService(mode: WakeMode, serviceRunning: Boolean): Boolean =
-        serviceRunning && mode != WakeMode.Always
+    fun shouldStopService(mode: WakeMode, serviceRunning: Boolean, modelsReady: Boolean): Boolean =
+        serviceRunning && (mode != WakeMode.Always || !modelsReady)
 }
 
 /**

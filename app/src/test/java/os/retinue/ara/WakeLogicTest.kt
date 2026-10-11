@@ -108,14 +108,22 @@ class WakeGateTest {
 
     @Test
     fun serviceLifecycle() {
-        assertTrue(WakeGate.shouldStartService(WakeMode.Always, shellVisible = true, serviceRunning = false))
-        assertFalse(WakeGate.shouldStartService(WakeMode.Always, shellVisible = false, serviceRunning = false))
-        assertFalse(WakeGate.shouldStartService(WakeMode.Always, shellVisible = true, serviceRunning = true))
-        assertFalse(WakeGate.shouldStartService(WakeMode.WhileVisible, shellVisible = true, serviceRunning = false))
-        assertTrue(WakeGate.shouldStopService(WakeMode.Off, serviceRunning = true))
-        assertTrue(WakeGate.shouldStopService(WakeMode.WhileVisible, serviceRunning = true))
-        assertFalse(WakeGate.shouldStopService(WakeMode.Always, serviceRunning = true))
-        assertFalse(WakeGate.shouldStopService(WakeMode.Off, serviceRunning = false))
+        fun start(mode: WakeMode = WakeMode.Always, visible: Boolean = true, running: Boolean = false, models: Boolean = true) =
+            WakeGate.shouldStartService(mode, shellVisible = visible, serviceRunning = running, modelsReady = models)
+        fun stop(mode: WakeMode = WakeMode.Always, running: Boolean = true, models: Boolean = true) =
+            WakeGate.shouldStopService(mode, serviceRunning = running, modelsReady = models)
+        assertTrue(start())
+        assertFalse(start(visible = false))
+        assertFalse(start(running = true))
+        assertFalse(start(mode = WakeMode.WhileVisible))
+        // Without models the service could never listen: not started, and stopped.
+        assertFalse(start(models = false))
+        assertTrue(stop(mode = WakeMode.Off))
+        assertTrue(stop(mode = WakeMode.WhileVisible))
+        assertFalse(stop())
+        assertTrue(stop(models = false))
+        assertFalse(stop(mode = WakeMode.Off, running = false))
+        assertFalse(stop(running = false, models = false))
     }
 
     @Test
@@ -219,7 +227,7 @@ class WakeFeaturesTest {
     }
 
     @Test
-    fun windowRowsAreIndependentCopies() {
+    fun consecutiveWindowsShiftByEightMelFrames() {
         val f = WakeFeatures(fakeMel, fakeEmbed, embeddingFrames = 1)
         f.push(ShortArray(1280)) { }
         f.push(ShortArray(1280)) { }

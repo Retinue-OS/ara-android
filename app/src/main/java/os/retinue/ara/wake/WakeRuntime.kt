@@ -203,15 +203,16 @@ object WakeRuntime {
         val now = SystemClock.elapsedRealtime()
 
         val mic = micGranted()
+        val models = WakeModelFiles.status(app).ready
 
         // A mic error is retried with a backoff, without a settings change.
         if (lastError != null && micBackoff.ready(now)) lastError = null
 
-        if (WakeGate.shouldStopService(mode, serviceRunning)) {
+        if (WakeGate.shouldStopService(mode, serviceRunning, models)) {
             app.stopService(Intent(app, WakeService::class.java))
         } else if (!serviceRequested && mic && serviceBackoff.ready(now) &&
             // Android 14 lets a microphone service start only from the foreground.
-            WakeGate.shouldStartService(mode, shellResumed, serviceRunning)
+            WakeGate.shouldStartService(mode, shellResumed, serviceRunning, models)
         ) {
             serviceRequested = true
             try {
@@ -226,7 +227,6 @@ object WakeRuntime {
 
         val voiceActive = voice.active(now)
         _voiceActive.value = voiceActive
-        val models = WakeModelFiles.status(app).ready
         val listen = lastError == null && WakeGate.shouldListen(
             WakeGate.Inputs(
                 mode = mode,

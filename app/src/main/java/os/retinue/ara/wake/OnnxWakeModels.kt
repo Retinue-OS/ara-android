@@ -33,6 +33,9 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
     private val embedInput: String
     private val keywordInput: String
 
+    /** How many embeddings the keyword model reads (16 for the stock models). */
+    val keywordFrames: Int
+
     init {
         // A file that fails to load must not leak the sessions opened before it.
         val opened = mutableListOf<AutoCloseable>()
@@ -46,18 +49,16 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
             melInput = mel.inputNames.first()
             embedInput = embed.inputNames.first()
             keywordInput = keyword.inputNames.first()
+            keywordFrames = run {
+                val info = keyword.inputInfo[keywordInput]?.info as? TensorInfo
+                val shape = info?.shape
+                val n = if (shape != null && shape.size >= 2) shape[1] else -1L
+                if (n > 0) n.toInt() else 16
+            }
         } catch (e: Throwable) {
             opened.asReversed().forEach { runCatching { it.close() } }
             throw e
         }
-    }
-
-    /** How many embeddings the keyword model reads (16 for the stock models). */
-    val keywordFrames: Int = run {
-        val info = keyword.inputInfo[keywordInput]?.info as? TensorInfo
-        val shape = info?.shape
-        val n = if (shape != null && shape.size >= 2) shape[1] else -1L
-        if (n > 0) n.toInt() else 16
     }
 
     /** Mel frames (each [WakeFeatures.MEL_BINS] values, untransformed) for raw samples. */
