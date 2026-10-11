@@ -72,6 +72,7 @@
     <string name="wake_status_idle">Not listening.</string>
     <string name="wake_status_listening">Listening for the wake phrase.</string>
     <string name="wake_status_paused">Paused while the web app uses the microphone.</string>
+    <string name="wake_status_paused_other_app">Paused while another app uses the microphone.</string>
     <string name="wake_status_error">Wake detection stopped: %1$s</string>
     <string name="wake_needs_mic">Microphone permission is needed.</string>
     <string name="wake_needs_models">Download the feature models and a phrase model first.</string>

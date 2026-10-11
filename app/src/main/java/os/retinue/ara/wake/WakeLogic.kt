@@ -85,12 +85,15 @@ object WakeGate {
         val modelsReady: Boolean,
         val nowMs: Long,
         val holdUntilMs: Long,
+        /** Another app records (or Android silenced ours for one): the mic is theirs. */
+        val otherAppRecording: Boolean = false,
     )
 
     fun shouldListen(i: Inputs): Boolean {
         if (i.mode == WakeMode.Off) return false
         if (!i.micPermission || !i.modelsReady) return false
         if (i.voiceActive) return false
+        if (i.otherAppRecording) return false
         if (i.nowMs < i.holdUntilMs) return false
         return i.shellVisible || (i.mode == WakeMode.Always && i.serviceRunning)
     }
@@ -206,4 +209,35 @@ class VoiceActivity(private val inferredMs: Long = 10_000L) {
 
     /** When [active] may change by itself (the inference ends), or null. */
     fun changesAt(nowMs: Long): Long? = inferredUntilMs.takeIf { !reported && nowMs < it }
+}
+
+/**
+ * Yielding the microphone to other apps. Android lets several apps record at
+ * once but gives the audio to one of them (and some devices refuse a second
+ * recording outright), so the wake listener steps aside whenever another app
+ * records, or whenever Android silences the listener. It comes back only after
+ * the other recording has been gone for [resumeAfterMs], so a voice message
+ * recorded in several takes does not see the mic flap between them.
+ */
+class MicYield(private val resumeAfterMs: Long = 3_000L) {
+    private var othersActive = false
+    private var freeSinceMs = 0L
+
+    /**
+     * The active recordings changed at [nowMs]: [othersRecording] is true when
+     * any recording but the listener's own is active, or the listener's own is
+     * silenced in favour of another.
+     */
+    fun recordingsChanged(othersRecording: Boolean, nowMs: Long) {
+        if (othersActive && !othersRecording) freeSinceMs = nowMs
+        othersActive = othersRecording
+    }
+
+    /** True while the mic belongs to another app (including the grace time after it let go). */
+    fun yielding(nowMs: Long): Boolean =
+        othersActive || (freeSinceMs != 0L && nowMs < freeSinceMs + resumeAfterMs)
+
+    /** When [yielding] ends by itself, or null. */
+    fun changesAt(nowMs: Long): Long? =
+        (freeSinceMs + resumeAfterMs).takeIf { !othersActive && freeSinceMs != 0L && nowMs < it }
 }

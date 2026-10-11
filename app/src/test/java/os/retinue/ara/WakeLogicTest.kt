@@ -8,6 +8,7 @@ import kotlin.test.assertTrue
 import org.junit.Test
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.wake.Backoff
+import os.retinue.ara.wake.MicYield
 import os.retinue.ara.wake.VoiceActivity
 import os.retinue.ara.wake.WakeFeatures
 import os.retinue.ara.wake.WakeGate
@@ -352,5 +353,44 @@ class VoiceActivityTest {
         assertTrue(v.active(200_000))
         v.reset()
         assertFalse(v.active(200_000))
+    }
+}
+
+class MicYieldTest {
+
+    @Test
+    fun yieldsWhileAnotherAppRecordsAndForAGraceTimeAfter() {
+        val y = MicYield(resumeAfterMs = 3_000)
+        assertFalse(y.yielding(0))
+        y.recordingsChanged(othersRecording = true, nowMs = 1_000)
+        assertTrue(y.yielding(1_000))
+        assertNull(y.changesAt(1_000))
+        y.recordingsChanged(othersRecording = false, nowMs = 5_000)
+        assertTrue(y.yielding(7_999))
+        assertEquals(8_000L, y.changesAt(6_000))
+        assertFalse(y.yielding(8_000))
+        assertNull(y.changesAt(8_000))
+    }
+
+    @Test
+    fun aNewRecordingDuringTheGraceTimeYieldsAgain() {
+        val y = MicYield(resumeAfterMs = 3_000)
+        y.recordingsChanged(true, 0)
+        y.recordingsChanged(false, 1_000)
+        y.recordingsChanged(true, 2_000)
+        assertTrue(y.yielding(10_000))
+        y.recordingsChanged(false, 10_000)
+        assertTrue(y.yielding(12_999))
+        assertFalse(y.yielding(13_000))
+    }
+
+    @Test
+    fun theGateDoesNotListenWhileAnotherAppRecords() {
+        val i = WakeGate.Inputs(
+            mode = WakeMode.Always, shellVisible = false, serviceRunning = true, voiceActive = false,
+            micPermission = true, modelsReady = true, nowMs = 0, holdUntilMs = 0,
+        )
+        assertTrue(WakeGate.shouldListen(i))
+        assertFalse(WakeGate.shouldListen(i.copy(otherAppRecording = true)))
     }
 }

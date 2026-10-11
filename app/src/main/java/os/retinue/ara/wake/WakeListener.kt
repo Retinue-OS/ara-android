@@ -23,6 +23,12 @@ class WakeListener(
     private var previous: WakeListener? = null,
     private val onDetected: () -> Unit,
     private val onError: (String) -> Unit,
+    /**
+     * The listener's recording is about to start ([onRecording]) and was
+     * released ([onReleased]), with its audio session id; from the audio thread.
+     */
+    private val onRecording: (Int) -> Unit = {},
+    private val onReleased: (Int) -> Unit = {},
 ) {
     private val melFile: File = WakeModelFiles.melFile(context)
     private val embeddingFile: File = WakeModelFiles.embeddingFile(context)
@@ -89,6 +95,8 @@ class WakeListener(
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 throw IllegalStateException("The microphone could not be opened")
             }
+            // Announced before it starts, so its own recording never counts as another app's.
+            onRecording(record.audioSessionId)
             record.startRecording()
             val buf = ShortArray(WakeFeatures.CHUNK)
             while (running) {
@@ -112,8 +120,10 @@ class WakeListener(
             }
         } finally {
             record?.let {
+                val sessionId = it.audioSessionId
                 runCatching { it.stop() }
                 runCatching { it.release() }
+                onReleased(sessionId)
             }
             models?.close()
         }

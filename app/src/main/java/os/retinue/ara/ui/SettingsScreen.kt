@@ -282,6 +282,7 @@ private fun WakeSection(state: SettingsState, actions: SettingsActions) {
             WakeStatus.Idle -> stringResource(R.string.wake_status_idle)
             WakeStatus.Listening -> stringResource(R.string.wake_status_listening)
             WakeStatus.PausedForVoice -> stringResource(R.string.wake_status_paused)
+            WakeStatus.PausedForOtherApp -> stringResource(R.string.wake_status_paused_other_app)
             is WakeStatus.Error -> stringResource(R.string.wake_status_error, s.message)
         },
         style = MaterialTheme.typography.bodyMedium,

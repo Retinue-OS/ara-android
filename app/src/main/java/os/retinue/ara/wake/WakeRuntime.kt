@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -22,6 +24,7 @@ sealed class WakeStatus {
     data object Idle : WakeStatus()
     data object Listening : WakeStatus()
     data object PausedForVoice : WakeStatus()
+    data object PausedForOtherApp : WakeStatus()
     data class Error(val message: String) : WakeStatus()
 }
 
@@ -76,6 +79,21 @@ object WakeRuntime {
     }
 
     private val voice = VoiceActivity()
+
+    /** Another app records: the listener lets go of the mic (see [MicYield]). */
+    private val micYield = MicYield()
+
+    /**
+     * Audio sessions of the listeners' recordings, from just before they start
+     * until they are released, to tell them apart from other apps'.
+     */
+    private val ownSessions = mutableSetOf<Int>()
+
+    private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
+        override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+            recordingsChanged(configs)
+        }
+    }
     private val _voiceActive = MutableStateFlow(false)
 
     /**
@@ -99,7 +117,23 @@ object WakeRuntime {
     fun init(context: Context) {
         app = context.applicationContext
         // SoundPool loads asynchronously: load the chime now so a wake can play it.
-        if (chime == null) chime = Chime(app)
+        if (chime == null) {
+            chime = Chime(app)
+            app.getSystemService(AudioManager::class.java)?.registerAudioRecordingCallback(recordingCallback, main)
+        }
+    }
+
+    /**
+     * The active recordings changed (main thread). Any recording that is not
+     * the listener's own, or the listener's own silenced by Android in favour
+     * of another app, means the mic belongs to someone else now.
+     */
+    private fun recordingsChanged(configs: List<AudioRecordingConfiguration>) {
+        val others = configs.any { c ->
+            if (c.clientAudioSessionId in ownSessions) c.isClientSilenced else true
+        }
+        micYield.recordingsChanged(others, SystemClock.elapsedRealtime())
+        evaluate()
     }
 
     fun configure(mode: WakeMode, threshold: Float) = onMain {
@@ -237,6 +271,7 @@ object WakeRuntime {
                 modelsReady = models,
                 nowMs = now,
                 holdUntilMs = holdUntilMs,
+                otherAppRecording = micYield.yielding(now),
             ),
         )
         if (listen) startListener() else stopListener()
@@ -246,6 +281,7 @@ object WakeRuntime {
             error != null -> WakeStatus.Error(error)
             listen -> WakeStatus.Listening
             mode != WakeMode.Off && voiceActive -> WakeStatus.PausedForVoice
+            mode != WakeMode.Off && micYield.yielding(now) -> WakeStatus.PausedForOtherApp
             else -> WakeStatus.Idle
         }
 
@@ -253,6 +289,7 @@ object WakeRuntime {
         val next = listOfNotNull(
             holdUntilMs.takeIf { it > now },
             voice.changesAt(now),
+            micYield.changesAt(now),
             micBackoff.retryAt.takeIf { error != null && it > now },
             serviceBackoff.retryAt.takeIf { mode == WakeMode.Always && !serviceRunning && it > now },
         ).minOrNull()
@@ -279,6 +316,9 @@ object WakeRuntime {
                     }
                 }
             },
+            // Posted before the recording starts, so it is handled before the callback reporting it.
+            onRecording = { sessionId -> main.post { ownSessions.add(sessionId) } },
+            onReleased = { sessionId -> main.post { ownSessions.remove(sessionId) } },
         ).also { it.start() }
     }
 
