@@ -86,11 +86,21 @@ object ShellMessages {
         }
     }
 
-    /** `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))`. */
+    /**
+     * `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))`.
+     * The script evaluates to whether the page handled the event: it called
+     * `preventDefault()` on it, or it has a `retinue-shell` listener (counted by
+     * assets/retinue-shell.js). See [eventHandled].
+     */
     fun eventScript(type: String): String {
         val detail = buildJsonObject { put("type", type) }
-        return "window.dispatchEvent(new CustomEvent('$EVENT',{detail:$detail}));"
+        return "(function(){var e=new CustomEvent('$EVENT',{detail:$detail,cancelable:true});" +
+            "window.dispatchEvent(e);" +
+            "return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();"
     }
+
+    /** The result of [eventScript] as `evaluateJavascript` reports it (JSON). */
+    fun eventHandled(result: String?): Boolean = result?.trim() == "true"
 
     /** Deliver an internal message to the page-side shim (speech events, voices). */
     fun receiveScript(message: JsonObject): String =

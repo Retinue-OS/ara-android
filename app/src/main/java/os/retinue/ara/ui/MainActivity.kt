@@ -470,7 +470,7 @@ class MainActivity : ComponentActivity(), ShellHost {
             ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true)
             ShellDecisions.IntentAction.HomeEvent -> {
                 closeOverlays()
-                bridge.dispatchEvent("home")
+                bridge.dispatchEvent("home") { onUnhandledEvent(isWake = false) }
             }
             ShellDecisions.IntentAction.Show -> if (isHome) {
                 showDrawer = false
@@ -573,7 +573,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         val base = settings.base
         val onOrigin = pageReady && router.isConfiguredOrigin(webView?.url)
         when (ShellDecisions.wakeDelivery(base != null, onOrigin)) {
-            ShellDecisions.WakeDelivery.DispatchEvent -> bridge.dispatchEvent("wake")
+            ShellDecisions.WakeDelivery.DispatchEvent -> bridge.dispatchEvent("wake") { onUnhandledEvent(isWake = true) }
             ShellDecisions.WakeDelivery.LoadWakeUrl -> loadWakePage()
             ShellDecisions.WakeDelivery.OpenSettings -> showSettings = true
         }
@@ -583,6 +583,19 @@ class MainActivity : ComponentActivity(), ShellHost {
         val base = settings.base ?: return
         pageReady = false
         webView?.loadUrl(ShellUrls.wakeUrl(base))
+    }
+
+    /** The page did not take a `wake` or `home` event: go to the web app itself. */
+    private fun onUnhandledEvent(isWake: Boolean) {
+        val base = settings.base ?: return
+        when (ShellDecisions.onUnhandledEvent(isWake, ShellUrls.isStartPage(base, webView?.url))) {
+            ShellDecisions.UnhandledEvent.LoadWake -> loadWakePage()
+            ShellDecisions.UnhandledEvent.LoadStart -> {
+                pageReady = false
+                webView?.loadUrl(ShellUrls.startUrl(base))
+            }
+            ShellDecisions.UnhandledEvent.Nothing -> Unit
+        }
     }
 
     private fun closeOverlays() {

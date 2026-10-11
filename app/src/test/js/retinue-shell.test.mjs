@@ -6,6 +6,11 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
 globalThis.window = globalThis;
+// Node's global object is no EventTarget: give it window's listener methods.
+const windowEvents = new EventTarget();
+globalThis.addEventListener = windowEvents.addEventListener.bind(windowEvents);
+globalThis.removeEventListener = windowEvents.removeEventListener.bind(windowEvents);
+globalThis.dispatchEvent = windowEvents.dispatchEvent.bind(windowEvents);
 const log = [];
 let spoken = [];
 let failNext = false;
@@ -41,6 +46,27 @@ window.RetinueShell.setVoiceActive(true);
 window.RetinueShell.openSettings();
 assert.deepEqual(log.slice(0, 1), ['tts.voices']);
 assert.ok(log.includes('voiceActive') && log.includes('openSettings'));
+
+// shell events: the shell asks whether the page listens (ShellMessages.eventScript)
+const eventScript = (type) => "(function(){var e=new CustomEvent('retinue-shell',{detail:{\"type\":\"" + type + "\"},cancelable:true});" +
+  'window.dispatchEvent(e);' +
+  'return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();';
+assert.equal(vm.runInThisContext(eventScript('wake')), false);
+const seen = [];
+const onShell = (e) => seen.push(e.detail.type);
+window.addEventListener('retinue-shell', onShell);
+window.addEventListener('retinue-shell', onShell); // a duplicate is one listener
+assert.equal(vm.runInThisContext(eventScript('wake')), true);
+assert.deepEqual(seen, ['wake']);
+window.removeEventListener('retinue-shell', onShell);
+assert.equal(vm.runInThisContext(eventScript('home')), false);
+// A listener the count does not see (added before the script ran) can claim the event.
+const claim = (e) => e.preventDefault();
+windowEvents.addEventListener('retinue-shell', claim);
+assert.equal(vm.runInThisContext(eventScript('home')), true);
+windowEvents.removeEventListener('retinue-shell', claim);
+assert.equal(vm.runInThisContext(eventScript('home')), false);
+console.log('shell event tests passed');
 
 // voiceschanged
 let vc = 0;

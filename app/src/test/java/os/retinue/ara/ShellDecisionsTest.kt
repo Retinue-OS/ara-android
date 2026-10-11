@@ -9,6 +9,7 @@ import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellDecisions.BackAction
 import os.retinue.ara.shell.ShellDecisions.IntentAction
 import os.retinue.ara.shell.ShellDecisions.PendingWake
+import os.retinue.ara.shell.ShellDecisions.UnhandledEvent
 import os.retinue.ara.shell.ShellDecisions.WakeDelivery
 import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellVoice
@@ -81,9 +82,19 @@ class ShellMessagesTest {
     @Test
     fun eventScriptMatchesTheContract() {
         assertEquals(
-            "window.dispatchEvent(new CustomEvent('retinue-shell',{detail:{\"type\":\"wake\"}}));",
+            "(function(){var e=new CustomEvent('retinue-shell',{detail:{\"type\":\"wake\"},cancelable:true});" +
+                "window.dispatchEvent(e);" +
+                "return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();",
             ShellMessages.eventScript("wake"),
         )
+    }
+
+    @Test
+    fun eventHandledResult() {
+        assertTrue(ShellMessages.eventHandled("true"))
+        assertFalse(ShellMessages.eventHandled("false"))
+        assertFalse(ShellMessages.eventHandled("null"))
+        assertFalse(ShellMessages.eventHandled(null))
     }
 
     @Test
@@ -127,5 +138,13 @@ class WakeTimingTest {
         assertFalse(ShellDecisions.isReplayedIntent(restored = false, launchedFromHistory = false))
         assertTrue(ShellDecisions.isReplayedIntent(restored = true, launchedFromHistory = false))
         assertTrue(ShellDecisions.isReplayedIntent(restored = false, launchedFromHistory = true))
+    }
+
+    @Test
+    fun unhandledEvents() {
+        assertEquals(UnhandledEvent.LoadWake, ShellDecisions.onUnhandledEvent(isWake = true, onStartPage = true))
+        assertEquals(UnhandledEvent.LoadWake, ShellDecisions.onUnhandledEvent(isWake = true, onStartPage = false))
+        assertEquals(UnhandledEvent.LoadStart, ShellDecisions.onUnhandledEvent(isWake = false, onStartPage = false))
+        assertEquals(UnhandledEvent.Nothing, ShellDecisions.onUnhandledEvent(isWake = false, onStartPage = true))
     }
 }

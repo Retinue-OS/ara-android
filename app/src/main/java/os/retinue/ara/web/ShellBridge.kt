@@ -106,8 +106,20 @@ class ShellBridge(
         pageUrl = url
     }
 
-    /** Shell → web: `retinue-shell` event of [type] (`wake`, `home`). */
-    fun dispatchEvent(type: String) = run(ShellMessages.eventScript(type))
+    /**
+     * Shell → web: `retinue-shell` event of [type] (`wake`, `home`).
+     * [onUnhandled] runs (on the main thread) when the main frame is not on the
+     * configured origin or the page has no listener for the event.
+     */
+    fun dispatchEvent(type: String, onUnhandled: (() -> Unit)? = null) {
+        if (!router().isConfiguredOrigin(webView.url)) {
+            onUnhandled?.invoke()
+            return
+        }
+        webView.evaluateJavascript(ShellMessages.eventScript(type)) { result ->
+            if (!ShellMessages.eventHandled(result)) onUnhandled?.invoke()
+        }
+    }
 
     /** Run [js] in the page — only while the main frame is on the configured origin. */
     fun run(js: String) {

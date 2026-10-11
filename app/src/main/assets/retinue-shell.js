@@ -3,7 +3,8 @@
 //
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
 //     {platform, version, setVoiceActive(bool), openSettings()}. Shell -> web
-//     events arrive as `retinue-shell` CustomEvents dispatched on window.
+//     events arrive as `retinue-shell` CustomEvents dispatched on window; the
+//     shell checks whether the page listens for them (see below).
 //
 //  2. A speechSynthesis / SpeechSynthesisUtterance stand-in, backed by
 //     Android's TextToSpeech, installed only when the WebView has no working
@@ -39,6 +40,45 @@
   } catch (_) {
     window.RetinueShell = shell;
   }
+
+  // ---- Shell events: does the page listen? -------------------------------
+  //
+  // The shell dispatches `retinue-shell` events (wake, home). A page of the
+  // origin without the web app's listener (a gateway page such as /sends) would
+  // swallow them, so the shell asks whether anyone listens and otherwise loads
+  // the web app itself. Listeners added on window are counted here, before any
+  // page script runs; a page may also call preventDefault() on the event.
+  var shellListeners = [];
+  function sameListener(entry, fn, capture) { return entry.fn === fn && entry.capture === capture; }
+  function captureOf(options) { return typeof options === 'boolean' ? options : !!(options && options.capture); }
+  if (typeof window.addEventListener === 'function' && typeof window.removeEventListener === 'function') {
+    var addListener = window.addEventListener;
+    var removeListener = window.removeEventListener;
+    window.addEventListener = function (type, fn, options) {
+      if (type === 'retinue-shell' && fn) {
+        var capture = captureOf(options);
+        var known = false;
+        for (var i = 0; i < shellListeners.length; i++) {
+          if (sameListener(shellListeners[i], fn, capture)) known = true;
+        }
+        if (!known) shellListeners.push({ fn: fn, capture: capture });
+      }
+      return addListener.apply(this, arguments);
+    };
+    window.removeEventListener = function (type, fn, options) {
+      if (type === 'retinue-shell') {
+        var capture = captureOf(options);
+        shellListeners = shellListeners.filter(function (e) { return !sameListener(e, fn, capture); });
+      }
+      return removeListener.apply(this, arguments);
+    };
+  }
+  Object.defineProperty(window, '__retinueShellListening', {
+    value: function () { return shellListeners.length > 0; },
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
 
   var receivers = [];
   Object.defineProperty(window, '__retinueShellReceive', {

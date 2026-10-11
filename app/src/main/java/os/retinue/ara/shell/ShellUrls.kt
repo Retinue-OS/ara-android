@@ -90,6 +90,17 @@ object ShellUrls {
         return if (p.startsWith("/")) base + p else "$base/$p"
     }
 
+    /**
+     * True when [url] is the web app's start page under [base]: the base path
+     * itself, `/` or `/index.html`, with any query or fragment.
+     */
+    fun isStartPage(base: String, url: String?): Boolean {
+        if (url.isNullOrBlank() || !sameOrigin(base, url)) return false
+        val basePath = pathOf(base)
+        val path = pathOf(url.trim().substringBefore('#').substringBefore('?'))
+        return path == basePath || path == "$basePath/index.html"
+    }
+
     private fun pathOf(url: String): String = try {
         URI(url).rawPath.orEmpty().trimEnd('/')
     } catch (_: Exception) {

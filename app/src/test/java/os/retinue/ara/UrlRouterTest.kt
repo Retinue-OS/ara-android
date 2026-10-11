@@ -48,6 +48,24 @@ class ShellUrlsTest {
         // Another origin is never smuggled in through a web-page entry.
         assertEquals("https://h.example/", ShellUrls.webPathUrl(base, "https://evil.example/a"))
     }
+
+    @Test
+    fun startPage() {
+        val base = "https://h.example"
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/"))
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example"))
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/?wake=1"))
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/#threads"))
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/index.html"))
+        assertFalse(ShellUrls.isStartPage(base, "https://h.example/sends"))
+        assertFalse(ShellUrls.isStartPage(base, "https://h.example/claude-auth?x=1"))
+        assertFalse(ShellUrls.isStartPage(base, "https://other.example/"))
+        assertFalse(ShellUrls.isStartPage(base, null))
+        val sub = "https://h.example/retinue"
+        assertTrue(ShellUrls.isStartPage(sub, "https://h.example/retinue/"))
+        assertTrue(ShellUrls.isStartPage(sub, "https://h.example/retinue/index.html"))
+        assertFalse(ShellUrls.isStartPage(sub, "https://h.example/"))
+    }
 }
 
 class UrlRouterTest {

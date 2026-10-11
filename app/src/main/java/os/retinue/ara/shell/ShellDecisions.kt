@@ -112,4 +112,26 @@ object ShellDecisions {
         settingsLoaded && resumed && windowFocused && !keyguardLocked -> PendingWake.Deliver
         else -> PendingWake.Wait
     }
+
+    enum class UnhandledEvent {
+        /** Load the web app's start page (a Home press). */
+        LoadStart,
+
+        /** Load `<base>/?wake=1` (a wake). */
+        LoadWake,
+
+        /** Leave the page alone. */
+        Nothing,
+    }
+
+    /**
+     * A `wake` or `home` event the page did not handle (a page of the origin
+     * without the web app's listener, such as a gateway page): the shell goes to
+     * the web app itself. Home on the start page stays put rather than reload it.
+     */
+    fun onUnhandledEvent(isWake: Boolean, onStartPage: Boolean): UnhandledEvent = when {
+        isWake -> UnhandledEvent.LoadWake
+        onStartPage -> UnhandledEvent.Nothing
+        else -> UnhandledEvent.LoadStart
+    }
 }
