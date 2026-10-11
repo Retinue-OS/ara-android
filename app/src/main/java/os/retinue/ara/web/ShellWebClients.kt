@@ -4,13 +4,18 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.http.SslError
 import android.webkit.ClientCertRequest
+import android.webkit.ConsoleMessage
 import android.webkit.HttpAuthHandler
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -18,6 +23,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.net.AraHttp
+import os.retinue.ara.shell.PageFailure
+import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.UrlRouter
 
@@ -33,6 +40,15 @@ interface ShellHost {
     fun onFileChooser(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean
     fun onAudioPermission(request: PermissionRequest)
     fun onRenderProcessGone()
+
+    /** The main frame failed to load (see [PageFailure]); the shell shows why. */
+    fun onPageFailed(failure: PageFailure)
+
+    /** The main frame's load progress, 0–100. */
+    fun onPageProgress(progress: Int)
+
+    /** An ERROR-level console message of the page, kept for the diagnostics in settings. */
+    fun onConsoleError(message: String, source: String, line: Int)
 }
 
 /** The user agent suffix of the contract (plan §4). */
@@ -112,6 +128,34 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
         host.onPageFinished(url)
     }
 
+    /** A network-level failure of the main frame (DNS, connection, timeout); subresources do not count. */
+    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+        if (!request.isForMainFrame) return
+        host.onPageFailed(
+            PageFailure.Network(error.errorCode, error.description?.toString().orEmpty(), request.url.toString()),
+        )
+    }
+
+    /** An error status for the main frame: a 403 with an empty body would otherwise just be white. */
+    override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+        if (!request.isForMainFrame || errorResponse.statusCode < 400) return
+        val status = errorResponse.statusCode
+        host.onPageFailed(
+            PageFailure.Http(status, PageStatusTracker.reasonPhrase(status, errorResponse.reasonPhrase), request.url.toString()),
+        )
+    }
+
+    /**
+     * A certificate WebView does not trust is never accepted. The configured
+     * origin's own failure is reported, so the shell says why the page is blank.
+     */
+    override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+        handler.cancel()
+        if (host.router.isConfiguredOrigin(error.url)) {
+            host.onPageFailed(PageFailure.Ssl(error.primaryError, error.url))
+        }
+    }
+
     override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
         host.onUrlChanged(url)
     }
@@ -171,6 +215,22 @@ class ShellChromeClient(private val host: ShellHost) : WebChromeClient() {
         filePathCallback: ValueCallback<Array<Uri>>,
         fileChooserParams: FileChooserParams,
     ): Boolean = host.onFileChooser(filePathCallback, fileChooserParams)
+
+    override fun onProgressChanged(view: WebView, newProgress: Int) {
+        host.onPageProgress(newProgress)
+    }
+
+    /** Page errors are recorded for the diagnostics; the default logging stays (false). */
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+        if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+            host.onConsoleError(
+                consoleMessage.message().orEmpty(),
+                consoleMessage.sourceId().orEmpty(),
+                consoleMessage.lineNumber(),
+            )
+        }
+        return false
+    }
 
     /** Only the microphone, only for the configured origin (decided by the host). */
     override fun onPermissionRequest(request: PermissionRequest) {

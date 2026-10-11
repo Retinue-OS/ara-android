@@ -101,4 +101,31 @@
     <string name="wake_full_screen_allow">Allow full-screen notifications</string>
     <string name="wake_overlay_needed">While the phone is unlocked with another app in front, a wake only shows a notification to tap. To bring Ara forward at once, allow it to display over other apps.</string>
     <string name="wake_overlay_allow">Allow display over other apps</string>
+    <!-- Page status: the card over a page that did not load, and the diagnostics in settings. -->
+    <string name="page_failed_title">The dashboard could not be loaded</string>
+    <string name="page_failed_network">Network error: %1$s (code %2$d)</string>
+    <string name="page_failed_http">HTTP %1$d %2$s</string>
+    <string name="page_failed_ssl">The server\'s TLS certificate was not accepted (%1$s).</string>
+    <string name="page_failed_sign_in_cancelled">Sign-in cancelled (HTTP 401).</string>
+    <string name="page_failed_no_certificate">No client certificate is selected. The Retinue edge may require one.</string>
+    <string name="page_ssl_not_yet_valid">not yet valid</string>
+    <string name="page_ssl_expired">expired</string>
+    <string name="page_ssl_id_mismatch">issued for another host name</string>
+    <string name="page_ssl_untrusted">issuer not trusted</string>
+    <string name="page_ssl_date_invalid">invalid date</string>
+    <string name="page_ssl_invalid">invalid certificate</string>
+    <string name="page_ssl_other">error %1$d</string>
+    <string name="page_retry">Retry</string>
+    <string name="page_choose_certificate">Choose certificate</string>
+    <string name="settings_section_page">Page status</string>
+    <string name="page_status_idle">Not loaded yet.</string>
+    <string name="page_status_loading">Loading (%1$d%%)</string>
+    <string name="page_status_ready">Loaded.</string>
+    <string name="page_status_failed">Failed: %1$s</string>
+    <string name="page_last_url">Last URL: %1$s</string>
+    <string name="page_url_none">none</string>
+    <string name="page_certificate">Client certificate: %1$s</string>
+    <string name="page_console_none">No console errors on this page.</string>
+    <string name="page_console_errors">Console errors (most recent last)</string>
+    <string name="page_console_line">%1$s:%2$d: %3$s</string>
 </resources>

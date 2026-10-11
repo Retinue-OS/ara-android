@@ -90,6 +90,13 @@ Nothing environment-specific is baked into the APK.
   does nothing; otherwise it sends Ara to the background (the page is kept).
 - A crashed or reclaimed WebView renderer is replaced and the start page
   reloaded.
+- **Load failures are shown, not left blank**: a thin progress bar runs while
+  the page loads; a main-frame network error, an HTTP error status (400 and up),
+  a refused TLS certificate of the configured origin or a cancelled sign-in
+  replace the page with a card giving the reason and URL, with Retry, Choose
+  certificate (when none is selected) and Shell settings. The settings' **Page
+  status** section shows the current status, the last URL, the selected
+  certificate and the page's last console errors, for a screenshot.
 
 ## Shell ↔ web contract
 

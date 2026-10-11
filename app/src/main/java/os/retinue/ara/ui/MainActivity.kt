@@ -29,6 +29,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -55,6 +56,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -73,6 +75,10 @@ import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.shell.PageFailure
+import os.retinue.ara.shell.PageState
+import os.retinue.ara.shell.PageStatus
+import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellUrls
@@ -121,6 +127,10 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     /** Between onPageStarted and onPageFinished of the main frame. */
     private var pageLoading = false
+
+    /** The main frame's load status (progress bar, failure card, diagnostics). */
+    private val pageTracker = PageStatusTracker()
+    private var pageState by mutableStateOf(PageState())
 
     // --- Native overlays -----------------------------------------------------
     private var showSettings by mutableStateOf(false)
@@ -273,6 +283,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                         AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
                     }
                 }
+                PageStatusOverlay()
             }
             // The bar hides while the keyboard is up, so the page keeps its height.
             if (!imeVisible) {
@@ -287,6 +298,28 @@ class MainActivity : ComponentActivity(), ShellHost {
                     modifier = Modifier.navigationBarsPadding(),
                 )
             }
+        }
+    }
+
+    /**
+     * Over the web area: a progress bar while loading, and in place of a page
+     * that did not load, why. A page that loaded with console errors is not
+     * covered; those are in the settings' diagnostics.
+     */
+    @Composable
+    private fun BoxScope.PageStatusOverlay() {
+        val state = pageState
+        when (val status = state.status) {
+            is PageStatus.Loading -> PageProgressBar(status.progress, Modifier.align(Alignment.TopCenter))
+            is PageStatus.Failed -> PageFailureCard(
+                failure = status.failure,
+                url = state.url,
+                certificateSelected = settings.certificateAlias != null,
+                onRetry = ::retryLoad,
+                onChooseCertificate = ::chooseCertificate,
+                onSettings = ::openSettings,
+            )
+            PageStatus.Idle, PageStatus.Ready -> Unit
         }
     }
 
@@ -311,6 +344,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     fullScreenIntentAllowed = fullScreenIntentAllowed,
                     overlayAllowed = overlayAllowed,
                     notificationsAllowed = notificationsAllowed,
+                    page = pageState,
                 ),
                 actions = settingsActions,
             )
@@ -682,6 +716,25 @@ class MainActivity : ComponentActivity(), ShellHost {
         showSettings = true
     }
 
+    /** The failure card's Retry: load the start page afresh. */
+    private fun retryLoad() {
+        val base = settings.base ?: return openSettings()
+        val url = ShellUrls.startUrl(base)
+        updatePage { onLoadRequested(url) }
+        pageReady = false
+        webView?.loadUrl(url)
+    }
+
+    /**
+     * Apply [change] to the tracker and publish its state to Compose. Inside
+     * [change] the tracker is the innermost receiver, so `onPageStarted(url)`
+     * there is the tracker's, not this activity's.
+     */
+    private fun updatePage(change: PageStatusTracker.() -> Unit) {
+        pageTracker.change()
+        pageState = pageTracker.state
+    }
+
     // --- Launcher ------------------------------------------------------------
 
     private fun openEntry(entry: LauncherEntry) {
@@ -785,12 +838,14 @@ class MainActivity : ComponentActivity(), ShellHost {
         WakeRuntime.setVoiceActive(false)
         speech.reset()
         bridge.onPageStarted(url)
+        updatePage { onPageStarted(url) }
     }
 
     override fun onPageFinished(url: String?) {
         pageReady = router.isConfiguredOrigin(url)
         pageLoading = false
         bridge.onPageFinished(url)
+        updatePage { onPageFinished(url) }
         // A wake waiting for this page goes out now.
         if (pendingWakeAt != 0L) tryDeliverWake()
     }
@@ -800,8 +855,20 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     override fun onHttpAuth(host: String, realm: String, handler: HttpAuthHandler) {
-        authPrompt?.cancel()
+        authPrompt?.cancel(byUser = false)
         authPrompt = AuthPrompt(host, realm, handler)
+    }
+
+    override fun onPageFailed(failure: PageFailure) {
+        updatePage { onMainFrameFailure(failure) }
+    }
+
+    override fun onPageProgress(progress: Int) {
+        updatePage { onProgress(progress) }
+    }
+
+    override fun onConsoleError(message: String, source: String, line: Int) {
+        updatePage { onConsoleError(message, source, line) }
     }
 
     override fun onFileChooser(
@@ -859,7 +926,11 @@ class MainActivity : ComponentActivity(), ShellHost {
         bridge.install()
         pageReady = false
         pageLoading = false
-        settings.base?.let { webView?.loadUrl(ShellUrls.startUrl(it)) }
+        settings.base?.let {
+            val url = ShellUrls.startUrl(it)
+            updatePage { onLoadRequested(url) }
+            webView?.loadUrl(url)
+        }
     }
 
     private fun hasMic() =
@@ -873,9 +944,15 @@ class MainActivity : ComponentActivity(), ShellHost {
             authPrompt = null
         }
 
-        fun cancel() {
+        /**
+         * [byUser]: the user dismissed the dialog, which leaves the page blank
+         * (the 401 body), so the failure card offers a retry. A prompt replaced
+         * by a newer one is not a failure.
+         */
+        fun cancel(byUser: Boolean = true) {
             handler.cancel()
             authPrompt = null
+            if (byUser) updatePage { onSignInCancelled() }
         }
     }
 

@@ -51,6 +51,7 @@ import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelStatus
@@ -71,6 +72,8 @@ data class SettingsState(
     val overlayAllowed: Boolean,
     /** The wake alert can be posted at all: permission, app notifications and its channel on. */
     val notificationsAllowed: Boolean,
+    /** The web page's load status and console errors, for the diagnostics. */
+    val page: PageState,
 )
 
 /** What the settings screen can ask for. */
@@ -96,8 +99,8 @@ interface SettingsActions {
 }
 
 /**
- * The shell's native settings (plan §1): base URL, client certificate, home
- * role, launcher editor, wake phrase.
+ * The shell's native settings (plan §1): base URL, client certificate, page
+ * status, home role, launcher editor, wake phrase.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,6 +126,8 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             RetinueSection(state, actions)
+            HorizontalDivider()
+            PageDiagnostics(state.page, state.settings.certificateAlias)
             HorizontalDivider()
             HomeSection(state, actions)
             HorizontalDivider()
