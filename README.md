@@ -44,7 +44,9 @@ libraries for `arm64-v8a` and `x86_64` only (phones and the emulator).
 
 CI (`.github/workflows/ci.yml`) assembles the debug APK and runs the unit tests
 on every pull request and push to `main`; the nightly workflow publishes a
-signed release APK (see `keystore/README.md`).
+signed release APK (see `keystore/README.md`). Debug and release builds are
+both signed with the checked-in test certificate, so any CI APK installs over
+the previous one without uninstalling.
 
 ---
 

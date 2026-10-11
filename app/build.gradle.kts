@@ -51,6 +51,12 @@ android {
     }
 
     buildTypes {
+        // Debug builds share the test certificate too: each CI runner would
+        // otherwise sign with a fresh debug key, and Android refuses to install
+        // one branch APK over the previous one ("App not installed").
+        debug {
+            signingConfig = signingConfigs.getByName("nightly")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

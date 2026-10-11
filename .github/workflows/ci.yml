@@ -39,7 +39,8 @@ jobs:
         run: node app/src/test/js/retinue-shell.test.mjs
 
       # The debug APK of every run, for installing a branch on a phone before it
-      # is merged (debug-signed, so it does not install over a nightly build).
+      # is merged. Signed with the nightly test certificate, so it installs over
+      # the previous branch APK and over a nightly build.
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
