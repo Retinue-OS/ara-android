@@ -142,6 +142,12 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var showSettings by mutableStateOf(false)
     private var showDrawer by mutableStateOf(false)
     private var editing by mutableStateOf<Pair<LauncherEntry, Boolean>?>(null)
+
+    /** The folder open over the bar (its id, so it follows edits). */
+    private var openFolderId by mutableStateOf<String?>(null)
+
+    /** The folder editor, over everything else; sheets (drawer, open folder) wait under it. */
+    private var folderEditor by mutableStateOf<FolderEditorRequest?>(null)
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
     private var isDefaultHome by mutableStateOf(false)
     private var pinShortcutsSupported by mutableStateOf(false)
@@ -243,13 +249,18 @@ class MainActivity : ComponentActivity(), ShellHost {
                 KeepScreenOn(voiceActive)
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     ShellLayout(launcher.entries)
-                    if (showDrawer) {
+                    // Sheets are windows above everything here, so they step aside for the folder editor.
+                    val editor = folderEditor
+                    if (showDrawer && editor == null) {
                         LaunchedEffect(Unit) { viewModel.refreshApps() }
                         AppDrawer(
                             apps = apps,
+                            folders = launcher.folders,
                             isPinned = { launcher.containsApp(it.packageName, it.activityName) },
                             onLaunch = ::launchApp,
                             onPin = ::pinApp,
+                            onAddToFolder = ::addToFolder,
+                            onNewFolder = ::newFolder,
                             onDismiss = { showDrawer = false },
                             onSettings = {
                                 showDrawer = false
@@ -257,7 +268,37 @@ class MainActivity : ComponentActivity(), ShellHost {
                             },
                         )
                     }
+                    openFolderId?.let { id ->
+                        val folder = launcher.folder(id)
+                        if (folder == null) {
+                            // Gone (removed or reset): nothing left to show.
+                            LaunchedEffect(id) { openFolderId = null }
+                        } else if (editor == null) {
+                            FolderSheet(
+                                folder = folder,
+                                onLaunch = ::launchFolderApp,
+                                onMove = { app, delta -> viewModel.updateLauncher { it.moveInFolder(id, app.id, delta) } },
+                                onRemove = { app -> viewModel.updateLauncher { it.removeFromFolder(id, app.id) } },
+                                onEdit = { addApps -> folderEditor = FolderEditorRequest(folder, isNew = false, addApps = addApps) },
+                                onDismiss = { openFolderId = null },
+                            )
+                        }
+                    }
                     if (showSettings) SettingsOverlay(launcher)
+                    editor?.let { request ->
+                        LaunchedEffect(request) { viewModel.refreshApps() }
+                        Surface(Modifier.fillMaxSize()) {
+                            FolderEditor(
+                                request = request,
+                                apps = apps,
+                                onSave = { folder, newIcon ->
+                                    viewModel.saveFolder(folder, request.isNew, newIcon)
+                                    folderEditor = null
+                                },
+                                onDismiss = { folderEditor = null },
+                            )
+                        }
+                    }
                     editing?.let { (entry, isNew) ->
                         EntryEditorDialog(
                             entry = entry,
@@ -301,9 +342,11 @@ class MainActivity : ComponentActivity(), ShellHost {
                 LauncherBar(
                     entries = entries,
                     onOpen = ::openEntry,
-                    onEdit = { editing = it to false },
+                    onEdit = ::editLauncherEntry,
                     onRemove = viewModel::removeEntry,
                     onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
+                    onMoveToFolder = { app, folder -> viewModel.updateLauncher { it.moveIntoFolder(app.id, folder.id) } },
+                    onNewFolder = { newFolder() },
                     onAllApps = { showDrawer = true },
                     onSettings = ::openSettings,
                     modifier = Modifier.navigationBarsPadding(),
@@ -386,9 +429,9 @@ class MainActivity : ComponentActivity(), ShellHost {
             editing = template to true
         }
 
-        override fun editEntry(entry: LauncherEntry) {
-            editing = entry to false
-        }
+        override fun addFolder() = newFolder()
+
+        override fun editEntry(entry: LauncherEntry) = editLauncherEntry(entry)
 
         override fun removeEntry(entry: LauncherEntry) {
             viewModel.removeEntry(entry)
@@ -556,6 +599,8 @@ class MainActivity : ComponentActivity(), ShellHost {
             ShellDecisions.IntentAction.Show -> if (isHome) {
                 showDrawer = false
                 editing = null
+                openFolderId = null
+                folderEditor = null
             }
         }
     }
@@ -704,16 +749,21 @@ class MainActivity : ComponentActivity(), ShellHost {
     private fun closeOverlays() {
         showDrawer = false
         editing = null
+        openFolderId = null
+        folderEditor = null
         if (settings.base != null) showSettings = false
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
-            val overlay = showSettings || showDrawer || editing != null || authPrompt != null
+            val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
+                openFolderId != null || folderEditor != null
             when (ShellDecisions.onBack(overlay, webView?.canGoBack() == true, isDefaultHome)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
                     editing != null -> editing = null
+                    folderEditor != null -> folderEditor = null
+                    openFolderId != null -> openFolderId = null
                     showDrawer -> showDrawer = false
                     else -> settingsActions.close()
                 }
@@ -751,6 +801,10 @@ class MainActivity : ComponentActivity(), ShellHost {
     // --- Launcher ------------------------------------------------------------
 
     private fun openEntry(entry: LauncherEntry) {
+        if (entry is LauncherEntry.Folder) {
+            openFolderId = entry.id
+            return
+        }
         if (entry is LauncherEntry.WebPage) {
             val base = settings.base ?: return openSettings()
             webView?.loadUrl(ShellUrls.webPathUrl(base, entry.path))
@@ -763,8 +817,29 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
     }
 
+    /** Edit a bar entry: a folder in the folder editor, anything else in the entry dialog. */
+    private fun editLauncherEntry(entry: LauncherEntry) {
+        if (entry is LauncherEntry.Folder) {
+            folderEditor = FolderEditorRequest(entry, isNew = false)
+        } else {
+            editing = entry to false
+        }
+    }
+
+    /** Open the folder editor on a new folder; made from All apps, it starts with [app] in it. */
+    private fun newFolder(app: AppInfo? = null) {
+        showDrawer = false
+        val folder = LauncherEntry.Folder(ShellViewModel.newId(), label = "", apps = listOfNotNull(app?.toEntry()))
+        folderEditor = FolderEditorRequest(folder, isNew = true)
+    }
+
     private fun launchApp(app: AppInfo) {
         showDrawer = false
+        ShellIntents.launchApp(this, app.packageName, app.activityName)
+    }
+
+    private fun launchFolderApp(app: LauncherEntry.App) {
+        openFolderId = null
         ShellIntents.launchApp(this, app.packageName, app.activityName)
     }
 
@@ -773,6 +848,11 @@ class MainActivity : ComponentActivity(), ShellHost {
         val wasPinned = viewModel.launcher.value.containsApp(app.packageName, app.activityName)
         viewModel.pin(app)
         if (!wasPinned) Toast.makeText(this, getString(R.string.drawer_pinned, app.label), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun addToFolder(app: AppInfo, folder: LauncherEntry.Folder) {
+        viewModel.addToFolder(app, folder.id)
+        Toast.makeText(this, getString(R.string.drawer_added_to_folder, app.label, folder.label), Toast.LENGTH_SHORT).show()
     }
 
     // --- Home role -----------------------------------------------------------

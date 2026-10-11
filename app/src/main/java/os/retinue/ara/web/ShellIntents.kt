@@ -90,7 +90,10 @@ object ShellIntents {
         return true
     }
 
-    /** Start a launcher entry; WebPage entries are the caller's (they load in the WebView). */
+    /**
+     * Start a launcher entry; WebPage entries (they load in the WebView) and
+     * folders (they open over the bar) are the caller's.
+     */
     fun launch(context: Context, entry: LauncherEntry, router: UrlRouter): Route = when (entry) {
         is LauncherEntry.App -> {
             launchApp(context, entry.packageName, entry.activityName)
@@ -109,7 +112,7 @@ object ShellIntents {
                 Route.Block
             }
         }
-        is LauncherEntry.WebPage -> Route.Stay
+        is LauncherEntry.WebPage, is LauncherEntry.Folder -> Route.Stay
     }
 
     fun launchApp(context: Context, packageName: String, activityName: String): Boolean {

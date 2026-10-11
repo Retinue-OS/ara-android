@@ -53,11 +53,20 @@ class AraStore(context: Context) {
 
     suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
 
-    suspend fun setLauncher(config: LauncherConfig) = edit { it[K.launcher] = LauncherCodec.encode(config) }
-
-    /** Apply [change] to the stored launcher atomically (no lost updates between edits). */
-    suspend fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) = edit {
-        it[K.launcher] = LauncherCodec.encode(change(LauncherCodec.decode(it[K.launcher])))
+    /**
+     * Apply [change] to the stored launcher atomically (no lost updates between
+     * edits). Returns the launcher before and after, so what an edit dropped
+     * (a folder's custom icon) can be cleaned up.
+     */
+    suspend fun updateLauncher(change: (LauncherConfig) -> LauncherConfig): Pair<LauncherConfig, LauncherConfig> {
+        var before = LauncherConfig.DEFAULT
+        var after = LauncherConfig.DEFAULT
+        edit {
+            before = LauncherCodec.decode(it[K.launcher])
+            after = change(before)
+            it[K.launcher] = LauncherCodec.encode(after)
+        }
+        return before to after
     }
 
     private suspend fun edit(block: suspend (MutablePreferences) -> Unit) {

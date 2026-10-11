@@ -2,6 +2,8 @@ package os.retinue.ara.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
@@ -89,6 +92,7 @@ interface SettingsActions {
     /** Ask Android to pin a shortcut to Ara, the way a browser installing a web app does. */
     fun testPinShortcut()
     fun addEntry(template: LauncherEntry)
+    fun addFolder()
     fun editEntry(entry: LauncherEntry)
     fun removeEntry(entry: LauncherEntry)
     fun moveEntry(entry: LauncherEntry, delta: Int)
@@ -213,6 +217,7 @@ private fun HomeSection(state: SettingsState, actions: SettingsActions) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LauncherSection(state: SettingsState, actions: SettingsActions) {
     SectionTitle(R.string.settings_section_launcher)
@@ -249,22 +254,29 @@ private fun LauncherSection(state: SettingsState, actions: SettingsActions) {
             }
         }
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = {
             actions.addEntry(LauncherEntry.Link(ShellViewModel.newId(), "", ""))
         }) { Text(stringResource(R.string.launcher_add_link)) }
         OutlinedButton(onClick = {
             actions.addEntry(LauncherEntry.WebPage(ShellViewModel.newId(), "", "/"))
         }) { Text(stringResource(R.string.launcher_add_web)) }
+        OutlinedButton(onClick = actions::addFolder) { Text(stringResource(R.string.folder_add)) }
     }
     OutlinedButton(onClick = actions::resetLauncher) { Text(stringResource(R.string.launcher_reset)) }
 }
 
+@Composable
 private fun describe(entry: LauncherEntry): String = when (entry) {
     is LauncherEntry.App -> entry.packageName
     is LauncherEntry.Shortcut -> entry.packageName
     is LauncherEntry.Link -> entry.uri
     is LauncherEntry.WebPage -> entry.path
+    is LauncherEntry.Folder -> if (entry.apps.isEmpty()) {
+        stringResource(R.string.folder_empty)
+    } else {
+        pluralStringResource(R.plurals.folder_app_count, entry.apps.size, entry.apps.size, entry.apps.joinToString { it.label })
+    }
 }
 
 @Composable

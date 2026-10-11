@@ -18,6 +18,48 @@
     <string name="launcher_label">Label</string>
     <string name="launcher_uri">URI</string>
     <string name="launcher_path">Path in the web app</string>
+    <string name="launcher_options">Options</string>
+    <string name="launcher_move_to_folder">Move to %1$s</string>
+
+    <!-- Launcher folders: apps only, never other folders. -->
+    <string name="folder_new">New folder</string>
+    <string name="folder_add">Add folder</string>
+    <string name="folder_edit">Edit folder</string>
+    <string name="folder_name">Name</string>
+    <string name="folder_type">Type</string>
+    <string name="folder_icon">Icon</string>
+    <string name="folder_icon_photos">From photos</string>
+    <string name="folder_icon_files">From files</string>
+    <string name="folder_icon_symbol">Use the type\'s symbol</string>
+    <string name="folder_icon_hint">A picked image is cropped to the square in its middle. The folder keeps its own copy.</string>
+    <string name="folder_icon_unreadable">That image could not be read.</string>
+    <string name="folder_icon_failed">The folder\'s new icon could not be saved.</string>
+    <string name="folder_apps">In this folder</string>
+    <string name="folder_apps_none">No apps yet. Add some below.</string>
+    <string name="folder_add_apps">Add apps</string>
+    <string name="folder_add_app">Add to the folder</string>
+    <string name="folder_suggested">Suggested for %1$s</string>
+    <string name="folder_remove_app">Remove from folder</string>
+    <string name="folder_empty">This folder is empty.</string>
+    <plurals name="folder_app_count">
+        <item quantity="one">%1$d app: %2$s</item>
+        <item quantity="other">%1$d apps: %2$s</item>
+    </plurals>
+    <!-- The standard folder types: the choice in the folder editor, and a new folder's name. -->
+    <string name="folder_kind_general">Folder</string>
+    <string name="folder_kind_chat">Chat</string>
+    <string name="folder_kind_social">Social</string>
+    <string name="folder_kind_media">Media</string>
+    <string name="folder_kind_photos">Photos</string>
+    <string name="folder_kind_games">Games</string>
+    <string name="folder_kind_news">News</string>
+    <string name="folder_kind_travel">Travel</string>
+    <string name="folder_kind_work">Work</string>
+    <string name="folder_kind_tools">Tools</string>
+    <string name="folder_kind_shopping">Shopping</string>
+    <string name="folder_kind_finance">Finance</string>
+    <string name="folder_kind_health">Health</string>
+    <string name="folder_kind_smart_home">Smart home</string>
 
     <!-- Pinned shortcuts (Chrome's installed web apps, other apps' shortcuts). -->
     <string name="pin_shortcut_title">Add to the launcher bar?</string>
@@ -37,9 +79,14 @@
 
     <!-- App drawer. -->
     <string name="drawer_search">Search apps</string>
-    <string name="drawer_hint">Tap to open, long-press to pin to the bar.</string>
+    <string name="drawer_hint">Tap to open, long-press to pin to the bar or put in a folder.</string>
     <string name="drawer_pin">Pin to the bar</string>
     <string name="drawer_pinned">%1$s pinned to the bar</string>
+    <string name="drawer_pinned_already">Pinned to the bar</string>
+    <string name="drawer_add_to_folder">Add to %1$s</string>
+    <string name="drawer_in_folder">In %1$s</string>
+    <string name="drawer_added_to_folder">%1$s added to %2$s</string>
+    <string name="drawer_new_folder">New folder with this app</string>
 
     <!-- HTTP authentication fallback. -->
     <string name="auth_title">Sign in</string>
@@ -74,7 +121,7 @@
     <string name="settings_pin_refused">Android refused the shortcut request.</string>
 
     <string name="settings_section_launcher">Launcher bar</string>
-    <string name="settings_launcher_hint">Add links and web-app pages here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it.</string>
+    <string name="settings_launcher_hint">Add links, web-app pages and folders here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it, or an app to move it into a folder.</string>
     <string name="settings_launcher_empty">The bar is empty; only All apps is shown.</string>
 
     <!-- Wake phrase. -->
