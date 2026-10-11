@@ -131,4 +131,13 @@ class UrlRouterTest {
         assertNull(UrlRouter.schemeOf("1abc:x"))
         assertNull(UrlRouter.schemeOf("a b:x"))
     }
+
+    @Test
+    fun refusedIntentData() {
+        assertTrue(UrlRouter.isRefusedIntentData("file"))
+        assertTrue(UrlRouter.isRefusedIntentData("CONTENT"))
+        assertFalse(UrlRouter.isRefusedIntentData("https"))
+        assertFalse(UrlRouter.isRefusedIntentData("zxing"))
+        assertFalse(UrlRouter.isRefusedIntentData(null))
+    }
 }

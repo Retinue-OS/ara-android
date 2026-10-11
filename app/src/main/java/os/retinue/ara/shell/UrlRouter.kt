@@ -100,5 +100,15 @@ class UrlRouter(base: String?) {
             if (!s.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }) return null
             return s.lowercase()
         }
+
+        /**
+         * Data schemes an intent from a page or a launcher link must not carry:
+         * `file:` and `content:` would hand the target app a local file or one of
+         * this app's content URIs.
+         */
+        fun isRefusedIntentData(scheme: String?): Boolean {
+            val s = scheme?.trim()?.lowercase() ?: return false
+            return s == "file" || s == "content"
+        }
     }
 }

@@ -7,7 +7,6 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import android.widget.Toast
-import java.net.URISyntaxException
 import os.retinue.ara.R
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.LauncherLinks
@@ -29,8 +28,11 @@ object ShellIntents {
         Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE),
     )
 
-    /** A non-http scheme from a page (`tel:`, `mailto:`, `geo:` …). */
-    fun openExternal(context: Context, url: String): Boolean = startLink(context, url)
+    /**
+     * A non-http scheme from a page (`tel:`, `mailto:`, `geo:` …). A page's link
+     * is held to what a browser may open: browsable activities only.
+     */
+    fun openExternal(context: Context, url: String): Boolean = startLink(context, url, fromPage = true)
 
     /**
      * An `intent:` URL, parsed with [Intent.URI_INTENT_SCHEME] and sanitized the
@@ -42,26 +44,41 @@ object ShellIntents {
     fun openIntentUrl(context: Context, url: String, router: UrlRouter): Route {
         val intent = try {
             Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
-        } catch (e: URISyntaxException) {
+        } catch (e: Exception) {
+            // URISyntaxException, but a crafted URL also gets NumberFormatException and others.
             Log.w(TAG, "bad intent URL", e)
             return Route.Block
         }
-        val fallback = intent.getStringExtra("browser_fallback_url")
-        sanitize(intent)
-        if (start(context, intent, toastOnFailure = false)) return Route.Block
+        val fallback = try {
+            intent.getStringExtra("browser_fallback_url")
+        } catch (e: Exception) {
+            null
+        }
+        val launch = sanitize(intent) && start(context, intent, toastOnFailure = false)
+        if (launch) return Route.Block
         val route = router.fallback(fallback)
         if (route == Route.Block) toast(context)
         return route
     }
 
-    private fun sanitize(intent: Intent) {
+    /**
+     * Make a parsed intent safe to start; false when it must not be started at
+     * all (it points at a local file or a content URI).
+     */
+    private fun sanitize(intent: Intent): Boolean {
         intent.addCategory(Intent.CATEGORY_BROWSABLE)
         intent.component = null
         intent.selector = null
+        intent.clipData = null
         // Never let a page grant itself access to our content.
         intent.flags = intent.flags and
             (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION).inv()
+        if (UrlRouter.isRefusedIntentData(intent.data?.scheme)) {
+            Log.w(TAG, "refused intent data: ${intent.data?.scheme}")
+            return false
+        }
+        return true
     }
 
     /** Start a launcher entry; WebPage entries are the caller's (they load in the WebView). */
@@ -74,7 +91,8 @@ object ShellIntents {
             if (LauncherLinks.actionFor(entry.uri) == LinkAction.ParseIntent) {
                 openIntentUrl(context, entry.uri, router)
             } else {
-                startLink(context, entry.uri)
+                // The user's own entry: any handler, not only browsable ones.
+                startLink(context, entry.uri, fromPage = false)
                 Route.Block
             }
         }
@@ -96,13 +114,19 @@ object ShellIntents {
         }
     }
 
-    private fun startLink(context: Context, uri: String): Boolean {
+    private fun startLink(context: Context, uri: String, fromPage: Boolean): Boolean {
         val parsed = Uri.parse(uri.trim())
+        if (UrlRouter.isRefusedIntentData(parsed.scheme)) {
+            toast(context)
+            return false
+        }
         val intent = when (LauncherLinks.actionFor(uri)) {
             LinkAction.Dial -> Intent(Intent.ACTION_DIAL, parsed)
             LinkAction.SendTo -> Intent(Intent.ACTION_SENDTO, parsed)
             LinkAction.ParseIntent -> return openIntentUrl(context, uri, UrlRouter(null)) == Route.Block
-            LinkAction.View -> Intent(Intent.ACTION_VIEW, parsed)
+            LinkAction.View -> Intent(Intent.ACTION_VIEW, parsed).apply {
+                if (fromPage) addCategory(Intent.CATEGORY_BROWSABLE)
+            }
         }
         return start(context, intent)
     }
@@ -115,8 +139,9 @@ object ShellIntents {
         } catch (e: ActivityNotFoundException) {
             if (toastOnFailure) toast(context)
             false
-        } catch (e: SecurityException) {
-            Log.w(TAG, "not allowed: $intent", e)
+        } catch (e: Exception) {
+            // SecurityException, FileUriExposedException, a malformed intent …: never crash the shell.
+            Log.w(TAG, "could not start: $intent", e)
             if (toastOnFailure) toast(context)
             false
         }
