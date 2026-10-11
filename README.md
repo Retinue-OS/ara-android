@@ -74,9 +74,11 @@ Nothing environment-specific is baked into the APK.
 - The user agent ends in ` RetinueShell/1 (Android)`.
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
-  go to Android. `intent:` URLs are parsed with `Intent.parseUri` and sanitized
-  as Chrome does (browsable only, no explicit component or selector, no URI
-  grants); when no app takes one, its `browser_fallback_url` is honoured.
+  go to Android (to browsable handlers only, as from a browser). `intent:` URLs
+  are parsed with `Intent.parseUri` and sanitized as Chrome does (browsable
+  only, no explicit component or selector, no URI grants or clip data, no
+  `file:` or `content:` data); when no app takes one, its `browser_fallback_url`
+  is honoured. A malformed one is ignored.
   Top-level `javascript:`, `data:`, `file:` and `content:` navigations are
   refused.
 - **File chooser** for attachments (the system picker, multiple files allowed).
@@ -95,12 +97,20 @@ The web app detects the shell and talks to it through:
 
 - `window.RetinueShell` — installed at document start on the configured origin
   only: `{platform: 'android', version, setVoiceActive(bool), openSettings()}`.
-  `setVoiceActive(true)` (the page has the mic open) keeps the screen on and
-  pauses wake detection until `setVoiceActive(false)`.
+  `setVoiceActive(true)` (the page has the mic open, or holds a continuous
+  conversation) keeps the screen on and pauses wake detection until
+  `setVoiceActive(false)`, however long that takes. As a safety net, a
+  microphone grant to the page pauses wake detection by itself until the page
+  reports, or for 10 s if it never does.
 - Shell → web events:
   `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))` with
   `type` `wake` (the phrase was heard) or `home` (Home pressed while Ara was
   already in front). A wake while the page is not loaded loads `<base>/?wake=1`.
+  The event is cancelable, and the shell checks whether the page handled it:
+  the page script counts `retinue-shell` listeners on `window` (a page may also
+  call `preventDefault()`). On a page of the origin without a listener (a
+  gateway page such as `/sends`), a wake loads `<base>/?wake=1` and Home loads
+  `<base>/` (Home on the start page leaves it alone).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -157,7 +167,8 @@ certificate (`onReceivedClientCertRequest`), the key and chain are taken from
 the Android KeyChain off the main thread and presented — to that origin only;
 any other host is refused. Without a selected certificate the request proceeds
 without one (and is asked again later). The same certificate is used for model
-downloads from the configured origin.
+downloads from the configured origin; that client follows no redirects itself,
+so a redirect to another host is fetched without the certificate.
 
 ---
 
@@ -174,14 +185,29 @@ v0.5.1 release models (scores equal to within 1e-6, same detections).
 
 On a wake Ara plays a short chime, brings itself to the front (turning the
 screen on and asking to dismiss the keyguard), and dispatches `wake` to the
-page. The mic is then left to the page; detection resumes once the page reports
-the mic inactive (or after 10 s if it never takes it).
+page once the page can open the mic: Ara is resumed, its window has focus and
+the phone is unlocked. A wake that cannot get there within a minute (or whose
+unlock the user cancels) is dropped. The mic is then left to the page;
+detection resumes once the page reports the mic inactive (or after 10 s if it
+never takes it).
+
+A wake heard while Ara is in the background (mode *Always*) cannot start the
+activity directly (Android 10+ blocks that), so it posts a high-priority
+**full-screen notification**: on a locked or sleeping phone it opens Ara at
+once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
+notifications by default only to calling and alarm apps; the wake section of
+the shell settings shows a button to allow it when needed
+(`USE_FULL_SCREEN_INTENT`). The wake intent carries a one-time token valid for
+30 s, so other apps cannot fake a wake, and a recreated activity never replays
+one.
 
 **Modes:** *Off* (default, the mic is never held) · *While the home screen is
 visible* (runs only while Ara is in front) · *Always* (a foreground service of
 type microphone with an ongoing notification; Android 14 lets it start only
-while Ara is visible, so it starts when you open Ara). Detection pauses while
-the web app reports the mic in use.
+while Ara is in front, so it starts when you open Ara; if it is refused, it is
+retried later with a growing delay). Detection pauses while the web app
+reports the mic in use. A microphone error stops detection for 30 s (doubling
+up to 10 min on repeated errors), or until Ara is opened again.
 
 **Models are not bundled** (licence and size). In the shell settings:
 
@@ -190,6 +216,8 @@ the web app reports the mic in use.
 2. **Phrase model** — download from a URL (default: the release's
    `hey_jarvis_v0.1.onnx`, for testing) or **Choose file…** to import an
    `.onnx` from the device.
+
+A downloaded or imported model replaces the old one only after it loads.
 
 ### Recommended phrase: "Hey Retinue"
 
@@ -217,8 +245,11 @@ if it wakes too easily, lower it if it is hard to trigger.
   notifications still need the PWA installed in Chrome, or a follow-up
   (UnifiedPush, or a light poll of `/attention`).
 - **Downloads** started by the page are not handled by the shell.
-- With the phone **locked**, a wake in mode *Always* turns the screen on and
-  asks to unlock; the web app opens the mic once it is visible.
+- With the phone **locked**, a wake in mode *Always* turns the screen on, shows
+  Ara over the lock screen and asks to unlock; the wake reaches the web app
+  (which then opens the mic) once the phone is unlocked. Without the
+  full-screen-notification permission (Android 14+) it is only a heads-up
+  notification.
 - On WebViews without `WEB_MESSAGE_LISTENER`, the bridge is an
   `addJavascriptInterface` object: it checks the main frame's origin, but
   cannot tell which frame called it.
