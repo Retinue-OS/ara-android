@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
+import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.wake.Backoff
 import os.retinue.ara.wake.VoiceActivity
 import os.retinue.ara.wake.WakeFeatures
@@ -228,6 +229,16 @@ class WakeFeaturesTest {
 }
 
 class WakeTicketTest {
+
+    @Test
+    fun defaultLifetimeIsThePendingWakeWindow() {
+        val t = WakeTicket { "only" }
+        val token = t.issue(nowMs = 0)
+        assertTrue(t.consume(token, nowMs = ShellDecisions.PENDING_WAKE_MAX_MS))
+        val late = WakeTicket { "late" }
+        val lateToken = late.issue(nowMs = 0)
+        assertFalse(late.consume(lateToken, nowMs = ShellDecisions.PENDING_WAKE_MAX_MS + 1))
+    }
 
     private var counter = 0
     private fun ticket(maxAgeMs: Long = 30_000) = WakeTicket(maxAgeMs) { "token-${++counter}" }

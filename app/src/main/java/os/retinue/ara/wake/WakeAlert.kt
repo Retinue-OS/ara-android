@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import os.retinue.ara.R
+import os.retinue.ara.shell.ShellDecisions
 
 /**
  * The notification that carries a wake heard in the background. Android 10+
@@ -30,8 +31,8 @@ object WakeAlert {
     private const val NOTIFICATION_ID = 2
     private const val REQUEST_CODE = 1
 
-    /** How long the heads-up stays: as long as its wake token is good. */
-    private const val TIMEOUT_MS = 30_000L
+    /** How long the heads-up stays: as long as its wake token is good (the pending-wake window). */
+    private const val TIMEOUT_MS = ShellDecisions.PENDING_WAKE_MAX_MS
 
     fun show(context: Context, wakeIntent: Intent) {
         val manager = NotificationManagerCompat.from(context)

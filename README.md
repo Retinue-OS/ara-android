@@ -201,7 +201,7 @@ once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
 notifications by default only to calling and alarm apps; the wake section of
 the shell settings shows a button to allow it when needed
 (`USE_FULL_SCREEN_INTENT`). The wake intent carries a one-time token valid for
-30 s, so other apps cannot fake a wake, and a recreated activity never replays
+a minute (as long as a wake may wait for the shell), so other apps cannot fake a wake, and a recreated activity never replays
 one.
 
 **Modes:** *Off* (default, the mic is never held) · *While the home screen is

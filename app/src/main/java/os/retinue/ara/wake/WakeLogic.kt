@@ -115,7 +115,7 @@ object WakeGate {
  * for one wake.
  */
 class WakeTicket(
-    private val maxAgeMs: Long = 30_000L,
+    private val maxAgeMs: Long = 60_000L,
     private val newToken: () -> String,
 ) {
     private var token: String? = null

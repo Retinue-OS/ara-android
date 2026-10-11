@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.security.SecureRandom
 import os.retinue.ara.audio.Chime
+import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.ui.MainActivity
 
 /** What the wake detector is doing, for the settings screen. */
@@ -67,7 +68,8 @@ object WakeRuntime {
     private val serviceBackoff = Backoff()
 
     private val random = SecureRandom()
-    private val ticket = WakeTicket {
+    // The token lives as long as the shell keeps an accepted wake pending.
+    private val ticket = WakeTicket(maxAgeMs = ShellDecisions.PENDING_WAKE_MAX_MS) {
         val bytes = ByteArray(16)
         random.nextBytes(bytes)
         bytes.joinToString("") { "%02x".format(it) }
