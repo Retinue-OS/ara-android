@@ -123,6 +123,20 @@ object WakeAlert {
         return manager.canUseFullScreenIntent()
     }
 
+    /**
+     * Whether Ara may draw over other apps. That permission also exempts it from
+     * the block on activity starts from the background, so a wake heard while
+     * the phone is unlocked and another app is in front can bring Ara forward
+     * at once. A full-screen intent cannot: unlocked and in use, Android shows
+     * it as a heads-up notification only.
+     */
+    fun canDrawOverlays(context: Context): Boolean = Settings.canDrawOverlays(context)
+
+    /** The system page where the user allows drawing over other apps. */
+    fun overlaySettings(context: Context): Intent =
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+            .setData(Uri.parse("package:" + context.packageName))
+
     /** The system page where the user allows full-screen intents (Android 14+), or null. */
     fun fullScreenIntentSettings(context: Context): Intent? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null

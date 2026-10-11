@@ -130,6 +130,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var isDefaultHome by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
+    private var overlayAllowed by mutableStateOf(true)
     private var notificationsAllowed by mutableStateOf(true)
 
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
@@ -308,6 +309,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     wakeStatus = wakeStatus,
                     micGranted = micGranted,
                     fullScreenIntentAllowed = fullScreenIntentAllowed,
+                    overlayAllowed = overlayAllowed,
                     notificationsAllowed = notificationsAllowed,
                 ),
                 actions = settingsActions,
@@ -393,6 +395,14 @@ class MainActivity : ComponentActivity(), ShellHost {
             }
         }
 
+        override fun allowOverlay() {
+            try {
+                startActivity(WakeAlert.overlaySettings(this@MainActivity))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         override fun allowFullScreenIntent() {
             val intent = WakeAlert.fullScreenIntentSettings(this@MainActivity) ?: return
             try {
@@ -424,6 +434,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         refreshHomeRole()
         micGranted = hasMic()
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
+        overlayAllowed = WakeAlert.canDrawOverlays(this)
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
         viewModel.refreshModels()
         webView?.onResume()

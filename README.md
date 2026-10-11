@@ -208,7 +208,12 @@ activity directly (Android 10+ blocks that), so it posts a high-priority
 once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
 notifications by default only to calling and alarm apps; the wake section of
 the shell settings shows a button to allow it when needed
-(`USE_FULL_SCREEN_INTENT`). With Ara's notifications off (permission denied,
+(`USE_FULL_SCREEN_INTENT`). To have Ara come forward at once even while the
+phone is unlocked with another app in front, allow it to **display over other
+apps** (`SYSTEM_ALERT_WINDOW`, also offered in the wake section): that
+permission exempts the app from the background-start block, so the wake starts
+the activity directly and the notification is cancelled as soon as Ara takes
+the wake. With Ara's notifications off (permission denied,
 turned off for the app, or the "Wake phrase heard" channel blocked) a background
 wake cannot reach Ara: the wake section says so and links to the app's
 notification settings, and such a wake plays no chime. The wake intent carries a one-time token valid for

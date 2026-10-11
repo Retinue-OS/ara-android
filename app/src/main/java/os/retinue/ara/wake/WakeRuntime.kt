@@ -325,8 +325,19 @@ object WakeRuntime {
                 Log.w(TAG, "could not bring the shell to front", e)
             }
         }
-        // From the background (Android 10+ blocks activity starts there): a
-        // full-screen notification opens the shell, or the user taps it.
+        // From the background, Android 10+ blocks activity starts unless the
+        // app may draw over others; with that permission the start goes
+        // through. The block is silent (no exception), so the notification is
+        // posted as well and cancelled the moment the shell takes the wake.
+        if (WakeAlert.canDrawOverlays(app)) {
+            try {
+                app.startActivity(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "could not bring the shell to front", e)
+            }
+        }
+        // A full-screen notification opens the shell on a locked or dark
+        // screen; unlocked and in use it is a heads-up the user taps.
         WakeAlert.show(app, intent)
     }
 

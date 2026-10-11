@@ -99,4 +99,6 @@
     <string name="wake_notifications_open">Open notification settings</string>
     <string name="wake_full_screen_needed">To open Ara when the phrase is heard in the background or on the lock screen, allow full-screen notifications for Ara.</string>
     <string name="wake_full_screen_allow">Allow full-screen notifications</string>
+    <string name="wake_overlay_needed">While the phone is unlocked with another app in front, a wake only shows a notification to tap. To bring Ara forward at once, allow it to display over other apps.</string>
+    <string name="wake_overlay_allow">Allow display over other apps</string>
 </resources>
