@@ -26,11 +26,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # The runner image ships an SDK; this makes sure the licences are accepted
-      # so AGP can fetch a missing platform or build-tools package itself.
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # The runner image ships an Android SDK with its licences accepted (the
+      # nightly build relies on it too); setup-android@v3 is not used because
+      # its default package list asks for the long-gone `tools` package.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
