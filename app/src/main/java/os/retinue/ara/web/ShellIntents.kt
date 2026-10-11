@@ -37,11 +37,12 @@ object ShellIntents {
     /**
      * An `intent:` URL, parsed with [Intent.URI_INTENT_SCHEME] and sanitized the
      * way Chrome does: browsable only, no explicit component or selector (a page
-     * must not address a non-exported or arbitrary activity). When nothing
-     * handles it, `browser_fallback_url` is honoured through [router].
+     * must not address a non-exported or arbitrary activity), and from a page
+     * ([fromPage]) without any launch flags. When nothing handles it,
+     * `browser_fallback_url` is honoured through [router].
      * Returns the fallback route the caller should carry out (Stay = load in view).
      */
-    fun openIntentUrl(context: Context, url: String, router: UrlRouter): Route {
+    fun openIntentUrl(context: Context, url: String, router: UrlRouter, fromPage: Boolean = true): Route {
         val intent = try {
             Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
         } catch (e: Exception) {
@@ -54,7 +55,7 @@ object ShellIntents {
         } catch (e: Exception) {
             null
         }
-        val launch = sanitize(intent) && start(context, intent, toastOnFailure = false)
+        val launch = sanitize(intent, fromPage) && start(context, intent, toastOnFailure = false)
         if (launch) return Route.Block
         val route = router.fallback(fallback)
         if (route == Route.Block) toast(context)
@@ -65,15 +66,20 @@ object ShellIntents {
      * Make a parsed intent safe to start; false when it must not be started at
      * all (it points at a local file or a content URI).
      */
-    private fun sanitize(intent: Intent): Boolean {
+    private fun sanitize(intent: Intent, fromPage: Boolean): Boolean {
         intent.addCategory(Intent.CATEGORY_BROWSABLE)
         intent.component = null
         intent.selector = null
         intent.clipData = null
-        // Never let a page grant itself access to our content.
-        intent.flags = intent.flags and
-            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION).inv()
+        intent.flags = if (fromPage) {
+            // A page sets no launch flags at all (task, history, URI grants), as in Chrome.
+            0
+        } else {
+            // Never let a link grant itself access to our content.
+            intent.flags and
+                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION).inv()
+        }
         if (UrlRouter.isRefusedIntentData(intent.data?.scheme)) {
             Log.w(TAG, "refused intent data: ${intent.data?.scheme}")
             return false
@@ -89,7 +95,7 @@ object ShellIntents {
         }
         is LauncherEntry.Link -> {
             if (LauncherLinks.actionFor(entry.uri) == LinkAction.ParseIntent) {
-                openIntentUrl(context, entry.uri, router)
+                openIntentUrl(context, entry.uri, router, fromPage = false)
             } else {
                 // The user's own entry: any handler, not only browsable ones.
                 startLink(context, entry.uri, fromPage = false)
@@ -123,7 +129,7 @@ object ShellIntents {
         val intent = when (LauncherLinks.actionFor(uri)) {
             LinkAction.Dial -> Intent(Intent.ACTION_DIAL, parsed)
             LinkAction.SendTo -> Intent(Intent.ACTION_SENDTO, parsed)
-            LinkAction.ParseIntent -> return openIntentUrl(context, uri, UrlRouter(null)) == Route.Block
+            LinkAction.ParseIntent -> return openIntentUrl(context, uri, UrlRouter(null), fromPage) == Route.Block
             LinkAction.View -> Intent(Intent.ACTION_VIEW, parsed).apply {
                 if (fromPage) addCategory(Intent.CATEGORY_BROWSABLE)
             }

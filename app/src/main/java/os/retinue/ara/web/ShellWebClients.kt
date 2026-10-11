@@ -142,7 +142,17 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
         }
     }
 
+    /**
+     * HTTP authentication: the sign-in dialog only for the configured host (a
+     * frame of another origin must not ask for the user's password in the
+     * shell's name). The callback carries no port, so the host decides.
+     */
     override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) {
+        val router = this.host.router
+        if (!router.isConfiguredHost(host, router.origin?.port ?: -1)) {
+            handler.cancel()
+            return
+        }
         this.host.onHttpAuth(host.orEmpty(), realm.orEmpty(), handler)
     }
 
