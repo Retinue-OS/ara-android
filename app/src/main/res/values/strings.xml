@@ -40,6 +40,7 @@
     <string name="settings_section_retinue">Retinue</string>
     <string name="settings_base_url">Retinue base URL</string>
     <string name="settings_base_url_hint">https://agents.example.com</string>
+    <string name="settings_base_url_https">Retinue needs https</string>
     <string name="settings_certificate">Client certificate</string>
     <string name="settings_certificate_none">None selected</string>
     <string name="settings_select_certificate">Select certificate</string>

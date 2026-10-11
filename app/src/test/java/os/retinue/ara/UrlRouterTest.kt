@@ -18,7 +18,12 @@ class ShellUrlsTest {
         assertEquals("https://agents.example.com", ShellUrls.normalizeBase("agents.example.com"))
         assertEquals("https://agents.example.com", ShellUrls.normalizeBase("HTTPS://Agents.Example.com:443/"))
         assertEquals("https://h.example:8443/retinue", ShellUrls.normalizeBase("https://h.example:8443/retinue/?x=1#y"))
-        assertEquals("http://10.0.0.2:8080", ShellUrls.normalizeBase("http://10.0.0.2:8080"))
+        // Cleartext is off in the shell: an http base is not configured.
+        assertNull(ShellUrls.normalizeBase("http://10.0.0.2:8080"))
+        assertTrue(ShellUrls.isCleartextBase(" HTTP://10.0.0.2:8080"))
+        assertFalse(ShellUrls.isCleartextBase("https://h.example"))
+        assertFalse(ShellUrls.isCleartextBase("h.example"))
+        assertEquals("https://[::1]:8443", ShellUrls.normalizeBase("https://[::1]:8443/"))
         assertNull(ShellUrls.normalizeBase(""))
         assertNull(ShellUrls.normalizeBase(null))
         assertNull(ShellUrls.normalizeBase("ftp://h.example"))
@@ -33,6 +38,22 @@ class ShellUrlsTest {
         assertEquals("https://h.example:8443", Origin("https", "h.example", 8443).toString())
         assertNull(ShellUrls.origin("mailto:a@b.c"))
         assertNull(ShellUrls.origin("not a url"))
+    }
+
+    @Test
+    fun originToleratesCharactersChromiumLeavesUnescaped() {
+        val o = Origin("https", "h.example", 443)
+        assertEquals(o, ShellUrls.origin("https://h.example/a|b"))
+        assertEquals(o, ShellUrls.origin("https://h.example/a{b}^c[d]"))
+        assertEquals(o, ShellUrls.origin("https://h.example/?q=a|b&r={x}"))
+        assertEquals(o, ShellUrls.origin("https://h.example/#thread|1{2}"))
+        assertEquals(o, ShellUrls.origin("https://h.example/a b`c\"d"))
+        // A backslash ends the authority, as in a browser.
+        assertEquals(Origin("https", "evil.example", 443), ShellUrls.origin("https://evil.example\\@h.example/"))
+        assertEquals(Origin("https", "h.example", 443), ShellUrls.origin("https://user:pw@h.example/x"))
+        assertNull(ShellUrls.origin("https://h.example:99999/"))
+        assertTrue(ShellUrls.sameOrigin("https://h.example", "https://h.example/x?y=|"))
+        assertTrue(UrlRouter("https://h.example").isConfiguredOrigin("https://h.example/{a}#|"))
     }
 
     @Test
@@ -65,6 +86,13 @@ class ShellUrlsTest {
         assertTrue(ShellUrls.isStartPage(sub, "https://h.example/retinue/"))
         assertTrue(ShellUrls.isStartPage(sub, "https://h.example/retinue/index.html"))
         assertFalse(ShellUrls.isStartPage(sub, "https://h.example/"))
+        // Unescaped characters in the query, fragment or path do not hide the page.
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/?q={a}|b"))
+        assertTrue(ShellUrls.isStartPage(base, "https://h.example/#t|{1}"))
+        assertTrue(ShellUrls.isStartPage(sub, "https://h.example/retinue/?x=^"))
+        assertFalse(ShellUrls.isStartPage(base, "https://h.example/a|b"))
+        assertTrue(ShellUrls.isStartPage("https://h.example/a{b}", "https://h.example/a{b}/"))
+        assertEquals("https://h.example/a%7Bb%7D", ShellUrls.normalizeBase("https://h.example/a{b}/"))
     }
 }
 

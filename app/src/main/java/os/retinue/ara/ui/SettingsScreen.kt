@@ -51,6 +51,7 @@ import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeStatus
@@ -150,6 +151,11 @@ private fun RetinueSection(state: SettingsState, actions: SettingsActions) {
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         isError = baseUrl.isNotBlank() && ShellSettings(baseUrl = baseUrl).base == null,
+        supportingText = if (ShellUrls.isCleartextBase(baseUrl)) {
+            { Text(stringResource(R.string.settings_base_url_https)) }
+        } else {
+            null
+        },
         modifier = Modifier.fillMaxWidth(),
     )
     Button(
