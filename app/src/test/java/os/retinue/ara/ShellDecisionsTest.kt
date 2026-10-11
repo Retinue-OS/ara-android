@@ -101,7 +101,7 @@ class ShellMessagesTest {
         assertEquals(
             "(function(){var e=new CustomEvent('retinue-shell',{detail:{\"type\":\"wake\"},cancelable:true});" +
                 "window.dispatchEvent(e);" +
-                "return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();",
+                "return e.defaultPrevented||!!(window.__retinueShellTaken&&window.__retinueShellTaken(e));})();",
             ShellMessages.eventScript("wake"),
         )
     }

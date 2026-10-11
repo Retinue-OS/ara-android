@@ -89,14 +89,14 @@ object ShellMessages {
     /**
      * `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))`.
      * The script evaluates to whether the page handled the event: it called
-     * `preventDefault()` on it, or it has a `retinue-shell` listener (counted by
-     * assets/retinue-shell.js). See [eventHandled].
+     * `preventDefault()` on it, or one of its `retinue-shell` listeners ran for
+     * this very event (tracked by assets/retinue-shell.js). See [eventHandled].
      */
     fun eventScript(type: String): String {
         val detail = buildJsonObject { put("type", type) }
         return "(function(){var e=new CustomEvent('$EVENT',{detail:$detail,cancelable:true});" +
             "window.dispatchEvent(e);" +
-            "return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();"
+            "return e.defaultPrevented||!!(window.__retinueShellTaken&&window.__retinueShellTaken(e));})();"
     }
 
     /** The result of [eventScript] as `evaluateJavascript` reports it (JSON). */

@@ -109,8 +109,11 @@ The web app detects the shell and talks to it through:
   dispatches `wake` once it has finished loading, so no wake flag lands in the
   WebView history.
   The event is cancelable, and the shell checks whether the page handled it:
-  the page script counts `retinue-shell` listeners on `window` (a page may also
-  call `preventDefault()`). On a page of the origin without a listener (a
+  a `retinue-shell` listener on `window` ran for it (the page script wraps
+  them, so listeners removed, run `once` or aborted no longer count), or the
+  page called `preventDefault()`. A listener receives every type, so it counts
+  for every type: a page that handles only `home` still takes `wake` (the web
+  app handles both). On a page of the origin without a listener (a
   gateway page such as `/sends`), a wake loads `<base>/?wake=1` (the web app
   strips the flag with `history.replaceState` on load) and Home loads `<base>/`
   (Home on the start page leaves it alone).

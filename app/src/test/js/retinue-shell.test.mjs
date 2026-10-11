@@ -47,25 +47,61 @@ window.RetinueShell.openSettings();
 assert.deepEqual(log.slice(0, 1), ['tts.voices']);
 assert.ok(log.includes('voiceActive') && log.includes('openSettings'));
 
-// shell events: the shell asks whether the page listens (ShellMessages.eventScript)
+// shell events: the shell asks whether a listener ran (ShellMessages.eventScript)
 const eventScript = (type) => "(function(){var e=new CustomEvent('retinue-shell',{detail:{\"type\":\"" + type + "\"},cancelable:true});" +
   'window.dispatchEvent(e);' +
-  'return e.defaultPrevented||!!(window.__retinueShellListening&&window.__retinueShellListening());})();';
-assert.equal(vm.runInThisContext(eventScript('wake')), false);
+  'return e.defaultPrevented||!!(window.__retinueShellTaken&&window.__retinueShellTaken(e));})();';
+const fire = (type) => vm.runInThisContext(eventScript(type));
+assert.equal(fire('wake'), false);
 const seen = [];
 const onShell = (e) => seen.push(e.detail.type);
 window.addEventListener('retinue-shell', onShell);
 window.addEventListener('retinue-shell', onShell); // a duplicate is one listener
-assert.equal(vm.runInThisContext(eventScript('wake')), true);
+assert.equal(fire('wake'), true);
 assert.deepEqual(seen, ['wake']);
+// removeEventListener finds the wrapper of the same function.
 window.removeEventListener('retinue-shell', onShell);
-assert.equal(vm.runInThisContext(eventScript('home')), false);
-// A listener the count does not see (added before the script ran) can claim the event.
+assert.equal(fire('home'), false);
+assert.deepEqual(seen, ['wake']);
+// {once: true}: taken by the first event only.
+window.addEventListener('retinue-shell', onShell, { once: true });
+assert.equal(fire('wake'), true);
+assert.equal(fire('wake'), false);
+// ... and can be added again afterwards.
+window.addEventListener('retinue-shell', onShell, { once: true });
+assert.equal(fire('home'), true);
+assert.equal(fire('home'), false);
+// An AbortSignal removes it without removeEventListener.
+const ctl = new AbortController();
+window.addEventListener('retinue-shell', onShell, { signal: ctl.signal });
+assert.equal(fire('wake'), true);
+ctl.abort();
+assert.equal(fire('wake'), false);
+// A handleEvent object is called with itself as this.
+const obj = { calls: 0, handleEvent(e) { this.calls++; assert.equal(e.detail.type, 'home'); } };
+window.addEventListener('retinue-shell', obj);
+assert.equal(fire('home'), true);
+assert.equal(obj.calls, 1);
+window.removeEventListener('retinue-shell', obj);
+assert.equal(fire('home'), false);
+// The flag is per dispatch: an event dispatched by someone else does not mark the next.
+window.addEventListener('retinue-shell', onShell, { once: true });
+window.dispatchEvent(new CustomEvent('retinue-shell', { detail: { type: 'other' } }));
+assert.equal(fire('wake'), false);
+// Other event types are passed through untouched.
+let other = 0;
+const onOther = () => other++;
+window.addEventListener('something-else', onOther);
+window.dispatchEvent(new Event('something-else'));
+window.removeEventListener('something-else', onOther);
+window.dispatchEvent(new Event('something-else'));
+assert.equal(other, 1);
+// A listener the wrapper does not see (added before the script ran) can claim the event.
 const claim = (e) => e.preventDefault();
 windowEvents.addEventListener('retinue-shell', claim);
-assert.equal(vm.runInThisContext(eventScript('home')), true);
+assert.equal(fire('home'), true);
 windowEvents.removeEventListener('retinue-shell', claim);
-assert.equal(vm.runInThisContext(eventScript('home')), false);
+assert.equal(fire('home'), false);
 console.log('shell event tests passed');
 
 // voiceschanged

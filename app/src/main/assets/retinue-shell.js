@@ -4,7 +4,7 @@
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
 //     {platform, version, setVoiceActive(bool), openSettings()}. Shell -> web
 //     events arrive as `retinue-shell` CustomEvents dispatched on window; the
-//     shell checks whether the page listens for them (see below).
+//     shell checks whether a page listener ran for them (see below).
 //
 //  2. A speechSynthesis / SpeechSynthesisUtterance stand-in, backed by
 //     Android's TextToSpeech, installed only when the WebView has no working
@@ -41,40 +41,61 @@
     window.RetinueShell = shell;
   }
 
-  // ---- Shell events: does the page listen? -------------------------------
+  // ---- Shell events: did the page take it? --------------------------------
   //
   // The shell dispatches `retinue-shell` events (wake, home). A page of the
   // origin without the web app's listener (a gateway page such as /sends) would
-  // swallow them, so the shell asks whether anyone listens and otherwise loads
-  // the web app itself. Listeners added on window are counted here, before any
-  // page script runs; a page may also call preventDefault() on the event.
-  var shellListeners = [];
-  function sameListener(entry, fn, capture) { return entry.fn === fn && entry.capture === capture; }
+  // swallow them, so the shell asks whether a listener ran and otherwise loads
+  // the web app itself. Listeners added on window from here on (before any page
+  // script runs) are wrapped, so a call marks the event as taken; listeners
+  // removed again, run once ({once: true}) or aborted through a signal are left
+  // to the browser and simply do not run. A page may also call preventDefault()
+  // on the event.
+  var taken = typeof WeakSet === 'function' ? new WeakSet() : null;
+  var wrapped = [];  // {fn, capture, wrapper}
   function captureOf(options) { return typeof options === 'boolean' ? options : !!(options && options.capture); }
-  if (typeof window.addEventListener === 'function' && typeof window.removeEventListener === 'function') {
+  function wrapperOf(fn, capture) {
+    for (var i = 0; i < wrapped.length; i++) {
+      if (wrapped[i].fn === fn && wrapped[i].capture === capture) return wrapped[i].wrapper;
+    }
+    return null;
+  }
+  if (taken && typeof window.addEventListener === 'function' && typeof window.removeEventListener === 'function') {
     var addListener = window.addEventListener;
     var removeListener = window.removeEventListener;
     window.addEventListener = function (type, fn, options) {
-      if (type === 'retinue-shell' && fn) {
-        var capture = captureOf(options);
-        var known = false;
-        for (var i = 0; i < shellListeners.length; i++) {
-          if (sameListener(shellListeners[i], fn, capture)) known = true;
-        }
-        if (!known) shellListeners.push({ fn: fn, capture: capture });
+      if (type !== 'retinue-shell' || !fn || (typeof fn !== 'function' && typeof fn !== 'object')) {
+        return addListener.apply(this, arguments);
       }
-      return addListener.apply(this, arguments);
+      var capture = captureOf(options);
+      var wrapper = wrapperOf(fn, capture);
+      if (!wrapper) {
+        wrapper = function (e) {
+          if (e && typeof e === 'object') taken.add(e);
+          if (typeof fn === 'function') return fn.call(this, e);
+          if (typeof fn.handleEvent === 'function') return fn.handleEvent(e);
+          return undefined;
+        };
+        wrapped.push({ fn: fn, capture: capture, wrapper: wrapper });
+      }
+      // The browser keeps the semantics of once, signal, passive and duplicates.
+      return addListener.call(this, type, wrapper, options);
     };
     window.removeEventListener = function (type, fn, options) {
-      if (type === 'retinue-shell') {
+      if (type === 'retinue-shell' && fn) {
         var capture = captureOf(options);
-        shellListeners = shellListeners.filter(function (e) { return !sameListener(e, fn, capture); });
+        var wrapper = wrapperOf(fn, capture);
+        if (wrapper) {
+          wrapped = wrapped.filter(function (e) { return e.wrapper !== wrapper; });
+          return removeListener.call(this, type, wrapper, options);
+        }
       }
       return removeListener.apply(this, arguments);
     };
   }
-  Object.defineProperty(window, '__retinueShellListening', {
-    value: function () { return shellListeners.length > 0; },
+  // Whether a wrapped listener ran for this event (ShellMessages.eventScript).
+  Object.defineProperty(window, '__retinueShellTaken', {
+    value: function (e) { return !!(taken && e && typeof e === 'object' && taken.has(e)); },
     configurable: false,
     enumerable: false,
     writable: false,
