@@ -34,25 +34,16 @@ object WakeAlert {
     /** How long the heads-up stays: as long as its wake token is good (the pending-wake window). */
     private const val TIMEOUT_MS = ShellDecisions.PENDING_WAKE_MAX_MS
 
-    fun show(context: Context, wakeIntent: Intent) {
+    /**
+     * Post the wake notification; false when it cannot be shown (see
+     * [notificationsAllowed]) — the wake then cannot reach the shell.
+     */
+    fun show(context: Context, wakeIntent: Intent): Boolean {
         val manager = NotificationManagerCompat.from(context)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!notificationsAllowed(context)) {
             Log.w(TAG, "notifications not allowed: the wake cannot reach the shell")
-            return
+            return false
         }
-        manager.createNotificationChannel(
-            NotificationChannelCompat.Builder(CHANNEL, NotificationManagerCompat.IMPORTANCE_HIGH)
-                .setName(context.getString(R.string.wake_alert_channel_name))
-                .setDescription(context.getString(R.string.wake_alert_channel_desc))
-                .setShowBadge(false)
-                // The chime has already played.
-                .setSound(null, null)
-                .setVibrationEnabled(false)
-                .build(),
-        )
         val open = PendingIntent.getActivity(
             context,
             REQUEST_CODE,
@@ -71,11 +62,51 @@ object WakeAlert {
             .setContentIntent(open)
             .setFullScreenIntent(open, true)
             .build()
-        try {
+        return try {
             manager.notify(NOTIFICATION_ID, notification)
+            true
         } catch (e: SecurityException) {
             Log.w(TAG, "could not post the wake notification", e)
+            false
         }
+    }
+
+    /**
+     * Whether a wake heard in the background can reach the shell: the app may
+     * post notifications (Android 13+ permission), they are not turned off for
+     * the app, and the wake channel is not blocked.
+     */
+    fun notificationsAllowed(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) return false
+        // Created here, so the channel is listed (and can be blocked) in the system settings.
+        ensureChannel(context)
+        val channel = manager.getNotificationChannelCompat(CHANNEL) ?: return true
+        return channel.importance != NotificationManagerCompat.IMPORTANCE_NONE
+    }
+
+    /** The system page of this app's notifications, where the user turns them (or a channel) on. */
+    fun notificationSettings(context: Context): Intent =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+
+    private fun ensureChannel(context: Context) {
+        NotificationManagerCompat.from(context).createNotificationChannel(
+            NotificationChannelCompat.Builder(CHANNEL, NotificationManagerCompat.IMPORTANCE_HIGH)
+                .setName(context.getString(R.string.wake_alert_channel_name))
+                .setDescription(context.getString(R.string.wake_alert_channel_desc))
+                .setShowBadge(false)
+                // The chime has already played.
+                .setSound(null, null)
+                .setVibrationEnabled(false)
+                .build(),
+        )
     }
 
     fun cancel(context: Context) {

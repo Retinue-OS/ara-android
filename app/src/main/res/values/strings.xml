@@ -88,6 +88,8 @@
     <string name="wake_alert_channel_desc">Opens Ara when the wake phrase is heard while another app is in front or the phone is locked.</string>
     <string name="wake_alert_title">Wake phrase heard</string>
     <string name="wake_alert_body">Tap to talk to Ara.</string>
+    <string name="wake_notifications_needed">Notifications for Ara are off, so a wake heard in the background cannot open Ara. Turn on Ara\'s notifications, including \"Wake phrase heard\".</string>
+    <string name="wake_notifications_open">Open notification settings</string>
     <string name="wake_full_screen_needed">To open Ara when the phrase is heard in the background or on the lock screen, allow full-screen notifications for Ara.</string>
     <string name="wake_full_screen_allow">Allow full-screen notifications</string>
 </resources>

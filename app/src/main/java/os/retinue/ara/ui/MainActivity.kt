@@ -129,6 +129,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var isDefaultHome by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
+    private var notificationsAllowed by mutableStateOf(true)
 
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
@@ -185,7 +186,9 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     private val notificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            notificationsAllowed = WakeAlert.notificationsAllowed(this)
+        }
 
     private val homeRole = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         refreshHomeRole()
@@ -304,6 +307,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     wakeStatus = wakeStatus,
                     micGranted = micGranted,
                     fullScreenIntentAllowed = fullScreenIntentAllowed,
+                    notificationsAllowed = notificationsAllowed,
                 ),
                 actions = settingsActions,
             )
@@ -380,6 +384,14 @@ class MainActivity : ComponentActivity(), ShellHost {
             }
         }
 
+        override fun openNotificationSettings() {
+            try {
+                startActivity(WakeAlert.notificationSettings(this@MainActivity))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         override fun allowFullScreenIntent() {
             val intent = WakeAlert.fullScreenIntentSettings(this@MainActivity) ?: return
             try {
@@ -411,6 +423,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         refreshHomeRole()
         micGranted = hasMic()
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
+        notificationsAllowed = WakeAlert.notificationsAllowed(this)
         viewModel.refreshModels()
         webView?.onResume()
         resumed = true

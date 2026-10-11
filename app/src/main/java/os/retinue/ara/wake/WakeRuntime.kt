@@ -301,6 +301,11 @@ object WakeRuntime {
         holdUntilMs = now + HOLD_AFTER_WAKE_MS
         micBackoff.succeeded()
         evaluate()
+        if (!shellVisible && !WakeAlert.notificationsAllowed(app)) {
+            // No way to the shell from the background: no chime for a wake that goes nowhere.
+            Log.w(TAG, "wake heard, but notifications are off: it cannot reach the shell")
+            return
+        }
         chime?.play()
         val direct = onWake
         if (shellVisible && direct != null) {

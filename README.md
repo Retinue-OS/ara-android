@@ -200,7 +200,10 @@ activity directly (Android 10+ blocks that), so it posts a high-priority
 once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
 notifications by default only to calling and alarm apps; the wake section of
 the shell settings shows a button to allow it when needed
-(`USE_FULL_SCREEN_INTENT`). The wake intent carries a one-time token valid for
+(`USE_FULL_SCREEN_INTENT`). With Ara's notifications off (permission denied,
+turned off for the app, or the "Wake phrase heard" channel blocked) a background
+wake cannot reach Ara: the wake section says so and links to the app's
+notification settings, and such a wake plays no chime. The wake intent carries a one-time token valid for
 a minute (as long as a wake may wait for the shell), so other apps cannot fake a wake, and a recreated activity never replays
 one.
 

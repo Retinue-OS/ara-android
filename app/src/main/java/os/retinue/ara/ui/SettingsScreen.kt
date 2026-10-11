@@ -68,6 +68,8 @@ data class SettingsState(
     val micGranted: Boolean,
     /** Android 14+: the wake alert may open the shell full-screen (see WakeAlert). */
     val fullScreenIntentAllowed: Boolean,
+    /** The wake alert can be posted at all: permission, app notifications and its channel on. */
+    val notificationsAllowed: Boolean,
 )
 
 /** What the settings screen can ask for. */
@@ -88,6 +90,7 @@ interface SettingsActions {
     fun downloadPhraseModel(url: String)
     fun pickPhraseModel()
     fun allowFullScreenIntent()
+    fun openNotificationSettings()
 }
 
 /**
@@ -281,6 +284,12 @@ private fun WakeSection(state: SettingsState, actions: SettingsActions) {
     }
     if (state.settings.wakeMode != WakeMode.Off && !state.models.ready) {
         Text(stringResource(R.string.wake_needs_models), style = MaterialTheme.typography.bodySmall)
+    }
+    if (state.settings.wakeMode == WakeMode.Always && !state.notificationsAllowed) {
+        Text(stringResource(R.string.wake_notifications_needed), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = actions::openNotificationSettings) {
+            Text(stringResource(R.string.wake_notifications_open))
+        }
     }
     if (state.settings.wakeMode == WakeMode.Always && !state.fullScreenIntentAllowed) {
         Text(stringResource(R.string.wake_full_screen_needed), style = MaterialTheme.typography.bodySmall)
