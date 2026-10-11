@@ -692,8 +692,10 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     private fun pinApp(app: AppInfo) {
+        // Pinning an app already on the bar changes nothing: no "pinned" toast for it.
+        val wasPinned = viewModel.launcher.value.containsApp(app.packageName, app.activityName)
         viewModel.pin(app)
-        Toast.makeText(this, getString(R.string.drawer_pinned, app.label), Toast.LENGTH_SHORT).show()
+        if (!wasPinned) Toast.makeText(this, getString(R.string.drawer_pinned, app.label), Toast.LENGTH_SHORT).show()
     }
 
     // --- Home role -----------------------------------------------------------
