@@ -107,6 +107,40 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
     /** The custom folder icons in use (file names; see FolderIcons). */
     fun iconNames(): Set<String> = folders.mapNotNullTo(mutableSetOf()) { it.icon }
 
+    // --- Uninstalled apps --------------------------------------------------------
+
+    /** The packages of the bar's apps, those in folders included (pinned shortcuts not). */
+    fun appPackageNames(): Set<String> = buildSet {
+        entries.forEach { entry ->
+            when (entry) {
+                is LauncherEntry.App -> add(entry.packageName)
+                is LauncherEntry.Folder -> entry.apps.forEach { add(it.packageName) }
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * The bar without the apps and pinned shortcuts of [packageNames] (apps that
+     * were uninstalled), on the bar and inside folders. Folders stay, also when
+     * this empties them.
+     */
+    fun withoutPackages(packageNames: Set<String>): LauncherConfig {
+        if (packageNames.isEmpty()) return this
+        val kept = entries.mapNotNull { entry ->
+            when (entry) {
+                is LauncherEntry.App -> entry.takeUnless { it.packageName in packageNames }
+                is LauncherEntry.Shortcut -> entry.takeUnless { it.packageName in packageNames }
+                is LauncherEntry.Folder -> {
+                    val apps = entry.apps.filterNot { it.packageName in packageNames }
+                    if (apps.size == entry.apps.size) entry else entry.copy(apps = apps)
+                }
+                is LauncherEntry.Link, is LauncherEntry.WebPage -> entry
+            }
+        }
+        return if (kept == entries) this else copy(entries = kept)
+    }
+
     companion object {
         /** The four OS actions the web dock had (plan §1). */
         val DEFAULT = LauncherConfig(
