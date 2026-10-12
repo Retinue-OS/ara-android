@@ -1,308 +1,315 @@
-# Ara — Android voice client for Retinue
+# Ara — the Android shell for Retinue
 
-Ara is a minimal native Android app that lets you talk to an existing
-[Retinue](https://github.com/Retinue-OS/retinue) server-side assistant by voice.
-You speak a prompt, Android transcribes it, Ara submits it to Retinue, polls the
-returned job until the answer is ready, shows the answer, and (optionally) reads
-it aloud — then, in continuous mode, starts listening again.
+Ara is a small native Android app that turns a phone into a **Retinue device**:
+a specialized browser and home launcher around the
+[Retinue](https://github.com/Retinue-OS/retinue) web app.
 
-It is a sibling to Retinue's **Signal Gateway** and speaks exactly the same
-protocol (see [Relationship to the Signal Gateway](#relationship-to-the-signal-gateway)).
+- A **full-height WebView** shows the web app (threads, the attention list,
+  voice conversation, contacts, sends — everything that *is* Retinue lives
+  there and works the same in Chrome or on a desktop).
+- A **launcher bar** at the bottom holds the device's own shortcuts (Phone,
+  Messages, Mail, Maps by default) and an **All apps** drawer.
+- Ara can be the **default home app**, so the Home button lands on the web
+  app's home.
+- It adds the few things a browser tab cannot do: an on-device **wake phrase**,
+  **native text-to-speech** where the WebView has none, and the **client
+  certificate** (mutual TLS) for the Retinue edge.
 
-- **Language:** Kotlin, native Android APIs, Jetpack Compose UI.
-- **Primary target device:** Samsung Galaxy S25 (One UI 7 / Android 15).
-- **No** Flutter, React Native, or PWA.
+The old native voice loop (SpeechRecognizer, `/message` job polling, the answer
+screen) is gone: continuous conversation is now a per-thread mode of the web
+app.
 
----
-
-## Building from the command line
-
-Android Studio is optional — the project builds entirely from the command line
-via the bundled Gradle Wrapper.
-
-```bash
-./gradlew assembleDebug
-```
-
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
-
-Run the unit tests:
-
-```bash
-./gradlew testDebugUnitTest
-```
-
-### Requirements
-
-- **JDK 17** (AGP 8.7 requires it).
-- **Android SDK** with:
-  - Android SDK Platform **35** (compile/target SDK),
-  - Android SDK Build-Tools compatible with AGP 8.7,
-  - minimum supported device level is **API 31** (Android 12).
-- **Gradle** is provided by the wrapper (`./gradlew`); no system Gradle needed.
-
-Point the build at your SDK either by exporting `ANDROID_HOME` (or
-`ANDROID_SDK_ROOT`) or by creating `local.properties`:
-
-```properties
-sdk.dir=/path/to/Android/sdk
-```
-
-Install the debug build on a connected device:
-
-```bash
-./gradlew installDebug
-# or
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-### Versions
-
-- Android Gradle Plugin 8.7.2, Gradle 8.11.1 (wrapper), Kotlin 2.0.21.
-- Jetpack Compose (BOM 2024.10.01), Material 3.
-- OkHttp 4.12, Kotlin Coroutines 1.9, DataStore Preferences 1.1, kotlinx-serialization 1.7.
+- **Language:** Kotlin, Jetpack Compose, Android WebView (+ androidx.webkit).
+- **Primary target device:** Samsung Galaxy S25 (One UI 7 / Android 15);
+  minimum Android 12 (API 31).
 
 ---
 
-## Configuring the Retinue endpoint
+## Building
 
-The Retinue endpoint is the one value Ara cannot derive from the Signal Gateway
-(the gateway talks to Retinue over the internal container network at
-`http://retinue:8080/message`, which is not reachable from a phone). It is
-exposed through a single runtime configuration surface: **Settings**.
+The project builds from the command line with the bundled Gradle Wrapper.
 
-Open **Settings** (gear icon) and set:
+```bash
+./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
+./gradlew testDebugUnitTest      # JVM unit tests of the pure logic
+node app/src/test/js/retinue-shell.test.mjs   # the page-side shell script
+./gradlew installDebug           # or: adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-| Setting | Meaning | Default |
-|---|---|---|
-| **Retinue base URL** | Public HTTPS origin, e.g. `https://agents.example.com` | *(empty — must be set)* |
-| **Message path** | Prompt submission path | `/message` |
-| **Initial poll interval** | First delay between job polls | 3 s |
-| **Network request timeout** | Per-request (submit/poll) timeout | 30 s |
-| **Overall job timeout** | Max time to keep polling one job | 3600 s |
-| **Consecutive poll retries** | Transient poll failures tolerated before giving up | 10 |
-| **Client certificate** | The installed client cert Ara presents (mTLS) | *(none — must be selected)* |
+Requirements: **JDK 17**, an **Android SDK** with platform 35 (point
+`ANDROID_HOME` at it or write `sdk.dir=…` into `local.properties`). Versions:
+AGP 8.7.2, Gradle 8.11.1, Kotlin 2.0.21, Compose BOM 2024.10.01, androidx.webkit
+1.12.1, ONNX Runtime for Android 1.20.0. The APK carries native ONNX Runtime
+libraries for `arm64-v8a` and `x86_64` only (phones and the emulator).
 
-These defaults mirror the Signal Gateway's environment defaults
-(`RETINUE_POLL_INTERVAL`, `RETINUE_POST_TIMEOUT`, `RETINUE_GATEWAY_TIMEOUT`, …).
-No endpoint, credential, or key is baked into the APK.
+CI (`.github/workflows/ci.yml`) assembles the debug APK and runs the unit tests
+on every pull request and push to `main`; the nightly workflow publishes a
+signed release APK (see `keystore/README.md`). Debug and release builds are
+both signed with the checked-in test certificate, so any CI APK installs over
+the previous one without uninstalling.
 
 ---
 
-## Relationship to the Signal Gateway
+## First run and settings
 
-Ara reuses the Signal Gateway's Retinue contract verbatim; all of it lives in one
-place, [`RetinueProtocol`](app/src/main/java/os/retinue/ara/protocol/RetinueProtocol.kt),
-and the transport in [`RetinueClient`](app/src/main/java/os/retinue/ara/net/RetinueClient.kt).
-Protocol parsing is never duplicated in the UI, ViewModel, or service.
+On first start there is no base URL yet, so Ara opens its **shell settings**.
+They are also reachable from the long-press menu of any launcher-bar entry, and
+from the web app's Settings page (it calls `RetinueShell.openSettings()`).
 
-| Concern | Behaviour (matches `scripts/signal-gateway.py`) |
+| Setting | Meaning |
 |---|---|
-| **Prompt formatting** | `POST <base>/message` with JSON `{"message": <prompt>, "async": true}`. The prompt appends `Please answer in the same language as the question (ISO language code: <tag>)`, using the device locale. |
-| **Job URI extraction** | Response `job_url` (e.g. `/jobs/<id>`) resolved against the message URL. |
-| **Polling** | `GET <job_url>`; start at the initial interval, back off ×2 up to a ceiling, until done/error/expired or the overall timeout. |
-| **Job-status parsing** | `status` ∈ `pending` / `done` / `error`; answer from `response`, permalink from `entry_url`; HTTP 404 = expired. |
-| **Auth** | Mutual TLS at the Traefik edge (`retinue-mtls`). Ara presents a user-selected client certificate. |
-| **Timeouts / retries** | Per-request 30 s, initial poll 3 s, ×2 backoff to 300 s, overall 3600 s (all configurable). |
-| **Blocked requester** | HTTP 403 → the `response` message is shown as an error. |
+| **Retinue base URL** | The web app's origin, e.g. `https://agents.example.com` (`https://` is assumed if omitted). Pages on this origin stay in the shell; nothing else gets the bridge, the microphone or the certificate. |
+| **Client certificate** | The installed certificate Ara presents to that origin (mTLS). |
+| **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
+| **Launcher bar** | Add links and web-app pages, reorder, edit, remove, reset to defaults. |
+| **Wake phrase** | Mode, sensitivity, and the models (see below). |
 
-Ara implements **only** this one contract — no alternative endpoint shapes or
-generic response formats.
+Nothing environment-specific is baked into the APK.
 
 ---
 
-## Permissions & privacy
+## The web view
 
-### Microphone
+- JavaScript, DOM storage and service workers are on; media may play without a
+  tap (a wake arrives without one, and the web app's chime and voice-activity
+  detector need audio to start).
+- The user agent ends in ` RetinueShell/1 (Android)`.
+- **Same-origin** links stay in the view; links to **other web origins** open in
+  the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
+  go to Android (to browsable handlers only, as from a browser). `intent:` URLs
+  are parsed with `Intent.parseUri` and sanitized as Chrome does (browsable
+  only, no explicit component or selector, no URI grants or clip data, no
+  `file:` or `content:` data); when no app takes one, its `browser_fallback_url`
+  is honoured. A malformed one is ignored.
+  Top-level `javascript:`, `data:`, `file:` and `content:` navigations are
+  refused.
+- **File chooser** for attachments (the system picker, multiple files allowed).
+- **Microphone** for the page: granted only to the configured origin, after
+  Android's `RECORD_AUDIO` permission (asked for on first use).
+- **HTTP authentication** prompts for user name and password (a fallback; the
+  edge normally authenticates by certificate).
+- **Back** goes back in the page's history. As home app, Back at the start page
+  does nothing; otherwise it sends Ara to the background (the page is kept).
+- A crashed or reclaimed WebView renderer is replaced and the start page
+  reloaded.
+- **Load failures are shown, not left blank**: a thin progress bar runs while
+  the page loads; a main-frame network error, an HTTP error status (400 and up),
+  a refused TLS certificate of the configured origin or a cancelled sign-in
+  replace the page with a card giving the reason and URL, with Retry, Choose
+  certificate (when none is selected) and Shell settings. The settings' **Page
+  status** section shows the current status, the last URL, the selected
+  certificate and the page's last console errors, for a screenshot.
 
-`RECORD_AUDIO` is requested on first launch. If it is **denied**, Ara stays
-usable: you can still read existing answers and open Settings — only listening is
-disabled, with a clear explanation. Grant it to speak to Ara.
+## Shell ↔ web contract
 
-### Speech recognition & possible cloud processing
+The web app detects the shell and talks to it through:
 
-Ara uses Android's speech-recognition APIs and **prefers an on-device
-recognizer** when the device provides one; otherwise it falls back to the normal
-Android recognition service, which may transmit audio to the configured provider
-(e.g. Google). Before the first recognition session that may use the cloud, Ara
-shows a **disclosure** and asks you to acknowledge it; the acknowledgement is
-stored locally.
+- `window.RetinueShell` — installed at document start on the configured origin
+  only: `{platform: 'android', version, setVoiceActive(bool), openSettings()}`.
+  `setVoiceActive(true)` (the page has the mic open, or holds a continuous
+  conversation) keeps the screen on and pauses wake detection until
+  `setVoiceActive(false)`, however long that takes. As a safety net, a
+  microphone grant to the page pauses wake detection by itself until the page
+  reports, or for 10 s if it never does.
+- Shell → web events:
+  `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))` with
+  `type` `wake` (the phrase was heard) or `home` (Home pressed while Ara was
+  already in front). A wake while the page is not loaded loads `<base>/` and
+  dispatches `wake` once it has finished loading, so no wake flag lands in the
+  WebView history.
+  The event is cancelable, and the shell checks whether the page handled it:
+  a `retinue-shell` listener on `window` ran for it (the page script wraps
+  them, so listeners removed, run `once` or aborted no longer count), or the
+  page called `preventDefault()`. A listener receives every type, so it counts
+  for every type: a page that handles only `home` still takes `wake` (the web
+  app handles both). On a page of the origin without a listener (a
+  gateway page such as `/sends`), a wake loads `<base>/?wake=1` (the web app
+  strips the flag with `history.replaceState` on load) and Home loads `<base>/`
+  (Home on the start page leaves it alone).
+- A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
+  TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
+  without any voices). It covers what the web Reader uses: `speak`, `cancel`,
+  `pause`/`resume` (an utterance resumes from its start), `getVoices` with
+  `voiceschanged`, `speaking`/`pending`/`paused`, and per-utterance
+  `start`/`end`/`error`/`boundary` events; `cancel()` reports `interrupted` for
+  the spoken utterance and `canceled` for queued ones, as Chrome does.
 
-The current recognition posture is always shown:
+Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
+(`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
+origin). A WebView without `addWebMessageListener` gets no bridge: the page
+behaves as in a browser tab.
 
-- *On-device recognition* — an on-device recognizer is confirmed in use,
-- *Recognition may use a cloud service*,
-- *Recognition mode unknown*.
+---
 
-Ara never claims recognition is local unless the Android API confirms an
-on-device recognizer.
+## Launcher bar
 
-### Notifications
+Entries are stored on the device (DataStore, as JSON) and are one of:
 
-On Android 13+ Ara requests `POST_NOTIFICATIONS`. If **denied**, foreground use
-is unaffected, but Ara cannot alert you when a background answer is ready and
-does not pretend otherwise. Notifications are privacy-safe: neither the prompt
-nor the answer appears in them, and lock-screen visibility is private.
+| Type | Example | Opens |
+|---|---|---|
+| **App** | pinned from All apps | the app's launcher activity |
+| **Shortcut** (`shortcut`) | pinned by another app | that app's shortcut (needs Ara as home app) |
+| **Link** (`uri`) | `tel:`, `sms:`, `mailto:`, `geo:0,0?q=`, `https://…`, `intent:…` | the dialer (tel), a composer (sms/mailto), otherwise Android's handler |
+| **Web page** (`web`) | `/#contacts` | that page of the web app, in the shell |
+
+The defaults are Phone, Messages, Mail and Maps — the four OS actions the web
+app's dock used to have. The bar scrolls sideways when it is full. The last
+slot is always **All apps**: a searchable list of launchable apps (tap to open,
+long-press to pin). It is what keeps other apps reachable once Ara is the home
+screen. Long-press a bar entry to edit, move, or remove it; the editor in the
+shell settings adds links and web pages and reorders everything.
+
+As home app Ara accepts pinned shortcuts into the bar (Chrome's "Install app" /
+"Add to home screen", other apps' shortcuts) after a confirmation; removing one
+unpins it. Web apps Chrome installs as WebAPKs are ordinary apps in All apps.
+
+App discovery uses a `<queries>` declaration for launcher activities — no
+`QUERY_ALL_PACKAGES`.
+
+## Default home app
+
+Settings → **Set as default home app** asks Android for the home role
+(`RoleManager.ROLE_HOME`), or opens the system's home-app settings when the role
+is already held or cannot be requested. Ara declares `MAIN` + `HOME` + `DEFAULT`
+next to its normal launcher entry, so it can be switched back from the system
+settings at any time.
 
 ---
 
 ## Client certificate (mutual TLS)
 
-Retinue sits behind Traefik and requires a client certificate.
+1. Install the certificate as a *VPN & app user certificate* (Settings →
+   Security → Encryption & credentials → Install a certificate), or via MDM.
+2. In the shell settings, **Select certificate** and pick its alias.
 
-1. Install your client certificate on the device
-   (**Settings → Security → Encryption & credentials → Install a certificate →
-   VPN & app user certificate**, or via an MDM).
-2. In Ara's **Settings**, tap **Select certificate** and choose the installed
-   alias.
+Ara stores only the **alias**. When the configured origin asks for a client
+certificate (`onReceivedClientCertRequest`), the key and chain are taken from
+the Android KeyChain off the main thread and presented — to that origin only;
+any other host is refused. Without a selected certificate the request proceeds
+without one (and is asked again later). The same certificate is used for model
+downloads from the configured origin; that client follows no redirects itself,
+so a redirect to another host is fetched without the certificate.
 
-Ara stores only the **alias**. The private key and certificate chain are
-retrieved through the Android **KeyChain** at connection time and are never
-bundled in the APK or persisted by the app. The HTTPS client presents the
-selected certificate while performing normal server-certificate validation and
-hostname verification (no trust-all manager).
-
-### mTLS troubleshooting
-
-- **"No client certificate is selected"** — choose one in Settings.
-- **"The selected client certificate could not be used"** — it was removed or
-  expired, or the key is inaccessible; select another.
-- **"Secure connection to Retinue failed"** — a TLS handshake/validation problem:
-  check the base URL, that the server trusts your client CA, and that the server
-  certificate is valid for the host.
-- Certificates are user-installed and may sit behind hardware-backed keys; some
-  keys cannot be exported and behave differently across Android versions. If the
-  chooser shows no certificates, confirm the cert was installed as a *user*
-  credential with its private key.
+Files the page downloads from the configured origin are fetched the same way
+(with the WebView's cookies) into the phone's **Downloads** (MediaStore, up to
+200 MB, the name from `Content-Disposition` made safe); a redirect to another
+host, and any download from another origin, opens in the browser instead.
 
 ---
 
-## Foreground / background behaviour
+## Wake phrase
 
-- Speech recognition and text-to-speech run **only while Ara is in the
-  foreground**. Moving Ara to the background stops both immediately.
-- **Job polling continues in the background** via a dedicated **foreground
-  service** (type `dataSync`) that owns the active job, shows the ongoing
-  notification, and survives the Activity going away.
-- If a job **completes while backgrounded**, Ara persists the answer, replaces
-  the ongoing notification with a privacy-safe **"Ara has an answer"** alert, and
-  presents (and, if enabled, speaks) the answer when you return.
-- Toggling the mic or speaker while waiting or speaking never cancels the request
-  or stops playback — it only decides whether Ara listens again afterwards.
-- The screen is kept awake while Ara is listening, recognizing, submitting,
-  waiting, or speaking.
+Say the phrase and the web app opens a thread in continuous voice mode. Ara
+runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
+with ONNX Runtime: 16 kHz mono audio in 80 ms frames → `melspectrogram.onnx`
+(scaled `x/10 + 2`) → 76-frame windows → `embedding_model.onnx` → the last 16
+embeddings → the phrase model → a score. A score at or above the threshold
+(default 0.5) is a wake; a 2 s refractory period suppresses repeats. The
+pipeline was checked against openWakeWord's own Python implementation on the
+v0.5.1 release models (scores equal to within 1e-6, same detections).
 
-Long-running jobs may stay pending for several minutes. The maximum supported job
-duration is the configurable **overall job timeout**; note that Android limits
-`dataSync` foreground services (roughly a few hours of cumulative runtime per day
-on Android 14+), so extremely long jobs may be constrained by the platform.
+On a wake Ara plays a short chime, brings itself to the front (turning the
+screen on and asking to dismiss the keyguard), and dispatches `wake` to the
+page once the page can open the mic: Ara is resumed, its window has focus and
+the phone is unlocked. A wake that cannot get there within a minute (or whose
+unlock the user cancels) is dropped. The mic is then left to the page;
+detection resumes once the page reports the mic inactive (or after 10 s if it
+never takes it).
 
-### Swiping Ara away from Recents
+A wake heard while Ara is in the background (mode *Always*) cannot start the
+activity directly (Android 10+ blocks that), so it posts a high-priority
+**full-screen notification**: on a locked or sleeping phone it opens Ara at
+once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
+notifications by default only to calling and alarm apps; the wake section of
+the shell settings shows a button to allow it when needed
+(`USE_FULL_SCREEN_INTENT`). To have Ara come forward at once even while the
+phone is unlocked with another app in front, allow it to **display over other
+apps** (`SYSTEM_ALERT_WINDOW`, also offered in the wake section): that
+permission exempts the app from the background-start block, so the wake starts
+the activity directly and the notification is cancelled as soon as Ara takes
+the wake. With Ara's notifications off (permission denied,
+turned off for the app, or the "Wake phrase heard" channel blocked) a background
+wake cannot reach Ara: the wake section says so and links to the app's
+notification settings, and such a wake plays no chime. The wake intent carries a one-time token valid for
+a minute (as long as a wake may wait for the shell), so other apps cannot fake a wake, and a recreated activity never replays
+one.
 
-Removing Ara from the Recents screen is treated as an explicit stop: recognition
-and TTS stop, local polling is cancelled, the foreground service stops, active
-notifications are dismissed, unsent captured input is discarded, and resources
-are released. Ara does **not** restart itself.
+**Modes:** *Off* (default, the mic is never held) · *While the home screen is
+visible* (runs only while Ara is in front) · *Always* (a foreground service of
+type microphone with an ongoing notification; Android 14 lets it start only
+while Ara is in front, so it starts when you open Ara; if it is refused, it is
+retried later with a growing delay). Detection pauses while the web app
+reports the mic in use. A microphone error stops detection for 30 s (doubling
+up to 10 min on repeated errors), or until Ara is opened again.
 
-Your persisted preferences are **kept**: continuous-conversation, automatic
-playback, the cloud-recognition acknowledgement, and the selected certificate
-alias.
+**Models are not bundled** (licence and size). In the shell settings:
 
-> Note: exceptional OS/manufacturer behaviour (aggressive task killing, forced
-> stop) may not deliver identical callbacks in every scenario.
+1. **Download feature models** — `melspectrogram.onnx` and
+   `embedding_model.onnx` from openWakeWord's v0.5.1 release.
+2. **Phrase model** — download from a URL (default: the release's
+   `hey_jarvis_v0.1.onnx`, for testing) or **Choose file…** to import an
+   `.onnx` from the device.
 
-### Process-death recovery
+A downloaded or imported model replaces the old one only after it loads.
 
-System process reclamation is **not** the same as a Recents swipe. Ara persists
-enough job state (job URI, submission time, timeout deadline, last status,
-completed answer, whether it was presented/played, and an explicit cancellation
-flag) to recover: on relaunch it resumes polling a still-valid pending job or
-presents a completed answer, and never mistakes process death for user
-cancellation. An explicitly cancelled job is never resumed.
+### Recommended phrase: "Hey Retinue"
+
+"Hey Ara" and "Okay Ara" are short, mostly vowels, confusable with common names
+and words, and "Ara" is said whenever the system is merely talked *about*.
+**"Hey Retinue"** (/heɪ ˈrɛtɪnjuː/, four syllables) is rare in both German and
+English, its /t/ and /nju/ give the detector clear evidence, and it is still
+one easy breath. A false wake only costs a chime: nothing is sent unless speech
+follows, and an unused wake closes the mic again.
+
+To train it: open openWakeWord's
+[automatic model training notebook](https://github.com/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb)
+(Colab works), set the target phrase to `hey retinue`, run it (it synthesizes
+thousands of variations with Piper TTS and trains the small classifier), and
+export the `.onnx`. Put the file somewhere the phone can reach — e.g. on the
+Retinue host, where the client certificate is used for the download — and enter
+its URL, or copy it to the phone and use **Choose file…**. Raise the threshold
+if it wakes too easily, lower it if it is hard to trigger.
 
 ---
 
-## Launching Ara with Bixby
+## Known gaps
 
-The app label is **Ara**, so Bixby can launch it by name:
-
-> "Hi Bixby, start Ara."
-
-On launch Ara restores your continuous-conversation and automatic-playback
-preferences, initializes speech recognition and text-to-speech, handles any
-pending answer or active job, and — if continuous conversation is enabled and
-nothing blocks it — begins listening (after a short chime).
-
-No custom Bixby capsule or extension is required.
-
----
-
-## The two toggles
-
-- **Microphone toggle** — *continuous conversation mode*. Enabled (default on
-  first launch): Ara keeps the conversational loop going, listening again after
-  each answer. Disabled: Ara does not start new listening sessions. If you
-  disable it while speech has already been captured, Ara asks **Use captured
-  input? — Send / Discard**. The toggle is persisted.
-- **Speaker toggle** — *automatic playback*. Enabled: new answers are read aloud
-  while Ara is in the foreground. Disabled (default on first launch): answers are
-  shown as text only. While Ara is speaking, the speaker toggle is also the
-  **stop control** — tapping it stops the current utterance immediately, disables
-  playback, and (in continuous mode) starts listening again so you can restate
-  your prompt. The toggle is persisted.
+- **Web Push does not work inside Android WebView.** In the shell, push
+  notifications still need the PWA installed in Chrome, or a follow-up
+  (UnifiedPush, or a light poll of `/attention`).
+- With the phone **locked**, a wake in mode *Always* turns the screen on, shows
+  Ara over the lock screen and asks to unlock; the wake reaches the web app
+  (which then opens the mic) once the phone is unlocked. Without the
+  full-screen-notification permission (Android 14+) it is only a heads-up
+  notification.
+- On WebViews without `WEB_MESSAGE_LISTENER` (only very old ones) there is no
+  bridge: no wake event, native speech or settings link for the page.
 
 ---
 
 ## Architecture
 
 ```
-protocol/   RetinueProtocol, PollingPolicy      — pure Retinue contract + cadence (unit-tested)
-state/      AraState, AraDecisions              — explicit state model + pure decision logic (unit-tested)
-data/       AraSettings, AraStore               — runtime config + DataStore persistence
-net/        AraHttp, RetinueClient              — mTLS OkHttp client + the only Retinue transport
-speech/     SpeechController, TtsController      — SpeechRecognizer + TextToSpeech wrappers
-audio/      Chime                               — start-listening chime
-service/    PollingService, AraNotifications,   — foreground polling service, notifications,
-            JobBus                                process-global job state
-ui/         MainActivity, AraViewModel,         — Compose UI + orchestration
-            AraScreen, SettingsScreen
+shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
+           ShellMessages, FileNames                   decisions, the bridge wire format, download
+                                                      file names (unit-tested)
+launcher/  LauncherEntry, LauncherConfig            — pure: entry types, JSON codec, edits (unit-tested)
+           AppCatalog                               — launchable apps and their icons
+wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic gate (unit-tested)
+           WakeGate), WakeFeatures                  — pure: openWakeWord's streaming buffers (unit-tested)
+           OnnxWakeModels                           — the three ONNX models (ORT Java API)
+           WakeListener, WakeRuntime, WakeService,  — mic thread, process-wide owner, foreground service,
+           WakeModelFiles                             model download/import
+web/       ShellWebClients, ShellBridge,            — WebView setup and callbacks, the bridge,
+           NativeSpeech, ShellIntents,                TextToSpeech, intents to Android,
+           ShellDownloads                             page downloads into Downloads
+data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
+net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
+ui/        MainActivity, ShellViewModel,            — the Compose shell, settings, bar, drawer
+           LauncherBar, AppDrawer, SettingsScreen
+assets/    retinue-shell.js                         — page side of the bridge and the speech stand-in
 ```
 
-The branching rules (toggle behaviour, the listening gate, send/discard,
-duplicate-submission and stale-callback guards, notification and recovery
-decisions) live in `AraDecisions` — framework-free and covered by unit tests, so
-they can be verified without an emulator. The chime sound is
-`app/src/main/res/raw/chime.wav`, easy to replace.
-
-### Tests
-
-`app/src/test/` covers Retinue job-URI and job-status parsing, polling
-retry/timeout decisions, the toggle and send/discard behaviour, duplicate-submit
-and stale-callback guards, foreground/background transitions, notification
-decisions, and process-recovery / task-removal decisions.
-
----
-
-## Known Android & Samsung limitations
-
-- **Foreground-service limits:** Android 14+ caps `dataSync` foreground-service
-  runtime; very long Retinue jobs may hit platform limits before the configured
-  overall timeout.
-- **Aggressive battery management:** Samsung's "Deep sleeping apps" / battery
-  optimization can suspend background polling. For reliable multi-minute jobs,
-  exclude Ara from battery optimization.
-- **Recognition availability varies:** whether an on-device recognizer exists —
-  and for which languages — depends on the device and installed speech services;
-  Ara adapts and shows the actual posture.
-- **KeyChain / hardware-backed keys:** certificate availability and behaviour
-  differ across Android versions and secure-hardware implementations; some keys
-  are non-exportable by design.
-- **Task-removal callbacks:** forced stops or unusual OEM behaviour may not
-  always deliver `onTaskRemoved`.
-
----
-
-## Scope (version one)
-
-One active Retinue request at a time; job-URI polling only — no WebSockets, no
-server push, no concurrent conversations, no background microphone capture.
+The branching rules live in framework-free classes covered by JVM unit tests;
+the Android classes only gather inputs and carry out the answers. The chime is
+`app/src/main/res/raw/chime.wav`.

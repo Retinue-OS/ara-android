@@ -22,20 +22,24 @@ android {
 
     defaultConfig {
         applicationId = "os.retinue.ara"
-        // minSdk 31 (Android 12): the lowest level that exposes the on-device
-        // speech-recognition APIs (SpeechRecognizer.createOnDeviceSpeechRecognizer)
-        // and covers the modern Samsung Galaxy line (S21 and newer). Features that
-        // need a higher level (POST_NOTIFICATIONS, checkRecognitionSupport) are
-        // guarded at runtime with Build.VERSION checks.
+        // minSdk 31 (Android 12): covers the modern Samsung Galaxy line (S21 and
+        // newer). Features of later levels (the Android 14 microphone foreground
+        // service type, POST_NOTIFICATIONS) are guarded at runtime.
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        // CI appends the commit, so the settings show which build is installed.
+        versionName = "2.0" + (System.getenv("ARA_BUILD_SHA")?.take(7)?.let { "+$it" } ?: "")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // The label the user speaks to Bixby ("start Ara") is the app label; see
-        // the manifest. No BuildConfig secrets are baked in — the endpoint and the
-        // client certificate are configured at runtime.
+        // No BuildConfig secrets are baked in: the Retinue base URL, the client
+        // certificate and the wake-phrase models are all configured at runtime.
+
+        // ONNX Runtime ships native libraries per ABI; phones and the emulator
+        // only need these two, which keeps the APK a third of the size.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -48,6 +52,12 @@ android {
     }
 
     buildTypes {
+        // Debug builds share the test certificate too: each CI runner would
+        // otherwise sign with a fresh debug key, and Android refuses to install
+        // one branch APK over the previous one ("App not installed").
+        debug {
+            signingConfig = signingConfigs.getByName("nightly")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -83,7 +93,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.datastore.preferences)
 
     implementation(platform(libs.compose.bom))
@@ -97,8 +106,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.webkit)
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
 }

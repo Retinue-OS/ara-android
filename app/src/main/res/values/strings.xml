@@ -1,107 +1,146 @@
 <resources>
-    <!-- App label. This is the name Bixby matches on "start Ara". -->
+    <!-- App label, also the name shown in the home-app chooser and the one Bixby matches. -->
     <string name="app_name">Ara</string>
 
-    <!-- State labels (also used as accessible status text, never icon-only). -->
-    <string name="state_initializing">Initializing</string>
-    <string name="state_inactive">Inactive</string>
-    <string name="state_listening">Listening</string>
-    <string name="state_recognizing">Recognizing speech</string>
-    <string name="state_captured_decision">Awaiting Send or Discard</string>
-    <string name="state_submitting">Submitting</string>
-    <string name="state_waiting">Waiting for Retinue</string>
-    <string name="state_answer_pending">Answer ready</string>
-    <string name="state_speaking">Speaking</string>
-    <string name="state_error">Error</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="no_app_for_link">No app on this device can open that.</string>
+    <string name="msg_base_url_needed">Set the Retinue base URL to show the web app.</string>
 
-    <!-- Primary action labels. -->
-    <string name="action_send">Send</string>
-    <string name="action_discard">Discard</string>
-    <string name="action_start_listening">Start listening</string>
-    <string name="action_stop">Stop</string>
-    <string name="action_retry">Retry</string>
-    <string name="action_dismiss_error">Dismiss</string>
+    <!-- Launcher bar. -->
+    <string name="launcher_all_apps">All apps</string>
+    <string name="launcher_edit">Edit</string>
+    <string name="launcher_remove">Remove</string>
+    <string name="launcher_move_left">Move left</string>
+    <string name="launcher_move_right">Move right</string>
+    <string name="launcher_add_link">Add link</string>
+    <string name="launcher_add_web">Add web page</string>
+    <string name="launcher_reset">Reset to defaults</string>
+    <string name="launcher_label">Label</string>
+    <string name="launcher_uri">URI</string>
+    <string name="launcher_path">Path in the web app</string>
 
-    <!-- Toggles (with content descriptions for accessibility). -->
-    <string name="mic_toggle_on_desc">Continuous conversation enabled. Tap to disable.</string>
-    <string name="mic_toggle_off_desc">Continuous conversation disabled. Tap to enable.</string>
-    <string name="speaker_toggle_on_desc">Automatic playback enabled. Tap to disable.</string>
-    <string name="speaker_toggle_off_desc">Automatic playback disabled. Tap to enable.</string>
-    <string name="mic_toggle_label">Continuous conversation</string>
-    <string name="speaker_toggle_label">Automatic playback</string>
+    <!-- Pinned shortcuts (Chrome's installed web apps, other apps' shortcuts). -->
+    <string name="pin_shortcut_title">Add to the launcher bar?</string>
+    <string name="pin_shortcut_add">Add</string>
+    <string name="pin_shortcut_added">Added to the launcher bar</string>
+    <string name="pin_shortcut_failed">The shortcut could not be added.</string>
+    <string name="shortcut_unavailable">This shortcut is no longer available</string>
+    <string name="shortcut_not_home">Shortcuts open only while Ara is the default home app.</string>
+    <string name="shortcut_locked">Unlock the phone to open this shortcut.</string>
 
-    <!-- Section headings. -->
-    <string name="label_prompt">Recognized prompt</string>
-    <string name="label_answer">Answer</string>
-    <string name="label_status">Status</string>
-    <string name="label_privacy">Recognition</string>
-    <string name="no_prompt_yet">No prompt yet.</string>
-    <string name="no_answer_yet">No answer yet.</string>
+    <!-- Downloads the page starts. -->
+    <string name="download_started">Downloading %1$s…</string>
+    <string name="download_done">%1$s saved to Downloads</string>
+    <string name="download_failed">Could not download %1$s</string>
+    <string name="download_too_large">%1$s is too large to download here (over 200 MB)</string>
+    <string name="download_unsupported">This download cannot be saved by the shell.</string>
 
-    <!-- Privacy states. -->
-    <string name="privacy_on_device">On-device recognition</string>
-    <string name="privacy_cloud">Recognition may use a cloud service</string>
-    <string name="privacy_unknown">Recognition mode unknown</string>
+    <!-- App drawer. -->
+    <string name="drawer_search">Search apps</string>
+    <string name="drawer_hint">Tap to open, long-press to pin to the bar.</string>
+    <string name="drawer_pin">Pin to the bar</string>
+    <string name="drawer_pinned">%1$s pinned to the bar</string>
 
-    <!-- Cloud disclosure. -->
-    <string name="cloud_disclosure_title">Speech recognition</string>
-    <string name="cloud_disclosure_body">On-device recognition is not available for your language on this device, so Ara will use Android\'s speech-recognition service. Captured speech may be transmitted to the configured speech-recognition provider (for example, Google) for transcription. This happens only while you are speaking to Ara.</string>
-    <string name="cloud_disclosure_accept">Continue</string>
-    <string name="cloud_disclosure_decline">Not now</string>
-
-    <!-- Captured-input decision dialog. -->
-    <string name="captured_title">Use captured input?</string>
-    <string name="captured_body">Speech has already been captured. Send it as a prompt or discard it?</string>
-
-    <!-- Status / error messages. -->
-    <string name="msg_no_speech">No speech detected.</string>
-    <string name="msg_empty_prompt">Nothing was recognized, so there is nothing to send.</string>
-    <string name="msg_recognizer_busy">The speech recognizer is busy. Retrying shortly.</string>
-    <string name="msg_recognizer_unavailable">Speech recognition is not available on this device.</string>
-    <string name="msg_recognition_failed">Recognition failed. Retrying shortly.</string>
-    <string name="msg_network_recognition">A network error interrupted recognition.</string>
-    <string name="msg_mic_permission_denied">Microphone permission is denied. Ara can still show answers and settings, but cannot listen. Grant the permission to speak to Ara.</string>
-    <string name="msg_notif_permission_denied">Notification permission is denied. Ara works normally in the foreground, but cannot alert you when a background answer is ready.</string>
-    <string name="msg_cloud_declined">Cloud recognition was declined, so Ara cannot listen. You can change this later.</string>
-    <string name="msg_no_certificate">No client certificate is selected. Choose one in Settings to reach Retinue.</string>
-    <string name="msg_cert_unavailable">The selected client certificate could not be used (it may have been removed or expired). Select another in Settings.</string>
-    <string name="msg_tls_failed">Secure connection to Retinue failed. Check the endpoint and your client certificate.</string>
-    <string name="msg_bad_job_uri">Retinue returned an invalid job reference.</string>
-    <string name="msg_job_failed">Retinue could not complete the request.</string>
-    <string name="msg_job_timeout">The request timed out before Retinue answered.</string>
-    <string name="msg_submit_failed">Could not reach Retinue to submit the prompt.</string>
-    <string name="msg_tts_failed">Text-to-speech is unavailable, so the answer is shown as text only.</string>
-    <string name="msg_service_failed">Background polling could not start; keeping Ara in the foreground.</string>
-    <string name="msg_blocked">Retinue refused the request: this identity is not authorized.</string>
-
-    <!-- Notifications. -->
-    <string name="notif_channel_name">Ara job activity</string>
-    <string name="notif_channel_desc">Ongoing status while Ara waits for a Retinue answer, and a privacy-safe alert when the answer is ready.</string>
-    <string name="notif_waiting_title">Ara is waiting for an answer</string>
-    <string name="notif_waiting_body">Retinue is working on your request.</string>
-    <string name="notif_answer_title">Ara has an answer</string>
-    <string name="notif_answer_body">Tap to open Ara and see the answer.</string>
-    <string name="notif_cancel">Cancel</string>
+    <!-- HTTP authentication fallback. -->
+    <string name="auth_title">Sign in</string>
+    <string name="auth_body">%1$s asks for a user name and password (%2$s).</string>
+    <string name="auth_user">User name</string>
+    <string name="auth_password">Password</string>
+    <string name="auth_sign_in">Sign in</string>
 
     <!-- Settings. -->
-    <string name="settings_title">Settings</string>
-    <string name="settings_open">Open settings</string>
+    <string name="settings_title">Shell settings</string>
+    <string name="settings_close">Close</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_version">Ara shell %1$s</string>
+    <string name="settings_section_retinue">Retinue</string>
     <string name="settings_base_url">Retinue base URL</string>
     <string name="settings_base_url_hint">https://agents.example.com</string>
-    <string name="settings_message_path">Message path</string>
-    <string name="settings_poll_interval">Initial poll interval (seconds)</string>
-    <string name="settings_request_timeout">Network request timeout (seconds)</string>
-    <string name="settings_job_timeout">Overall job timeout (seconds)</string>
-    <string name="settings_max_retries">Consecutive poll retries before giving up</string>
-    <string name="settings_speech_section">Speech recognition</string>
-    <string name="settings_auto_end_of_speech">Auto-send at end of speech</string>
-    <string name="settings_auto_end_of_speech_desc">When on, Ara sends automatically after you stop speaking. Turn off to keep listening through pauses; nothing is sent until you press Send.</string>
-    <string name="settings_silence_timeout">End-of-speech pause (seconds, 0 = default)</string>
-    <string name="settings_silence_timeout_desc">How long a pause may last before Ara assumes you have finished. Leave empty or 0 to use the recognizer\'s default.</string>
+    <string name="settings_base_url_https">Retinue needs https</string>
     <string name="settings_certificate">Client certificate</string>
     <string name="settings_certificate_none">None selected</string>
     <string name="settings_select_certificate">Select certificate</string>
     <string name="settings_clear_certificate">Clear</string>
-    <string name="settings_save">Save</string>
-    <string name="settings_close">Close</string>
+
+    <string name="settings_section_home">Home screen</string>
+    <string name="settings_home_is_default">Ara is your home app: the Home button shows the web app.</string>
+    <string name="settings_home_not_default">Ara is not your home app yet.</string>
+    <string name="settings_home_set">Set as default home app</string>
+    <string name="settings_home_change">Change home app</string>
+    <string name="settings_pin_supported">Android routes pinned shortcuts (browsers\' "Install app", "Add to home screen") to Ara.</string>
+    <string name="settings_pin_unsupported">Android reports that Ara cannot take pinned shortcuts, so browsers grey out "Install app" and "Add to home screen".</string>
+    <string name="settings_pin_test">Test: pin a shortcut</string>
+    <string name="settings_pin_test_label">Ara test</string>
+    <string name="settings_pin_refused">Android refused the shortcut request.</string>
+
+    <string name="settings_section_launcher">Launcher bar</string>
+    <string name="settings_launcher_hint">Add links and web-app pages here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it.</string>
+    <string name="settings_launcher_empty">The bar is empty; only All apps is shown.</string>
+
+    <!-- Wake phrase. -->
+    <string name="settings_section_wake">Wake phrase</string>
+    <string name="wake_explainer">Say the phrase to open a voice conversation in the web app. Detection runs on the device (openWakeWord); no audio leaves the phone until the web app opens the mic.</string>
+    <string name="wake_mode_off">Off</string>
+    <string name="wake_mode_visible">While the home screen is visible</string>
+    <string name="wake_mode_always">Always (shows a notification)</string>
+    <string name="wake_status_idle">Not listening.</string>
+    <string name="wake_status_listening">Listening for the wake phrase.</string>
+    <string name="wake_status_paused">Paused while the web app uses the microphone.</string>
+    <string name="wake_status_paused_other_app">Paused while another app uses the microphone.</string>
+    <string name="wake_status_error">Wake detection stopped: %1$s</string>
+    <string name="wake_needs_mic">Microphone permission is needed.</string>
+    <string name="wake_needs_models">Download the feature models and a phrase model first.</string>
+    <string name="wake_threshold">Sensitivity threshold: %1$.2f</string>
+    <string name="wake_threshold_hint">Lower wakes more easily (and more often by mistake); 0.5 is openWakeWord\'s default.</string>
+    <string name="wake_models">Models</string>
+    <string name="wake_models_state">Melspectrogram: %1$s · Embedding: %2$s · Phrase: %3$s</string>
+    <string name="wake_model_present">present</string>
+    <string name="wake_model_missing">missing</string>
+    <string name="wake_download_features">Download feature models</string>
+    <string name="wake_model_url">Phrase model URL (.onnx)</string>
+    <string name="wake_download_phrase">Download phrase model</string>
+    <string name="wake_pick_phrase">Choose file…</string>
+    <string name="wake_models_done">Models ready.</string>
+    <string name="wake_models_failed">Model download failed: %1$s</string>
+    <string name="wake_channel_name">Wake phrase</string>
+    <string name="wake_channel_desc">Shown while Ara listens for the wake phrase in the background.</string>
+    <string name="wake_notification_title">Listening for the wake phrase</string>
+    <string name="wake_notification_body">Tap to open Ara. Turn it off in the shell settings.</string>
+    <string name="wake_alert_channel_name">Wake phrase heard</string>
+    <string name="wake_alert_channel_desc">Opens Ara when the wake phrase is heard while another app is in front or the phone is locked.</string>
+    <string name="wake_alert_title">Wake phrase heard</string>
+    <string name="wake_alert_body">Tap to talk to Ara.</string>
+    <string name="wake_notifications_needed">Notifications for Ara are off, so a wake heard in the background cannot open Ara. Turn on Ara\'s notifications, including \"Wake phrase heard\".</string>
+    <string name="wake_notifications_open">Open notification settings</string>
+    <string name="wake_full_screen_needed">To open Ara when the phrase is heard in the background or on the lock screen, allow full-screen notifications for Ara.</string>
+    <string name="wake_full_screen_allow">Allow full-screen notifications</string>
+    <string name="wake_overlay_needed">While the phone is unlocked with another app in front, a wake only shows a notification to tap. To bring Ara forward at once, allow it to display over other apps.</string>
+    <string name="wake_overlay_allow">Allow display over other apps</string>
+    <!-- Page status: the card over a page that did not load, and the diagnostics in settings. -->
+    <string name="page_failed_title">The dashboard could not be loaded</string>
+    <string name="page_failed_network">Network error: %1$s (code %2$d)</string>
+    <string name="page_failed_http">HTTP %1$d %2$s</string>
+    <string name="page_failed_ssl">The server\'s TLS certificate was not accepted (%1$s).</string>
+    <string name="page_failed_sign_in_cancelled">Sign-in cancelled (HTTP 401).</string>
+    <string name="page_failed_no_certificate">No client certificate is selected. The Retinue edge may require one.</string>
+    <string name="page_ssl_not_yet_valid">not yet valid</string>
+    <string name="page_ssl_expired">expired</string>
+    <string name="page_ssl_id_mismatch">issued for another host name</string>
+    <string name="page_ssl_untrusted">issuer not trusted</string>
+    <string name="page_ssl_date_invalid">invalid date</string>
+    <string name="page_ssl_invalid">invalid certificate</string>
+    <string name="page_ssl_other">error %1$d</string>
+    <string name="page_retry">Retry</string>
+    <string name="page_choose_certificate">Choose certificate</string>
+    <string name="settings_section_page">Page status</string>
+    <string name="page_status_idle">Not loaded yet.</string>
+    <string name="page_status_loading">Loading (%1$d%%)</string>
+    <string name="page_status_ready">Loaded.</string>
+    <string name="page_status_failed">Failed: %1$s</string>
+    <string name="page_last_url">Last URL: %1$s</string>
+    <string name="page_url_none">none</string>
+    <string name="page_certificate">Client certificate: %1$s</string>
+    <string name="page_console_none">No console errors on this page.</string>
+    <string name="page_console_errors">Console errors (most recent last)</string>
+    <string name="page_console_line">%1$s:%2$d: %3$s</string>
 </resources>

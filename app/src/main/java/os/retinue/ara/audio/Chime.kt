@@ -6,15 +6,11 @@ import android.media.SoundPool
 import os.retinue.ara.R
 
 /**
- * Short "start listening" chime. Loaded from res/raw/chime.wav (easy to replace)
- * and played immediately before a recognition session begins. The caller must
- * wait for the chime to finish before starting the recognizer so Ara never
- * captures its own chime.
+ * Short chime played when the wake phrase is heard. Loaded from
+ * res/raw/chime.wav (easy to replace). SoundPool loads asynchronously, so the
+ * owner creates it ahead of the first use.
  */
 class Chime(context: Context) {
-
-    /** Approximate chime duration; callers delay recognition by at least this. */
-    val approxDurationMs: Long = 300
 
     private val soundPool: SoundPool = SoundPool.Builder()
         .setMaxStreams(1)
