@@ -192,11 +192,12 @@ fun LauncherSlot(
     }
 }
 
-/** An entry's icon: the app's own, or a symbol for the link scheme / web page. */
+/** An entry's icon: the app's or shortcut's own, or a symbol for the link scheme / web page. */
 @Composable
 fun EntryIcon(entry: LauncherEntry) {
     when (entry) {
         is LauncherEntry.App -> AppIcon(entry.packageName, entry.activityName)
+        is LauncherEntry.Shortcut -> ShortcutIcon(entry.packageName, entry.shortcutId)
         is LauncherEntry.Link -> Icon(linkIcon(entry.uri), contentDescription = null, modifier = Modifier.size(30.dp))
         is LauncherEntry.WebPage -> Icon(Icons.Filled.Language, contentDescription = null, modifier = Modifier.size(30.dp))
     }
@@ -207,6 +208,21 @@ fun AppIcon(packageName: String, activityName: String, size: androidx.compose.ui
     val context = LocalContext.current
     val bitmap: ImageBitmap? by produceState<ImageBitmap?>(null, packageName, activityName) {
         value = AppCatalog.icon(context, packageName, activityName)
+    }
+    val b = bitmap
+    if (b != null) {
+        Image(bitmap = b, contentDescription = null, modifier = Modifier.size(size))
+    } else {
+        Icon(Icons.Filled.Android, contentDescription = null, modifier = Modifier.size(size))
+    }
+}
+
+/** A pinned shortcut's icon, else its app's, else a generic one (looked up off the main thread). */
+@Composable
+fun ShortcutIcon(packageName: String, shortcutId: String, size: Dp = 34.dp) {
+    val context = LocalContext.current
+    val bitmap: ImageBitmap? by produceState<ImageBitmap?>(null, packageName, shortcutId) {
+        value = AppCatalog.shortcutIcon(context, packageName, shortcutId)
     }
     val b = bitmap
     if (b != null) {
@@ -227,7 +243,8 @@ private fun linkIcon(uri: String): ImageVector = when (uri.substringBefore(':').
 
 /**
  * Add or edit an entry. [entry] is the one being edited, or a blank template of
- * the kind being added (a Link or a WebPage). Apps only have a label to edit.
+ * the kind being added (a Link or a WebPage). Apps and shortcuts only have a
+ * label to edit.
  */
 @Composable
 fun EntryEditorDialog(
@@ -243,13 +260,14 @@ fun EntryEditorDialog(
                 is LauncherEntry.Link -> entry.uri
                 is LauncherEntry.WebPage -> entry.path
                 is LauncherEntry.App -> entry.packageName
+                is LauncherEntry.Shortcut -> entry.packageName
             },
         )
     }
     val targetValid = when (entry) {
         is LauncherEntry.Link -> LauncherLinks.isValid(target)
         is LauncherEntry.WebPage -> !target.contains("://")
-        is LauncherEntry.App -> true
+        is LauncherEntry.App, is LauncherEntry.Shortcut -> true
     }
     val canSave = label.isNotBlank() && targetValid
     val title = when {
@@ -285,7 +303,8 @@ fun EntryEditorDialog(
                         singleLine = true,
                         isError = !targetValid,
                     )
-                    is LauncherEntry.App -> Text(target, style = MaterialTheme.typography.bodySmall)
+                    is LauncherEntry.App, is LauncherEntry.Shortcut ->
+                        Text(target, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -300,6 +319,7 @@ fun EntryEditorDialog(
                             is LauncherEntry.Link -> entry.copy(label = l, uri = t)
                             is LauncherEntry.WebPage -> entry.copy(label = l, path = t.ifEmpty { "/" })
                             is LauncherEntry.App -> entry.copy(label = l)
+                            is LauncherEntry.Shortcut -> entry.copy(label = l)
                         },
                     )
                 },

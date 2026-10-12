@@ -14,9 +14,10 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
 
     fun indexOf(id: String): Int = entries.indexOfFirst { it.id == id }
 
-    /** Append [entry]; an app already on the bar is not added twice. */
+    /** Append [entry]; an app or a shortcut already on the bar is not added twice. */
     fun add(entry: LauncherEntry): LauncherConfig {
         if (entry is LauncherEntry.App && containsApp(entry.packageName, entry.activityName)) return this
+        if (entry is LauncherEntry.Shortcut && containsShortcut(entry.packageName, entry.shortcutId)) return this
         if (indexOf(entry.id) >= 0) return this
         return copy(entries = entries + entry)
     }
@@ -54,6 +55,16 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
 
     fun containsApp(packageName: String, activityName: String): Boolean =
         entries.any { it is LauncherEntry.App && it.packageName == packageName && it.activityName == activityName }
+
+    fun containsShortcut(packageName: String, shortcutId: String): Boolean =
+        entries.any { it is LauncherEntry.Shortcut && it.packageName == packageName && it.shortcutId == shortcutId }
+
+    /**
+     * The shortcut ids of [packageName] on the bar: what Ara keeps pinned for that
+     * package (LauncherApps.pinShortcuts replaces the whole set per package).
+     */
+    fun shortcutIds(packageName: String): List<String> =
+        entries.filterIsInstance<LauncherEntry.Shortcut>().filter { it.packageName == packageName }.map { it.shortcutId }
 
     fun canMoveLeft(id: String) = indexOf(id) > 0
     fun canMoveRight(id: String) = indexOf(id).let { it >= 0 && it < entries.lastIndex }

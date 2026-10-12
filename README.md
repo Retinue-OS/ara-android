@@ -148,6 +148,7 @@ Entries are stored on the device (DataStore, as JSON) and are one of:
 | Type | Example | Opens |
 |---|---|---|
 | **App** | pinned from All apps | the app's launcher activity |
+| **Shortcut** (`shortcut`) | pinned by another app | that app's shortcut (needs Ara as home app) |
 | **Link** (`uri`) | `tel:`, `sms:`, `mailto:`, `geo:0,0?q=`, `https://…`, `intent:…` | the dialer (tel), a composer (sms/mailto), otherwise Android's handler |
 | **Web page** (`web`) | `/#contacts` | that page of the web app, in the shell |
 
@@ -157,6 +158,10 @@ slot is always **All apps**: a searchable list of launchable apps (tap to open,
 long-press to pin). It is what keeps other apps reachable once Ara is the home
 screen. Long-press a bar entry to edit, move, or remove it; the editor in the
 shell settings adds links and web pages and reorders everything.
+
+As home app Ara accepts pinned shortcuts into the bar (Chrome's "Install app" /
+"Add to home screen", other apps' shortcuts) after a confirmation; removing one
+unpins it. Web apps Chrome installs as WebAPKs are ordinary apps in All apps.
 
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.

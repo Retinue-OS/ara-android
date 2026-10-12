@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * One slot of the launcher bar (plan §1). Stored on the device as JSON (see
- * [LauncherConfig]); the `type` discriminator is `app`, `uri` or `web`.
+ * [LauncherConfig]); the `type` discriminator is `app`, `shortcut`, `uri` or `web`.
  */
 @Serializable
 sealed class LauncherEntry {
@@ -20,6 +20,21 @@ sealed class LauncherEntry {
         override val label: String,
         val packageName: String,
         val activityName: String,
+    ) : LauncherEntry()
+
+    /**
+     * A pinned shortcut another app asked the launcher to hold (Chrome's
+     * "Install app" / "Add to home screen", an app's own shortcuts), accepted
+     * through the pin request. Started through LauncherApps, so it works only
+     * while Ara is the default home app.
+     */
+    @Serializable
+    @SerialName("shortcut")
+    data class Shortcut(
+        override val id: String,
+        override val label: String,
+        val packageName: String,
+        val shortcutId: String,
     ) : LauncherEntry()
 
     /** A URI handed to Android: `tel:`, `sms:`, `mailto:`, `geo:`, `https:`, `intent:` … */

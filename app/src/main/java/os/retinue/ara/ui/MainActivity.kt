@@ -295,7 +295,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     entries = entries,
                     onOpen = ::openEntry,
                     onEdit = { editing = it to false },
-                    onRemove = { e -> viewModel.updateLauncher { it.remove(e.id) } },
+                    onRemove = viewModel::removeEntry,
                     onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
                     onAllApps = { showDrawer = true },
                     onSettings = ::openSettings,
@@ -382,7 +382,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
 
         override fun removeEntry(entry: LauncherEntry) {
-            viewModel.updateLauncher { it.remove(entry.id) }
+            viewModel.removeEntry(entry)
         }
 
         override fun moveEntry(entry: LauncherEntry, delta: Int) {

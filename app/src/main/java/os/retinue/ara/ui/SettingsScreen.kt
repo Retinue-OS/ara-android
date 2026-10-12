@@ -247,6 +247,7 @@ private fun LauncherSection(state: SettingsState, actions: SettingsActions) {
 
 private fun describe(entry: LauncherEntry): String = when (entry) {
     is LauncherEntry.App -> entry.packageName
+    is LauncherEntry.Shortcut -> entry.packageName
     is LauncherEntry.Link -> entry.uri
     is LauncherEntry.WebPage -> entry.path
 }

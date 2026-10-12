@@ -19,6 +19,15 @@
     <string name="launcher_uri">URI</string>
     <string name="launcher_path">Path in the web app</string>
 
+    <!-- Pinned shortcuts (Chrome's installed web apps, other apps' shortcuts). -->
+    <string name="pin_shortcut_title">Add to the launcher bar?</string>
+    <string name="pin_shortcut_add">Add</string>
+    <string name="pin_shortcut_added">Added to the launcher bar</string>
+    <string name="pin_shortcut_failed">The shortcut could not be added.</string>
+    <string name="shortcut_unavailable">This shortcut is no longer available</string>
+    <string name="shortcut_not_home">Shortcuts open only while Ara is the default home app.</string>
+    <string name="shortcut_locked">Unlock the phone to open this shortcut.</string>
+
     <!-- Downloads the page starts. -->
     <string name="download_started">Downloading %1$s…</string>
     <string name="download_done">%1$s saved to Downloads</string>

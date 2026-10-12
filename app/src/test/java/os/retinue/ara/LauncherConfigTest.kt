@@ -15,6 +15,7 @@ class LauncherConfigTest {
 
     private val app = LauncherEntry.App("a1", "Camera", "com.example.camera", "com.example.camera.Main")
     private val web = LauncherEntry.WebPage("w1", "Contacts", "/contacts")
+    private val pwa = LauncherEntry.Shortcut("s1", "Weather", "com.android.chrome", "webapp-1")
 
     private fun ids(c: LauncherConfig) = c.entries.map { it.id }
 
@@ -27,10 +28,12 @@ class LauncherConfigTest {
 
     @Test
     fun roundTrip() {
-        val c = LauncherConfig.DEFAULT.add(app).add(web)
+        val c = LauncherConfig.DEFAULT.add(app).add(web).add(pwa)
         val json = LauncherCodec.encode(c)
         assertTrue(json.contains("\"version\":1"))
         assertTrue(json.contains("\"type\":\"app\""))
+        assertTrue(json.contains("\"type\":\"shortcut\""))
+        assertTrue(json.contains("\"shortcutId\":\"webapp-1\""))
         assertTrue(json.contains("\"type\":\"web\""))
         assertTrue(json.contains("\"type\":\"uri\""))
         assertEquals(c, LauncherCodec.decode(json))
@@ -62,6 +65,22 @@ class LauncherConfigTest {
         assertSame(c, c.add(app.copy(id = "other")))
         assertSame(c, c.add(web.copy(id = "phone")))
         assertTrue(c.containsApp("com.example.camera", "com.example.camera.Main"))
+    }
+
+    @Test
+    fun shortcutsAreAddedOncePerPackageAndId() {
+        val c = LauncherConfig.DEFAULT.add(pwa)
+        assertSame(c, c.add(pwa.copy(id = "other", label = "Again")))
+        assertTrue(c.containsShortcut("com.android.chrome", "webapp-1"))
+        assertFalse(c.containsShortcut("com.android.chrome", "webapp-2"))
+        // Another shortcut of the same package, and the same id in another package, are distinct.
+        val more = c.add(pwa.copy(id = "s2", shortcutId = "webapp-2")).add(pwa.copy(id = "s3", packageName = "org.example"))
+        assertEquals(listOf("webapp-1", "webapp-2"), more.shortcutIds("com.android.chrome"))
+        assertEquals(listOf("webapp-2"), more.remove("s1").shortcutIds("com.android.chrome"))
+        assertEquals(emptyList(), more.shortcutIds("com.example.camera"))
+        // A decoded shortcut missing its id is skipped like any broken entry.
+        val raw = """{"version":1,"entries":[{"type":"shortcut","id":"x","label":"?","packageName":"p"}]}"""
+        assertEquals(emptyList(), ids(LauncherCodec.decode(raw)))
     }
 
     @Test

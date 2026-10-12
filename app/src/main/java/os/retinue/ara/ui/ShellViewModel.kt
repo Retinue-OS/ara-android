@@ -67,7 +67,31 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         it.add(LauncherEntry.App(newId(), app.label, app.packageName, app.activityName))
     }
 
-    fun resetLauncher() = viewModelScope.launch { store.setLauncher(LauncherConfig.DEFAULT) }
+    /**
+     * Remove an entry; a shortcut is also unpinned (Ara keeps pinned exactly the
+     * shortcuts of that package still on the bar), so Android and the app know.
+     */
+    fun removeEntry(entry: LauncherEntry) {
+        viewModelScope.launch {
+            var after: LauncherConfig? = null
+            store.updateLauncher { it.remove(entry.id).also { c -> after = c } }
+            val remaining = after
+            if (entry is LauncherEntry.Shortcut && remaining != null) {
+                AppCatalog.syncPinnedShortcuts(appCtx, entry.packageName, remaining.shortcutIds(entry.packageName))
+            }
+        }
+    }
+
+    /** Back to the defaults, which hold no shortcuts: every shortcut on the bar is unpinned. */
+    fun resetLauncher() = viewModelScope.launch {
+        var before: LauncherConfig? = null
+        store.updateLauncher {
+            before = it
+            LauncherConfig.DEFAULT
+        }
+        val packages = before?.entries.orEmpty().filterIsInstance<LauncherEntry.Shortcut>().map { it.packageName }
+        packages.distinct().forEach { AppCatalog.syncPinnedShortcuts(appCtx, it, emptyList()) }
+    }
 
     fun downloadFeatureModels() = modelJob {
         WakeModelFiles.downloadFeatureModels(appCtx, store.settingsNow())

@@ -5,4 +5,12 @@
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+
+    <!-- An invisible window under a Compose dialog (the pin-shortcut confirmation);
+         inherits Theme.Ara, so it follows the values-night variant too. -->
+    <style name="Theme.Ara.Translucent">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

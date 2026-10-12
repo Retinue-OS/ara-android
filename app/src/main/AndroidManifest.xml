@@ -92,6 +92,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Pinned shortcuts (Chrome's "Install app" / "Add to home screen", other
+             apps' shortcuts): ShortcutManager.requestPinShortcut() works only when
+             the default home app has an activity for CONFIRM_PIN_SHORTCUT, which
+             Android resolves within that package and starts explicitly. Its own
+             empty task affinity keeps it from bringing the shell's task forward. -->
+        <activity
+            android:name=".ui.PinShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ara.Translucent"
+            android:label="@string/pin_shortcut_title">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+            </intent-filter>
+        </activity>
+
         <!-- Wake mode "always". Started only while the shell is in front. The
              short-service type is only for leaving cleanly when the microphone
              type is refused (see WakeService). -->

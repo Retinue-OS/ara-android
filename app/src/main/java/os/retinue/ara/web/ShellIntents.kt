@@ -4,7 +4,10 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.net.Uri
+import android.os.Process
+import android.os.UserManager
 import android.util.Log
 import android.widget.Toast
 import os.retinue.ara.R
@@ -93,6 +96,10 @@ object ShellIntents {
             launchApp(context, entry.packageName, entry.activityName)
             Route.Block
         }
+        is LauncherEntry.Shortcut -> {
+            launchShortcut(context, entry.packageName, entry.shortcutId)
+            Route.Block
+        }
         is LauncherEntry.Link -> {
             if (LauncherLinks.actionFor(entry.uri) == LinkAction.ParseIntent) {
                 openIntentUrl(context, entry.uri, router, fromPage = false)
@@ -118,6 +125,38 @@ object ShellIntents {
             toast(context)
             false
         }
+    }
+
+    /**
+     * Start a pinned shortcut through LauncherApps (the home app's privilege). A
+     * shortcut that is gone (app uninstalled, shortcut removed or disabled) only
+     * gets a toast: the entry stays on the bar for the user to remove.
+     */
+    fun launchShortcut(context: Context, packageName: String, shortcutId: String): Boolean {
+        val apps = context.getSystemService(LauncherApps::class.java)
+        val failure = if (apps == null) {
+            R.string.shortcut_unavailable
+        } else {
+            try {
+                apps.startShortcut(packageName, shortcutId, null, null, Process.myUserHandle())
+                return true
+            } catch (e: ActivityNotFoundException) {
+                R.string.shortcut_unavailable
+            } catch (e: SecurityException) {
+                // Only the default home app may start shortcuts.
+                R.string.shortcut_not_home
+            } catch (e: IllegalStateException) {
+                // Thrown while the user is locked (before the first unlock after a reboot).
+                val locked = context.getSystemService(UserManager::class.java)?.isUserUnlocked == false
+                Log.w(TAG, "could not start shortcut $packageName/$shortcutId", e)
+                if (locked) R.string.shortcut_locked else R.string.shortcut_unavailable
+            } catch (e: Exception) {
+                Log.w(TAG, "could not start shortcut $packageName/$shortcutId", e)
+                R.string.shortcut_unavailable
+            }
+        }
+        Toast.makeText(context, failure, Toast.LENGTH_SHORT).show()
+        return false
     }
 
     private fun startLink(context: Context, uri: String, fromPage: Boolean): Boolean {
