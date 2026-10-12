@@ -62,6 +62,8 @@ data class SettingsState(
     val settings: ShellSettings,
     val launcher: LauncherConfig,
     val isDefaultHome: Boolean,
+    /** Android lets other apps pin shortcuts to Ara (ShortcutManager.isRequestPinShortcutSupported). */
+    val pinShortcutsSupported: Boolean,
     val models: WakeModelStatus,
     val modelBusy: Boolean,
     val modelMessage: String?,
@@ -83,6 +85,9 @@ interface SettingsActions {
     fun selectCertificate()
     fun clearCertificate()
     fun requestHomeRole()
+
+    /** Ask Android to pin a shortcut to Ara, the way a browser installing a web app does. */
+    fun testPinShortcut()
     fun addEntry(template: LauncherEntry)
     fun editEntry(entry: LauncherEntry)
     fun removeEntry(entry: LauncherEntry)
@@ -195,6 +200,16 @@ private fun HomeSection(state: SettingsState, actions: SettingsActions) {
     )
     OutlinedButton(onClick = actions::requestHomeRole) {
         Text(stringResource(if (state.isDefaultHome) R.string.settings_home_change else R.string.settings_home_set))
+    }
+    // What browsers check before they offer "Install app" / "Add to home screen".
+    Text(
+        stringResource(
+            if (state.pinShortcutsSupported) R.string.settings_pin_supported else R.string.settings_pin_unsupported,
+        ),
+        style = MaterialTheme.typography.bodySmall,
+    )
+    OutlinedButton(onClick = actions::testPinShortcut) {
+        Text(stringResource(R.string.settings_pin_test))
     }
 }
 

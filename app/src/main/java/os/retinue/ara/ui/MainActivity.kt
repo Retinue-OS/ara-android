@@ -6,6 +6,9 @@ import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -110,6 +113,9 @@ class MainActivity : ComponentActivity(), ShellHost {
          * ([WakeRuntime.EXTRA_WAKE_TOKEN]): the activity is exported.
          */
         const val ACTION_WAKE = "os.retinue.ara.action.WAKE"
+
+        /** The shortcut the settings' pin test asks for. */
+        private const val TEST_SHORTCUT_ID = "ara-pin-test"
     }
 
     private val viewModel: ShellViewModel by viewModels()
@@ -138,6 +144,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var editing by mutableStateOf<Pair<LauncherEntry, Boolean>?>(null)
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
     private var isDefaultHome by mutableStateOf(false)
+    private var pinShortcutsSupported by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
@@ -340,6 +347,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     settings = s ?: ShellSettings(),
                     launcher = launcher,
                     isDefaultHome = isDefaultHome,
+                    pinShortcutsSupported = pinShortcutsSupported,
                     models = models,
                     modelBusy = busy,
                     modelMessage = message,
@@ -373,6 +381,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
 
         override fun requestHomeRole() = requestHome()
+        override fun testPinShortcut() = requestTestShortcut()
         override fun addEntry(template: LauncherEntry) {
             editing = template to true
         }
@@ -771,6 +780,27 @@ class MainActivity : ComponentActivity(), ShellHost {
     private fun refreshHomeRole() {
         val rm = getSystemService(RoleManager::class.java)
         isDefaultHome = rm != null && rm.isRoleAvailable(RoleManager.ROLE_HOME) && rm.isRoleHeld(RoleManager.ROLE_HOME)
+        pinShortcutsSupported = getSystemService(ShortcutManager::class.java)?.isRequestPinShortcutSupported == true
+    }
+
+    /**
+     * Pin a shortcut to Ara's own start page through ShortcutManager, as a
+     * browser installing a web app does: when Android routes the request,
+     * Ara's confirm dialog appears; when it refuses, the toast says so.
+     */
+    private fun requestTestShortcut() {
+        val sm = getSystemService(ShortcutManager::class.java)
+        val info = ShortcutInfo.Builder(this, TEST_SHORTCUT_ID)
+            .setShortLabel(getString(R.string.settings_pin_test_label))
+            .setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher))
+            .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+            .build()
+        val sent = try {
+            sm != null && sm.isRequestPinShortcutSupported && sm.requestPinShortcut(info, null)
+        } catch (e: IllegalStateException) {
+            false
+        }
+        if (!sent) Toast.makeText(this, R.string.settings_pin_refused, Toast.LENGTH_LONG).show()
     }
 
     /** Ask to become the default home app (RoleManager), or open the system's home settings. */

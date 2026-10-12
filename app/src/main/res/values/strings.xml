@@ -67,6 +67,11 @@
     <string name="settings_home_not_default">Ara is not your home app yet.</string>
     <string name="settings_home_set">Set as default home app</string>
     <string name="settings_home_change">Change home app</string>
+    <string name="settings_pin_supported">Android routes pinned shortcuts (browsers\' "Install app", "Add to home screen") to Ara.</string>
+    <string name="settings_pin_unsupported">Android reports that Ara cannot take pinned shortcuts, so browsers grey out "Install app" and "Add to home screen".</string>
+    <string name="settings_pin_test">Test: pin a shortcut</string>
+    <string name="settings_pin_test_label">Ara test</string>
+    <string name="settings_pin_refused">Android refused the shortcut request.</string>
 
     <string name="settings_section_launcher">Launcher bar</string>
     <string name="settings_launcher_hint">Add links and web-app pages here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it.</string>

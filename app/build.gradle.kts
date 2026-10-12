@@ -28,7 +28,8 @@ android {
         minSdk = 31
         targetSdk = 35
         versionCode = 2
-        versionName = "2.0"
+        // CI appends the commit, so the settings show which build is installed.
+        versionName = "2.0" + (System.getenv("ARA_BUILD_SHA")?.take(7)?.let { "+$it" } ?: "")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // No BuildConfig secrets are baked in: the Retinue base URL, the client

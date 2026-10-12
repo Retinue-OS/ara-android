@@ -34,6 +34,8 @@ jobs:
 
       - name: Assemble debug APK and run unit tests
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest
+        env:
+          ARA_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Test the page-side shell script
         run: node app/src/test/js/retinue-shell.test.mjs
