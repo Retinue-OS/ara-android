@@ -159,9 +159,11 @@ long-press to pin). It is what keeps other apps reachable once Ara is the home
 screen. Long-press a bar entry to edit, move, or remove it; the editor in the
 shell settings adds links and web pages and reorders everything.
 
-As home app Ara accepts pinned shortcuts into the bar (Chrome's "Install app" /
-"Add to home screen", other apps' shortcuts) after a confirmation; removing one
-unpins it. Web apps Chrome installs as WebAPKs are ordinary apps in All apps.
+As home app Ara accepts pinned shortcuts (a browser's "Install app" / "Add to
+home screen", other apps' shortcuts) after a confirmation: they go on the bar
+and are listed in All apps with the apps. Removing one from the bar keeps it in
+All apps; long-press it there and choose "Remove from phone" to unpin it. Web
+apps Chrome installs as WebAPKs are ordinary apps in All apps.
 
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.

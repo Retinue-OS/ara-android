@@ -40,6 +40,7 @@
     <string name="drawer_hint">Tap to open, long-press to pin to the bar.</string>
     <string name="drawer_pin">Pin to the bar</string>
     <string name="drawer_pinned">%1$s pinned to the bar</string>
+    <string name="drawer_remove_shortcut">Remove from phone</string>
 
     <!-- HTTP authentication fallback. -->
     <string name="auth_title">Sign in</string>

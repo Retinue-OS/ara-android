@@ -20,10 +20,14 @@ import kotlinx.coroutines.withContext
 /** A launchable activity of an installed app. */
 data class AppInfo(val label: String, val packageName: String, val activityName: String)
 
+/** A shortcut Ara holds pinned: an installed web app, a browser's home-screen link. */
+data class PinnedShortcut(val label: String, val packageName: String, val shortcutId: String)
+
 /**
  * The installed launchable apps (visible through the manifest's `<queries>` for
  * MAIN/LAUNCHER, without QUERY_ALL_PACKAGES; Chrome's WebAPKs are such apps) and
- * their icons, and the pinned shortcuts the bar holds.
+ * their icons, and the shortcuts pinned to Ara (listed with the apps, and on
+ * the bar where the user put them).
  */
 object AppCatalog {
 
@@ -90,21 +94,56 @@ object AppCatalog {
     }
 
     /**
-     * Keep exactly [shortcutIds] of [packageName] pinned by Ara (the shortcuts of
-     * that package still on the bar), so a removed entry is unpinned for Android
-     * and the app that made it. Without the host permission nothing can be done.
+     * Every shortcut pinned to Ara, sorted by label, so installed web apps show
+     * up with the apps. Reading them needs the shortcut host permission, which
+     * only the default home app has; outside that role the list is empty.
      */
-    suspend fun syncPinnedShortcuts(context: Context, packageName: String, shortcutIds: List<String>) {
+    suspend fun pinnedShortcuts(context: Context): List<PinnedShortcut> = withContext(Dispatchers.IO) {
+        val apps = context.getSystemService(LauncherApps::class.java) ?: return@withContext emptyList()
+        val query = LauncherApps.ShortcutQuery().setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED)
+        val found = try {
+            apps.getShortcuts(query, Process.myUserHandle()).orEmpty()
+        } catch (e: SecurityException) {
+            emptyList()
+        } catch (e: IllegalStateException) {
+            emptyList()
+        }
+        val collator = Collator.getInstance()
+        found
+            .filter { it.isPinned && it.isEnabled }
+            .map { PinnedShortcut(labelOf(it), it.`package`, it.id) }
+            .sortedWith { a, b -> collator.compare(a.label, b.label) }
+    }
+
+    /**
+     * Unpin one shortcut, keeping the package's other pinned shortcuts, so
+     * Android and the app that made it know it is gone. Without the host
+     * permission nothing can be done.
+     */
+    suspend fun unpinShortcut(context: Context, packageName: String, shortcutId: String) {
         withContext(Dispatchers.IO) {
+            val apps = context.getSystemService(LauncherApps::class.java) ?: return@withContext
             try {
-                context.getSystemService(LauncherApps::class.java)
-                    ?.pinShortcuts(packageName, shortcutIds, Process.myUserHandle())
+                val query = LauncherApps.ShortcutQuery()
+                    .setPackage(packageName)
+                    .setQueryFlags(LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED)
+                val keep = apps.getShortcuts(query, Process.myUserHandle()).orEmpty()
+                    .filter { it.isPinned && it.id != shortcutId }
+                    .map { it.id }
+                apps.pinShortcuts(packageName, keep, Process.myUserHandle())
             } catch (e: SecurityException) {
                 Log.w(TAG, "cannot unpin shortcuts of $packageName (not the home app)", e)
             } catch (e: IllegalStateException) {
                 Log.w(TAG, "cannot unpin shortcuts of $packageName (user locked)", e)
             }
         }
+    }
+
+    /** The short label, else the long one, else the package name. */
+    fun labelOf(info: ShortcutInfo): String {
+        info.shortLabel?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        info.longLabel?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        return info.`package`
     }
 
     private fun findShortcut(context: Context, packageName: String, shortcutId: String): ShortcutInfo? {

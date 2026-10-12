@@ -78,6 +78,7 @@ import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatus
@@ -239,6 +240,7 @@ class MainActivity : ComponentActivity(), ShellHost {
             AraTheme {
                 val launcher by viewModel.launcher.collectAsStateWithLifecycle()
                 val apps by viewModel.apps.collectAsStateWithLifecycle()
+                val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
                 val voiceActive by WakeRuntime.voiceActive.collectAsStateWithLifecycle()
                 KeepScreenOn(voiceActive)
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -247,9 +249,14 @@ class MainActivity : ComponentActivity(), ShellHost {
                         LaunchedEffect(Unit) { viewModel.refreshApps() }
                         AppDrawer(
                             apps = apps,
+                            shortcuts = shortcuts,
                             isPinned = { launcher.containsApp(it.packageName, it.activityName) },
+                            isShortcutPinned = { launcher.containsShortcut(it.packageName, it.shortcutId) },
                             onLaunch = ::launchApp,
                             onPin = ::pinApp,
+                            onLaunchShortcut = ::launchShortcut,
+                            onPinShortcut = ::pinShortcut,
+                            onRemoveShortcut = viewModel::forget,
                             onDismiss = { showDrawer = false },
                             onSettings = {
                                 showDrawer = false
@@ -766,6 +773,16 @@ class MainActivity : ComponentActivity(), ShellHost {
     private fun launchApp(app: AppInfo) {
         showDrawer = false
         ShellIntents.launchApp(this, app.packageName, app.activityName)
+    }
+
+    private fun launchShortcut(shortcut: PinnedShortcut) {
+        showDrawer = false
+        openEntry(LauncherEntry.Shortcut(ShellViewModel.newId(), shortcut.label, shortcut.packageName, shortcut.shortcutId))
+    }
+
+    private fun pinShortcut(shortcut: PinnedShortcut) {
+        viewModel.pin(shortcut)
+        Toast.makeText(this, getString(R.string.drawer_pinned, shortcut.label), Toast.LENGTH_SHORT).show()
     }
 
     private fun pinApp(app: AppInfo) {
