@@ -148,7 +148,9 @@ fun AppDrawer(
                                             is DrawerItem.Shortcut -> menuFor = item.key
                                         }
                                     },
-                                    onLongClickLabel = stringResource(R.string.drawer_pin),
+                                    onLongClickLabel = stringResource(
+                                        if (item is DrawerItem.Shortcut) R.string.drawer_shortcut_actions else R.string.drawer_pin,
+                                    ),
                                 )
                                 .padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,

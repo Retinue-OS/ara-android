@@ -110,7 +110,9 @@ object AppCatalog {
         }
         val collator = Collator.getInstance()
         found
-            .filter { it.isPinned && it.isEnabled }
+            // Disabled ones too: still pinned, so they must stay reachable for
+            // "Remove from phone"; launching one reports it unavailable.
+            .filter { it.isPinned }
             .map { PinnedShortcut(labelOf(it), it.`package`, it.id) }
             .sortedWith { a, b -> collator.compare(a.label, b.label) }
     }

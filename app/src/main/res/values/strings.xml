@@ -41,6 +41,7 @@
     <string name="drawer_pin">Pin to the bar</string>
     <string name="drawer_pinned">%1$s pinned to the bar</string>
     <string name="drawer_remove_shortcut">Remove from phone</string>
+    <string name="drawer_shortcut_actions">Show actions</string>
 
     <!-- HTTP authentication fallback. -->
     <string name="auth_title">Sign in</string>
