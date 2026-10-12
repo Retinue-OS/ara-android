@@ -173,6 +173,13 @@ and are listed in All apps with the apps. Removing one from the bar keeps it in
 All apps; long-press it there and choose "Remove from phone" to unpin it. Web
 apps Chrome installs as WebAPKs are ordinary apps in All apps.
 
+Uninstalled apps leave the bar by themselves, also from inside folders (a
+folder stays, even when that empties it): Android reports a removal while Ara
+runs (`LauncherApps.Callback`), and Ara checks the bar's apps each time it
+starts. An app update, a disabled app, an app on storage that is not mounted
+and (Android 15+) an archived app keep their place. A pinned shortcut leaves
+with its app when that is uninstalled while Ara runs.
+
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.
 

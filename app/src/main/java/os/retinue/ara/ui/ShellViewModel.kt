@@ -1,11 +1,15 @@
 package os.retinue.ara.ui
 
 import android.app.Application
+import android.content.pm.LauncherApps
 import android.net.Uri
+import android.os.Process
+import android.os.UserHandle
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.ShellSettings
@@ -58,10 +63,33 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
 
+    /** Tells Ara about apps uninstalled while it runs (an update never counts as a removal). */
+    private val launcherApps: LauncherApps? = app.getSystemService(LauncherApps::class.java)
+
+    private val packageCallback = object : LauncherApps.Callback() {
+        override fun onPackageRemoved(packageName: String, user: UserHandle) {
+            // The bar holds this user's apps only.
+            if (user == Process.myUserHandle()) viewModelScope.launch { pruneUninstalled(listOf(packageName)) }
+        }
+
+        override fun onPackageAdded(packageName: String, user: UserHandle) = Unit
+        override fun onPackageChanged(packageName: String, user: UserHandle) = Unit
+        override fun onPackagesAvailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) = Unit
+        override fun onPackagesUnavailable(packageNames: Array<out String>, user: UserHandle, replacing: Boolean) = Unit
+    }
+
     init {
         // Folder icons an interrupted save left behind; anything stored from now on is kept.
         val started = System.currentTimeMillis()
         viewModelScope.launch { FolderIcons.sweep(appCtx, store.launcher.first().iconNames(), before = started) }
+        // Apps uninstalled while Ara was not running; from now on the callback reports them.
+        viewModelScope.launch { pruneUninstalled(store.launcher.first().appPackageNames()) }
+        launcherApps?.registerCallback(packageCallback)
+    }
+
+    override fun onCleared() {
+        launcherApps?.unregisterCallback(packageCallback)
+        super.onCleared()
     }
 
     fun refreshApps() {
@@ -122,6 +150,16 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             AppCatalog.unpinShortcut(appCtx, shortcut.packageName, shortcut.shortcutId)
             _shortcuts.value = AppCatalog.pinnedShortcuts(appCtx)
         }
+    }
+
+    /**
+     * Take the apps (and pinned shortcuts) of those [candidates] that are really
+     * uninstalled off the bar and out of folders; see [AppCatalog.isInstalled]
+     * for what still counts as installed.
+     */
+    private suspend fun pruneUninstalled(candidates: Collection<String>) {
+        val gone = withContext(Dispatchers.IO) { candidates.filterNot { AppCatalog.isInstalled(appCtx, it) }.toSet() }
+        if (gone.isNotEmpty()) editLauncher { it.withoutPackages(gone) }
     }
 
     /**
