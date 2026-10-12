@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- The web app's voice input (granted to the configured origin only) and the wake phrase. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- WebView opens the page's audio capture only when the app may also
+         change audio settings; without it getUserMedia fails despite RECORD_AUDIO. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Wake mode "always": a foreground service of type microphone. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
