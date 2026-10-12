@@ -35,7 +35,6 @@ interface ShellHost {
 
     fun onPageStarted(url: String?)
     fun onPageFinished(url: String?)
-    fun onUrlChanged(url: String?)
     fun onHttpAuth(host: String, realm: String, handler: HttpAuthHandler)
     fun onFileChooser(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean
     fun onAudioPermission(request: PermissionRequest)
@@ -156,9 +155,6 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
         }
     }
 
-    override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
-        host.onUrlChanged(url)
-    }
 
     /**
      * mTLS: present the KeyChain certificate the user selected — only to the

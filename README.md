@@ -136,8 +136,8 @@ The web app detects the shell and talks to it through:
 
 Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
 (`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
-origin; on old WebViews without those features, `addJavascriptInterface` with a
-main-frame origin check and injection on page load).
+origin). A WebView without `addWebMessageListener` gets no bridge: the page
+behaves as in a browser tab.
 
 ---
 
@@ -277,9 +277,8 @@ if it wakes too easily, lower it if it is hard to trigger.
   (which then opens the mic) once the phone is unlocked. Without the
   full-screen-notification permission (Android 14+) it is only a heads-up
   notification.
-- On WebViews without `WEB_MESSAGE_LISTENER`, the bridge is an
-  `addJavascriptInterface` object: it checks the main frame's origin, but
-  cannot tell which frame called it.
+- On WebViews without `WEB_MESSAGE_LISTENER` (only very old ones) there is no
+  bridge: no wake event, native speech or settings link for the page.
 
 ---
 

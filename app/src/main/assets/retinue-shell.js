@@ -14,8 +14,9 @@
 //     utterance start/end/error/boundary/pause/resume events.
 //
 // The native side is reached through window.RetinueShellNative.postMessage(
-// string), injected by addWebMessageListener (or addJavascriptInterface on old
-// WebViews); it answers through window.__retinueShellReceive(message).
+// string), injected by addWebMessageListener for the configured origin only
+// (WebViews without it get no bridge); it answers through
+// window.__retinueShellReceive(message).
 (function () {
   'use strict';
   if (window.RetinueShell && window.RetinueShell.platform === 'android') return;

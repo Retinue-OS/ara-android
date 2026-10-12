@@ -854,9 +854,6 @@ class MainActivity : ComponentActivity(), ShellHost {
         if (pendingWakeAt != 0L) tryDeliverWake()
     }
 
-    override fun onUrlChanged(url: String?) {
-        bridge.onUrlChanged(url)
-    }
 
     override fun onHttpAuth(host: String, realm: String, handler: HttpAuthHandler) {
         authPrompt?.cancel(byUser = false)

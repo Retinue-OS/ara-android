@@ -2,10 +2,7 @@ package os.retinue.ara.web
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
@@ -23,10 +20,12 @@ import os.retinue.ara.shell.WebMessage
  * `addDocumentStartJavaScript` runs assets/retinue-shell.js there before any
  * page script, installing `window.RetinueShell` and the speech stand-in.
  *
- * Fallback (old WebViews without those features): `addJavascriptInterface`
- * (which every frame of every origin can see — so each call is checked against
- * the main frame's URL) and the script injected when a page starts and again
- * when it finishes loading (the script is idempotent).
+ * WebViews without `addWebMessageListener` get no bridge at all: the only
+ * alternative, `addJavascriptInterface`, is visible to every frame and cannot
+ * tell which one called it, so a cross-origin iframe could drive the shell.
+ * The web app then behaves as in a browser tab. Without
+ * `addDocumentStartJavaScript` alone, the script is injected into the main
+ * frame when a page starts and again when it finishes loading (it is idempotent).
  */
 class ShellBridge(
     context: Context,
@@ -37,23 +36,18 @@ class ShellBridge(
     private val script: String = context.assets.open(ASSET).bufferedReader().use { it.readText() }
         .replace("__RETINUE_SHELL_VERSION__", BuildConfig.VERSION_NAME)
 
-    private val main = Handler(Looper.getMainLooper())
     private val listenerSupported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
     private val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
 
     private var scriptHandler: ScriptHandler? = null
     private var listenerInstalled = false
-    private var interfaceInstalled = false
-
-    /** The main frame's current URL, readable from the JavaScript-interface thread. */
-    @Volatile private var pageUrl: String? = null
 
     /**
      * (Re)install for the configured origin. Call before loading the first page
      * and whenever the base URL changes. With no origin configured nothing is
      * exposed.
      */
-    @SuppressLint("JavascriptInterface", "AddJavascriptInterface", "RequiresFeature", "RestrictedApi")
+    @SuppressLint("RequiresFeature", "RestrictedApi")
     fun install() {
         val origin = router().origin?.toString()
         if (listenerSupported) {
@@ -73,9 +67,8 @@ class ShellBridge(
                     Log.w(TAG, "origin rule refused: $origin", e)
                 }
             }
-        } else if (!interfaceInstalled) {
-            webView.addJavascriptInterface(JsInterface(), NATIVE)
-            interfaceInstalled = true
+        } else {
+            Log.w(TAG, "WebView lacks WEB_MESSAGE_LISTENER: no shell bridge")
         }
 
         if (documentStartSupported && listenerInstalled) {
@@ -87,23 +80,16 @@ class ShellBridge(
         }
     }
 
-    private val injectsOnLoad: Boolean get() = !(documentStartSupported && listenerInstalled)
+    private val injectsOnLoad: Boolean get() = listenerInstalled && !documentStartSupported
 
     /** From the WebView client: a main-frame page started loading. */
     fun onPageStarted(url: String?) {
-        pageUrl = url
         if (injectsOnLoad && router().isConfiguredOrigin(url)) webView.evaluateJavascript(script, null)
     }
 
     /** From the WebView client: a main-frame page finished loading. */
     fun onPageFinished(url: String?) {
-        pageUrl = url
         if (injectsOnLoad && router().isConfiguredOrigin(url)) webView.evaluateJavascript(script, null)
-    }
-
-    /** The history changed without a load (pushState, hash change). */
-    fun onUrlChanged(url: String?) {
-        pageUrl = url
     }
 
     /**
@@ -124,17 +110,6 @@ class ShellBridge(
     /** Run [js] in the page — only while the main frame is on the configured origin. */
     fun run(js: String) {
         if (router().isConfiguredOrigin(webView.url)) webView.evaluateJavascript(js, null)
-    }
-
-    private inner class JsInterface {
-        @JavascriptInterface
-        fun postMessage(json: String?) {
-            val parsed = ShellMessages.parse(json) ?: return
-            main.post {
-                // Any frame can reach this interface: honour only the main frame on the configured origin.
-                if (router().isConfiguredOrigin(webView.url ?: pageUrl)) onMessage(parsed)
-            }
-        }
     }
 
     private companion object {
