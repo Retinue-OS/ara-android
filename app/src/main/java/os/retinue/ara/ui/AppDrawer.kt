@@ -115,7 +115,7 @@ fun AppDrawer(
                                 MenuItem(
                                     text = stringResource(
                                         if (inFolder) R.string.drawer_in_folder else R.string.drawer_add_to_folder,
-                                        folder.label,
+                                        folderName(folder),
                                     ),
                                     icon = { FolderIcon(folder, size = 24.dp) },
                                     enabled = !inFolder,

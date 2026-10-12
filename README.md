@@ -181,10 +181,10 @@ else found in a stored folder is dropped when it is read.
 - **Type:** the editor offers standard folder types — Folder, Chat, Social,
   Media, Photos, Games, News, Travel, Work, Tools, Shopping, Finance, Health,
   Smart home. The type gives the folder its symbol and, until you name it
-  yourself, its name. Types that match an Android app category (Social, Media,
-  Photos, Games, News, Travel, Work) list the installed apps of that category
-  first, as suggestions; apps declare their category in their manifest, so not
-  every app has one.
+  yourself, its name, shown in the phone's current language. Types that match
+  an Android app category (Social, Media, Photos, Games, News, Travel, Work)
+  list the installed apps of that category first, as suggestions; apps declare
+  their category in their manifest, so not every app has one.
 - **Icon:** the type's symbol, or an image **from photos** (the system photo
   picker) or **from files** (any document provider: the device's storage,
   Drive, Nextcloud …). The image is cropped to its centre square, scaled to
@@ -197,7 +197,11 @@ else found in a stored folder is dropped when it is read.
 - **Use:** tap the folder to open it over the bar; tap an app to start it,
   long-press one to move it or take it out; **+** adds apps and the pencil
   edits the folder. Long-press the folder on the bar to edit, move or remove
-  it (removing a folder never uninstalls anything).
+  it; removing a folder with apps in it asks first, and never uninstalls
+  anything.
+- **Cleanup:** a folder's icon file is deleted with the folder or when it is
+  replaced; one left behind by an interrupted save is deleted on the next
+  start.
 
 ## Default home app
 

@@ -89,4 +89,21 @@ object FolderIcons {
             file(context, name)?.delete()
         }
     }
+
+    /**
+     * Delete what an interrupted save left behind: icon files no folder uses
+     * (stored, but the process died before the launcher edit was committed)
+     * and partial writes. Only files older than [before] are touched, so an
+     * icon being saved right now is never swept away.
+     */
+    suspend fun sweep(context: Context, inUse: Set<String>, before: Long) {
+        withContext(Dispatchers.IO) {
+            File(context.filesDir, DIR).listFiles()?.forEach { f ->
+                if (f.name !in inUse && f.lastModified() < before) {
+                    cache.remove(f.name)
+                    f.delete()
+                }
+            }
+        }
+    }
 }

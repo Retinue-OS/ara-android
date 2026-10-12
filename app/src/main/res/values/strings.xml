@@ -43,6 +43,11 @@
     <string name="folder_move_up">Move up</string>
     <string name="folder_move_down">Move down</string>
     <string name="folder_empty">This folder is empty.</string>
+    <string name="folder_remove_title">Remove %1$s?</string>
+    <plurals name="folder_remove_body">
+        <item quantity="one">The folder and its %1$d app leave the bar. Nothing is uninstalled.</item>
+        <item quantity="other">The folder and its %1$d apps leave the bar. Nothing is uninstalled.</item>
+    </plurals>
     <plurals name="folder_app_count">
         <item quantity="one">%1$d app: %2$s</item>
         <item quantity="other">%1$d apps: %2$s</item>

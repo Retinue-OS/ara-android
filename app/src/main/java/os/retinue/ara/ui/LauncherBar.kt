@@ -113,7 +113,7 @@ fun LauncherBar(
                         var menu by remember(entry.id) { mutableStateOf(false) }
                         Box {
                             LauncherSlot(
-                                label = entry.label,
+                                label = entryLabel(entry),
                                 icon = { EntryIcon(entry) },
                                 onClick = { onOpen(entry) },
                                 onLongClick = { menu = true },
@@ -137,7 +137,7 @@ fun LauncherBar(
                                 if (entry is LauncherEntry.App) {
                                     folders.forEach { folder ->
                                         MenuItem(
-                                            text = stringResource(R.string.launcher_move_to_folder, folder.label),
+                                            text = stringResource(R.string.launcher_move_to_folder, folderName(folder)),
                                             icon = { FolderIcon(folder, size = 24.dp) },
                                         ) {
                                             menu = false

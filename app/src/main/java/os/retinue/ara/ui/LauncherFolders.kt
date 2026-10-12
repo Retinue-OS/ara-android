@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Work
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -89,6 +90,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -141,6 +143,17 @@ val FolderKind.nameRes: Int
         FolderKind.Health -> R.string.folder_kind_health
         FolderKind.SmartHome -> R.string.folder_kind_smart_home
     }
+
+/**
+ * A folder's name: its own, or — while the user has not named it (an empty
+ * label) — its type's, in the phone's current language.
+ */
+@Composable
+fun folderName(folder: LauncherEntry.Folder): String = folder.label.ifBlank { stringResource(folder.kind.nameRes) }
+
+/** The name an entry shows (a folder's resolved as in [folderName]). */
+@Composable
+fun entryLabel(entry: LauncherEntry): String = if (entry is LauncherEntry.Folder) folderName(entry) else entry.label
 
 // --- Folder icon ---------------------------------------------------------------
 
@@ -211,7 +224,7 @@ fun FolderSheet(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FolderIcon(folder, size = 40.dp)
                 Text(
-                    folder.label,
+                    folderName(folder),
                     style = MaterialTheme.typography.titleLarge,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -272,6 +285,18 @@ fun FolderSheet(
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+/** Removing a folder with apps in it: one confirmation, since the set (and its icon) is lost. */
+@Composable
+fun FolderRemoveDialog(folder: LauncherEntry.Folder, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.folder_remove_title, folderName(folder))) },
+        text = { Text(pluralStringResource(R.plurals.folder_remove_body, folder.apps.size, folder.apps.size)) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.launcher_remove)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
 }
 
 // --- Folder editor -------------------------------------------------------------
@@ -355,8 +380,10 @@ fun FolderEditor(
         draft = draft.copy(kind = kind, label = if (named) draft.label else kindNames.getValue(kind))
     }
     val save: () -> Unit = {
+        val name = draft.label.trim()
         val folder = draft.copy(
-            label = draft.label.trim(),
+            // The type's own name is stored as none, so it follows the type and the language.
+            label = if (name == kindNames.getValue(draft.kind)) "" else name,
             icon = when (val chosen = icon) {
                 IconChoice.Symbol -> null
                 is IconChoice.Stored -> chosen.name

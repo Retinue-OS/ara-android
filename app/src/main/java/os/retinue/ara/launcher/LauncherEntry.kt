@@ -60,7 +60,9 @@ sealed class LauncherEntry {
      * links, web pages or other folders — so folders cannot nest. [kind] is
      * the folder type picked when it was made (its symbol, default name and
      * suggested apps); [icon], when set, names an image in app storage (see
-     * FolderIcons) drawn instead of the type's symbol.
+     * FolderIcons) drawn instead of the type's symbol. An empty [label] means
+     * the folder has no name of its own and shows its type's name, in the
+     * phone's current language.
      */
     @Serializable
     @SerialName("folder")

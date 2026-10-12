@@ -25,7 +25,9 @@ class LauncherFolderTest {
 
     @Test
     fun folderRoundTrip() {
-        val c = LauncherConfig.DEFAULT.add(photos).add(games.add(chess))
+        // An empty label (the type's name, resolved when shown) is kept as such.
+        val unnamed = LauncherEntry.Folder("f3", "", FolderKind.Media)
+        val c = LauncherConfig.DEFAULT.add(photos).add(games.add(chess)).add(unnamed)
         val json = LauncherCodec.encode(c)
         assertTrue(json.contains("\"type\":\"folder\""))
         assertTrue(json.contains("\"kind\":\"photos\""))

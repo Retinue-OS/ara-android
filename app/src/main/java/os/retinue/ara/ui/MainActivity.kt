@@ -148,6 +148,9 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     /** The folder editor, over everything else; sheets (drawer, open folder) wait under it. */
     private var folderEditor by mutableStateOf<FolderEditorRequest?>(null)
+
+    /** A folder with apps in it that the user asked to remove: confirmed first. */
+    private var confirmRemove by mutableStateOf<LauncherEntry.Folder?>(null)
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
     private var isDefaultHome by mutableStateOf(false)
     private var pinShortcutsSupported by mutableStateOf(false)
@@ -310,6 +313,16 @@ class MainActivity : ComponentActivity(), ShellHost {
                             onDismiss = { editing = null },
                         )
                     }
+                    confirmRemove?.let { folder ->
+                        FolderRemoveDialog(
+                            folder = folder,
+                            onConfirm = {
+                                viewModel.removeEntry(folder)
+                                confirmRemove = null
+                            },
+                            onDismiss = { confirmRemove = null },
+                        )
+                    }
                     authPrompt?.let { AuthDialog(it) }
                 }
             }
@@ -343,7 +356,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     entries = entries,
                     onOpen = ::openEntry,
                     onEdit = ::editLauncherEntry,
-                    onRemove = viewModel::removeEntry,
+                    onRemove = ::removeLauncherEntry,
                     onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
                     onMoveToFolder = { app, folder -> viewModel.updateLauncher { it.moveIntoFolder(app.id, folder.id) } },
                     onNewFolder = { newFolder() },
@@ -433,9 +446,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
         override fun editEntry(entry: LauncherEntry) = editLauncherEntry(entry)
 
-        override fun removeEntry(entry: LauncherEntry) {
-            viewModel.removeEntry(entry)
-        }
+        override fun removeEntry(entry: LauncherEntry) = removeLauncherEntry(entry)
 
         override fun moveEntry(entry: LauncherEntry, delta: Int) {
             viewModel.updateLauncher { it.move(entry.id, delta) }
@@ -601,6 +612,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                 editing = null
                 openFolderId = null
                 folderEditor = null
+                confirmRemove = null
             }
         }
     }
@@ -751,16 +763,18 @@ class MainActivity : ComponentActivity(), ShellHost {
         editing = null
         openFolderId = null
         folderEditor = null
+        confirmRemove = null
         if (settings.base != null) showSettings = false
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
-                openFolderId != null || folderEditor != null
+                openFolderId != null || folderEditor != null || confirmRemove != null
             when (ShellDecisions.onBack(overlay, webView?.canGoBack() == true, isDefaultHome)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
+                    confirmRemove != null -> confirmRemove = null
                     editing != null -> editing = null
                     folderEditor != null -> folderEditor = null
                     openFolderId != null -> openFolderId = null
@@ -817,6 +831,15 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
     }
 
+    /** Remove a bar entry; a folder with apps in it only after a confirmation. */
+    private fun removeLauncherEntry(entry: LauncherEntry) {
+        if (entry is LauncherEntry.Folder && entry.apps.isNotEmpty()) {
+            confirmRemove = entry
+        } else {
+            viewModel.removeEntry(entry)
+        }
+    }
+
     /** Edit a bar entry: a folder in the folder editor, anything else in the entry dialog. */
     private fun editLauncherEntry(entry: LauncherEntry) {
         if (entry is LauncherEntry.Folder) {
@@ -852,7 +875,8 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     private fun addToFolder(app: AppInfo, folder: LauncherEntry.Folder) {
         viewModel.addToFolder(app, folder.id)
-        Toast.makeText(this, getString(R.string.drawer_added_to_folder, app.label, folder.label), Toast.LENGTH_SHORT).show()
+        val name = folder.label.ifBlank { getString(folder.kind.nameRes) }
+        Toast.makeText(this, getString(R.string.drawer_added_to_folder, app.label, name), Toast.LENGTH_SHORT).show()
     }
 
     // --- Home role -----------------------------------------------------------

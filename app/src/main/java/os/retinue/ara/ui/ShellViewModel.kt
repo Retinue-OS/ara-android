@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
@@ -52,6 +53,12 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     val modelBusy: StateFlow<Boolean> = _modelBusy.asStateFlow()
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
+
+    init {
+        // Folder icons an interrupted save left behind; anything stored from now on is kept.
+        val started = System.currentTimeMillis()
+        viewModelScope.launch { FolderIcons.sweep(appCtx, store.launcher.first().iconNames(), before = started) }
+    }
 
     fun refreshApps() {
         viewModelScope.launch { _apps.value = AppCatalog.launchableApps(appCtx) }

@@ -232,7 +232,7 @@ private fun LauncherSection(state: SettingsState, actions: SettingsActions) {
                 EntryIcon(entry)
             }
             Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                Text(entry.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(entryLabel(entry), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     describe(entry),
                     style = MaterialTheme.typography.bodySmall,
