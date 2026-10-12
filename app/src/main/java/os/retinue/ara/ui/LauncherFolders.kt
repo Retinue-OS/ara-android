@@ -489,10 +489,10 @@ fun FolderEditor(
                         modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
                     )
                     IconButton(onClick = { draft = draft.move(app.id, -1) }, enabled = index > 0) {
-                        Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.launcher_move_left))
+                        Icon(Icons.Filled.KeyboardArrowUp, stringResource(R.string.folder_move_up))
                     }
                     IconButton(onClick = { draft = draft.move(app.id, 1) }, enabled = index < draft.apps.lastIndex) {
-                        Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.launcher_move_right))
+                        Icon(Icons.Filled.KeyboardArrowDown, stringResource(R.string.folder_move_down))
                     }
                     IconButton(onClick = { draft = draft.remove(app.id) }) {
                         Icon(Icons.Filled.Close, stringResource(R.string.folder_remove_app))

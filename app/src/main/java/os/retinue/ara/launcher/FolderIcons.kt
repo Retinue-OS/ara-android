@@ -20,8 +20,8 @@ class PreparedIcon(val png: ByteArray, val preview: ImageBitmap)
 
 /**
  * Custom folder icons. An image picked from the photo picker or any document
- * provider is cropped to its centre square, scaled down to [ICON_PX] and kept
- * as a PNG in app storage under a generated name ([LauncherEntry.Folder.icon]).
+ * provider is cropped to its centre square, scaled to [ICON_PX] and kept as a
+ * PNG in app storage under a generated name ([LauncherEntry.Folder.icon]).
  * The picked file itself is not kept or referenced, so it may move or vanish.
  */
 object FolderIcons {
@@ -50,7 +50,7 @@ object FolderIcons {
         }
         val side = minOf(decoded.width, decoded.height)
         val square = Bitmap.createBitmap(decoded, (decoded.width - side) / 2, (decoded.height - side) / 2, side, side)
-        val icon = if (side <= ICON_PX) square else Bitmap.createScaledBitmap(square, ICON_PX, ICON_PX, true)
+        val icon = if (side == ICON_PX) square else Bitmap.createScaledBitmap(square, ICON_PX, ICON_PX, true)
         val png = ByteArrayOutputStream().use { out ->
             if (!icon.compress(Bitmap.CompressFormat.PNG, 100, out)) throw IOException("The image could not be converted")
             out.toByteArray()

@@ -40,6 +40,8 @@
     <string name="folder_add_app">Add to the folder</string>
     <string name="folder_suggested">Suggested for %1$s</string>
     <string name="folder_remove_app">Remove from folder</string>
+    <string name="folder_move_up">Move up</string>
+    <string name="folder_move_down">Move down</string>
     <string name="folder_empty">This folder is empty.</string>
     <plurals name="folder_app_count">
         <item quantity="one">%1$d app: %2$s</item>

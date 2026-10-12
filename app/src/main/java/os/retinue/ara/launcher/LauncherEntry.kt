@@ -96,7 +96,10 @@ sealed class LauncherEntry {
         companion object {
             private val ICON_NAME = Regex("[A-Za-z0-9-]{1,64}\\.png")
 
-            /** A custom icon is a plain file name the shell generated, never a path. */
+            /**
+             * A custom icon is named by a plain `.png` file name in the icons
+             * folder, never by a path (the shell itself generates `<uuid>.png`).
+             */
             fun isIconName(name: String): Boolean = ICON_NAME.matches(name)
         }
     }

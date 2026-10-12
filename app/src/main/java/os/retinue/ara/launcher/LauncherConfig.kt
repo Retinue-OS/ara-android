@@ -185,7 +185,7 @@ object LauncherCodec {
 
     private fun JsonElement.typeOf(): String? = ((this as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull
 
-    /** A folder holds each app once (and each id once), and only an icon name the shell could have made. */
+    /** A folder holds each app once (and each id once), and an icon only by a plain file name, never a path. */
     private fun normalize(entry: LauncherEntry): LauncherEntry {
         if (entry !is LauncherEntry.Folder) return entry
         return entry.copy(
