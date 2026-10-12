@@ -3,6 +3,7 @@ package os.retinue.ara.launcher
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
@@ -17,8 +18,16 @@ import java.text.Collator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** A launchable activity of an installed app. */
-data class AppInfo(val label: String, val packageName: String, val activityName: String)
+/**
+ * A launchable activity of an installed app. [category] is the app's Android
+ * category ([ApplicationInfo.category]), which folder types suggest apps by.
+ */
+data class AppInfo(
+    val label: String,
+    val packageName: String,
+    val activityName: String,
+    val category: Int = ApplicationInfo.CATEGORY_UNDEFINED,
+)
 
 /** A shortcut Ara holds pinned: an installed web app, a browser's home-screen link. */
 data class PinnedShortcut(val label: String, val packageName: String, val shortcutId: String)
@@ -46,10 +55,19 @@ object AppCatalog {
             .mapNotNull { ri ->
                 val ai = ri.activityInfo ?: return@mapNotNull null
                 if (ai.packageName == context.packageName) return@mapNotNull null
-                AppInfo(ri.loadLabel(pm).toString(), ai.packageName, ai.name)
+                AppInfo(ri.loadLabel(pm).toString(), ai.packageName, ai.name, categoryOf(ai.applicationInfo))
             }
             .distinctBy { it.packageName + "/" + it.activityName }
             .sortedWith { a, b -> collator.compare(a.label, b.label) }
+    }
+
+    /** The app's category; a game that sets only the old `isGame` flag counts as a game, as in the system settings. */
+    @Suppress("DEPRECATION")
+    private fun categoryOf(info: ApplicationInfo?): Int = when {
+        info == null -> ApplicationInfo.CATEGORY_UNDEFINED
+        info.category == ApplicationInfo.CATEGORY_UNDEFINED && (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0 ->
+            ApplicationInfo.CATEGORY_GAME
+        else -> info.category
     }
 
     /** The app's icon as a bitmap, cached; null when the app is gone. */

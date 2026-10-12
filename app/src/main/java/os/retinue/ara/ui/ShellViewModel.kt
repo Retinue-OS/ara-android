@@ -2,12 +2,15 @@ package os.retinue.ara.ui
 
 import android.app.Application
 import android.net.Uri
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
@@ -15,6 +18,7 @@ import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
+import os.retinue.ara.launcher.FolderIcons
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
@@ -54,6 +58,12 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
 
+    init {
+        // Folder icons an interrupted save left behind; anything stored from now on is kept.
+        val started = System.currentTimeMillis()
+        viewModelScope.launch { FolderIcons.sweep(appCtx, store.launcher.first().iconNames(), before = started) }
+    }
+
     fun refreshApps() {
         viewModelScope.launch {
             _apps.value = AppCatalog.launchableApps(appCtx)
@@ -68,10 +78,28 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
-        viewModelScope.launch { store.updateLauncher(change) }
+        viewModelScope.launch { editLauncher(change = change) }
 
-    fun pin(app: AppInfo) = updateLauncher {
-        it.add(LauncherEntry.App(newId(), app.label, app.packageName, app.activityName))
+    fun pin(app: AppInfo) = updateLauncher { it.add(app.toEntry()) }
+
+    fun addToFolder(app: AppInfo, folderId: String) = updateLauncher { it.addToFolder(folderId, app.toEntry()) }
+
+    /**
+     * Save a folder from the editor. [newIcon], a picked image not stored yet,
+     * is stored first and becomes the folder's icon; if it cannot be stored,
+     * the folder is saved with the icon it had.
+     */
+    fun saveFolder(folder: LauncherEntry.Folder, isNew: Boolean, newIcon: ByteArray?) = viewModelScope.launch {
+        val stored = newIcon?.let {
+            try {
+                FolderIcons.store(appCtx, it)
+            } catch (e: IOException) {
+                Toast.makeText(appCtx, R.string.folder_icon_failed, Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
+        val saved = if (stored != null) folder.copy(icon = stored) else folder
+        editLauncher(stored) { if (isNew) it.add(saved) else it.replace(saved) }
     }
 
     fun pin(shortcut: PinnedShortcut) = updateLauncher {
@@ -86,7 +114,7 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     /** Remove a shortcut for good: unpinned, off the bar and out of All apps. */
     fun forget(shortcut: PinnedShortcut) {
         viewModelScope.launch {
-            store.updateLauncher { config ->
+            editLauncher { config ->
                 config.entries
                     .filter { it is LauncherEntry.Shortcut && it.packageName == shortcut.packageName && it.shortcutId == shortcut.shortcutId }
                     .fold(config) { c, e -> c.remove(e.id) }
@@ -94,6 +122,21 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             AppCatalog.unpinShortcut(appCtx, shortcut.packageName, shortcut.shortcutId)
             _shortcuts.value = AppCatalog.pinnedShortcuts(appCtx)
         }
+    }
+
+    /**
+     * Apply [change], then delete the folder icons no longer in use: those it
+     * dropped, and [stored] (an icon stored for it) if the change did not keep
+     * it. Returns the launcher before and after.
+     */
+    private suspend fun editLauncher(
+        stored: String? = null,
+        change: (LauncherConfig) -> LauncherConfig,
+    ): Pair<LauncherConfig, LauncherConfig> {
+        val (before, after) = store.updateLauncher(change)
+        val unused = before.iconNames() + listOfNotNull(stored) - after.iconNames()
+        if (unused.isNotEmpty()) FolderIcons.delete(appCtx, unused)
+        return before to after
     }
 
     fun downloadFeatureModels() = modelJob {
@@ -137,3 +180,6 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         fun newId(): String = java.util.UUID.randomUUID().toString()
     }
 }
+
+/** A new launcher entry for this app, on the bar or in a folder. */
+fun AppInfo.toEntry() = LauncherEntry.App(ShellViewModel.newId(), label, packageName, activityName)
