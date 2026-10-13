@@ -89,6 +89,7 @@
     <string name="drawer_hint">Tap to open, long-press to pin to the bar or put in a folder.</string>
     <string name="drawer_pin">Pin to the bar</string>
     <string name="drawer_pinned">%1$s pinned to the bar</string>
+    <string name="drawer_remove_shortcut">Remove from phone</string>
     <string name="drawer_pinned_already">Pinned to the bar</string>
     <string name="drawer_add_to_folder">Add to %1$s</string>
     <string name="drawer_in_folder">In %1$s</string>
