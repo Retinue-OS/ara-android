@@ -97,6 +97,7 @@ import os.retinue.ara.web.ShellChromeClient
 import os.retinue.ara.web.ShellDownloads
 import os.retinue.ara.web.ShellHost
 import os.retinue.ara.web.ShellIntents
+import os.retinue.ara.web.ShellWebView
 import os.retinue.ara.web.ShellWebViewClient
 import os.retinue.ara.web.configureShellWebView
 
@@ -960,7 +961,7 @@ class MainActivity : ComponentActivity(), ShellHost {
     // --- WebView -------------------------------------------------------------
 
     private fun createWebView() {
-        val view = WebView(this)
+        val view = ShellWebView(this)
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         view.webViewClient = ShellWebViewClient(this, this)

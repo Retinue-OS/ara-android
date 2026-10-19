@@ -92,6 +92,12 @@ Nothing environment-specific is baked into the APK.
   does nothing; otherwise it sends Ara to the background (the page is kept).
 - A crashed or reclaimed WebView renderer is replaced and the start page
   reloaded.
+- **The keyboard stays up under its own popups.** Chromium 155 to 157 hide the
+  soft keyboard whenever the WebView's window loses focus (crbug.com/560321831,
+  fixed in 158), and the keyboard's language list or the input-method picker
+  takes that focus, so the keyboard and the popup with it vanished as soon as
+  it opened. While the keyboard is up, the WebView is not told its window lost
+  focus.
 - **Load failures are shown, not left blank**: a thin progress bar runs while
   the page loads; a main-frame network error, an HTTP error status (400 and up),
   a refused TLS certificate of the configured origin or a cancelled sign-in
@@ -340,9 +346,9 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
            OnnxWakeModels                           — the three ONNX models (ORT Java API)
            WakeListener, WakeRuntime, WakeService,  — mic thread, process-wide owner, foreground service,
            WakeModelFiles                             model download/import
-web/       ShellWebClients, ShellBridge,            — WebView setup and callbacks, the bridge,
-           NativeSpeech, ShellIntents,                TextToSpeech, intents to Android,
-           ShellDownloads                             page downloads into Downloads
+web/       ShellWebView, ShellWebClients,           — the WebView, its setup and callbacks,
+           ShellBridge, NativeSpeech,                 the bridge, TextToSpeech,
+           ShellIntents, ShellDownloads               intents to Android, page downloads into Downloads
 data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
 ui/        MainActivity, ShellViewModel,            — the Compose shell, settings, bar, drawer,

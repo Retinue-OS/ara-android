@@ -122,6 +122,14 @@ class ShellMessagesTest {
         val v = ShellMessages.voices(listOf(ShellVoice("de-de-x-nfh-local", "de-DE", localService = true, isDefault = false)))
         assertTrue(v.contains("\"voices\":[{\"name\":\"de-de-x-nfh-local\",\"lang\":\"de-DE\",\"localService\":true,\"default\":false}]"))
     }
+
+    @Test
+    fun windowFocusLossIsKeptFromTheWebViewWhileTheKeyboardIsUp() {
+        assertFalse(ShellDecisions.passWindowFocusChange(hasFocus = false, keyboardUp = true))
+        assertTrue(ShellDecisions.passWindowFocusChange(hasFocus = false, keyboardUp = false))
+        assertTrue(ShellDecisions.passWindowFocusChange(hasFocus = true, keyboardUp = true))
+        assertTrue(ShellDecisions.passWindowFocusChange(hasFocus = true, keyboardUp = false))
+    }
 }
 
 class WakeTimingTest {
