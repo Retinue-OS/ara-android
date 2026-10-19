@@ -1,9 +1,9 @@
 package os.retinue.ara.shell
 
 /**
- * The shell's branching rules for Back, Home and wake, framework-free so they
- * are unit-tested without an emulator. MainActivity only gathers the inputs and
- * carries out the answer.
+ * The shell's branching rules for Back, Home, wake and the WebView's window
+ * focus, framework-free so they are unit-tested without an emulator.
+ * MainActivity only gathers the inputs and carries out the answer.
  */
 object ShellDecisions {
 
@@ -151,4 +151,18 @@ object ShellDecisions {
         onStartPage -> UnhandledEvent.Nothing
         else -> UnhandledEvent.LoadStart
     }
+
+    /**
+     * Whether the WebView is told that its window lost or regained focus.
+     * Chromium 155 to 157 hide the soft keyboard whenever the WebView's window
+     * loses focus (crbug.com/560321831, fixed in 158), and the keyboard's own
+     * popups take that focus: its language list, the input-method picker. So
+     * the keyboard vanished the moment such a popup opened, and the popup,
+     * which belongs to the keyboard's window, went with it before anything
+     * could be picked. While the keyboard is up a loss is kept from the
+     * WebView; a gain always reaches it, and one it already assumes changes
+     * nothing.
+     */
+    fun passWindowFocusChange(hasFocus: Boolean, keyboardUp: Boolean): Boolean =
+        hasFocus || !keyboardUp
 }
