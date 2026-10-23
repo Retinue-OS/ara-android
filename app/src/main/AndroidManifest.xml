@@ -121,6 +121,19 @@
             android:exported="false"
             android:foregroundServiceType="microphone|shortService" />
 
+        <!-- Files the page asks to view that the WebView cannot show (a PDF):
+             a private copy in the cache, handed to the viewer app with a
+             one-off read grant (see ShellDownloads). Not exported. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shell_files" />
+        </provider>
+
     </application>
 
 </manifest>

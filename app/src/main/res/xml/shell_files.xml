@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the shell's FileProvider may hand out: only the private copies of
+     files opened in a viewer (ShellDownloads.VIEW_DIR, under the cache). -->
+<paths>
+    <cache-path name="view" path="view/" />
+</paths>
