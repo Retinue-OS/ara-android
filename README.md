@@ -235,10 +235,25 @@ without one (and is asked again later). The same certificate is used for model
 downloads from the configured origin; that client follows no redirects itself,
 so a redirect to another host is fetched without the certificate.
 
-Files the page downloads from the configured origin are fetched the same way
-(with the WebView's cookies) into the phone's **Downloads** (MediaStore, up to
-200 MB, the name from `Content-Disposition` made safe); a redirect to another
-host, and any download from another origin, opens in the browser instead.
+Files the WebView cannot show itself (a PDF, any download) are fetched from the
+configured origin the same way, with the WebView's cookies, up to 200 MB; a
+redirect to another host, and any file from another origin, opens in the
+browser instead. The response's `Content-Disposition` decides what happens next,
+as in a browser:
+
+- **`inline`** — the page asked to *see* the file (the web app's view link):
+  it opens in the app Android has for its type, from a private copy in the
+  cache (handed over by a `FileProvider`; a copy a day old is removed when the
+  next one is made), so reading the same invoice twice leaves no
+  `invoice(1).pdf` in Downloads. When no installed app opens the type, the file
+  is saved to Downloads instead, and a toast says so.
+- **anything else** — saved to the phone's **Downloads** (MediaStore).
+
+The file's name comes from that header, read by the shell itself
+(`shell/ContentDisposition`, RFC 6266: `filename*` first, then `filename`) and
+made safe (`shell/FileNames`). Android's own `URLUtil.guessFileName` names it
+only when the header carries none: it takes a name only from a bare
+`attachment; filename="…"`, and otherwise falls back to the URL's last segment.
 
 ---
 
@@ -336,8 +351,8 @@ if it wakes too easily, lower it if it is hard to trigger.
 
 ```
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
-           ShellMessages, FileNames                   decisions, the bridge wire format, download
-                                                      file names (unit-tested)
+           ShellMessages, FileNames,                  decisions, the bridge wire format, download
+           ContentDisposition                         file names, view or save (unit-tested)
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
            FolderKind                                 codec, edits, folder types (unit-tested)
            AppCatalog, FolderIcons                  — launchable apps and their icons, folder images
@@ -348,7 +363,7 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
            WakeModelFiles                             model download/import
 web/       ShellWebView, ShellWebClients,           — the WebView, its setup and callbacks,
            ShellBridge, NativeSpeech,                 the bridge, TextToSpeech,
-           ShellIntents, ShellDownloads               intents to Android, page downloads into Downloads
+           ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
 data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
 ui/        MainActivity, ShellViewModel,            — the Compose shell, settings, bar, drawer,

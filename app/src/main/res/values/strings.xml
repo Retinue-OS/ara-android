@@ -83,6 +83,10 @@
     <string name="download_failed">Could not download %1$s</string>
     <string name="download_too_large">%1$s is too large to download here (over 200 MB)</string>
     <string name="download_unsupported">This download cannot be saved by the shell.</string>
+    <!-- A file the page asked to view (Content-Disposition: inline) that the WebView cannot show. -->
+    <string name="view_started">Opening %1$s…</string>
+    <string name="view_failed">Could not open %1$s</string>
+    <string name="view_no_app">No app on this phone opens %1$s; saved to Downloads</string>
 
     <!-- App drawer. -->
     <string name="drawer_search">Search apps</string>
