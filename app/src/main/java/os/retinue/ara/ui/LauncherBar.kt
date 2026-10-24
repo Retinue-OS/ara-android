@@ -79,8 +79,8 @@ internal fun slotWidth(available: Dp, slots: Int): Dp =
 /**
  * The bottom launcher bar: the configured entries (scrolling horizontally when
  * there are many) and, always last, "All apps". Long-press an entry for edit /
- * remove / move (an app also into a folder) and the shell settings; long-press
- * "All apps" for a new folder.
+ * remove / move (an app or web app also into a folder) and the shell settings;
+ * long-press "All apps" for a new folder.
  */
 @Composable
 fun LauncherBar(
@@ -89,7 +89,7 @@ fun LauncherBar(
     onEdit: (LauncherEntry) -> Unit,
     onRemove: (LauncherEntry) -> Unit,
     onMove: (LauncherEntry, Int) -> Unit,
-    onMoveToFolder: (LauncherEntry.App, LauncherEntry.Folder) -> Unit,
+    onMoveToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
     onNewFolder: () -> Unit,
     onAllApps: () -> Unit,
     onSettings: () -> Unit,
@@ -133,8 +133,8 @@ fun LauncherBar(
                                         onMove(entry, 1)
                                     }
                                 }
-                                // Only apps go into folders.
-                                if (entry is LauncherEntry.App) {
+                                // Only apps and web apps go into folders.
+                                if (entry is LauncherEntry.Launchable) {
                                     folders.forEach { folder ->
                                         MenuItem(
                                             text = stringResource(R.string.launcher_move_to_folder, folderName(folder)),
@@ -257,6 +257,15 @@ fun ShortcutIcon(packageName: String, shortcutId: String, size: Dp = 34.dp) {
         Image(bitmap = b, contentDescription = null, modifier = Modifier.size(size))
     } else {
         Icon(Icons.Filled.Android, contentDescription = null, modifier = Modifier.size(size))
+    }
+}
+
+/** The icon of what a folder holds: an app's, or a web app's (a pinned shortcut's). */
+@Composable
+fun LaunchableIcon(item: LauncherEntry.Launchable, size: Dp = 34.dp) {
+    when (item) {
+        is LauncherEntry.App -> AppIcon(item.packageName, item.activityName, size)
+        is LauncherEntry.Shortcut -> ShortcutIcon(item.packageName, item.shortcutId, size)
     }
 }
 

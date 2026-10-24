@@ -118,6 +118,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Uninstalled apps leave the launcher bar. PACKAGE_FULLY_REMOVED is one of
+             the broadcasts a manifest may still declare, so it also reaches Ara when
+             it is not running; only the system sends it, and only for an app
+             uninstalled with its data (not for an update, an archived app or one on
+             storage that is not mounted). -->
+        <receiver
+            android:name=".launcher.PackageRemovedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_FULLY_REMOVED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
         <!-- Wake mode "always". Started only while the shell is in front. The
              short-service type is only for leaving cleanly when the microphone
              type is refused (see WakeService). -->

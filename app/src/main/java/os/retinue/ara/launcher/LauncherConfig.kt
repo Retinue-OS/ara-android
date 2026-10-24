@@ -61,8 +61,10 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
         entries.any { it is LauncherEntry.Shortcut && it.packageName == packageName && it.shortcutId == shortcutId }
 
     /**
-     * The shortcut ids of [packageName] on the bar: what Ara keeps pinned for that
-     * package (LauncherApps.pinShortcuts replaces the whole set per package).
+     * The shortcut ids of [packageName] on the bar itself. Not all that Ara keeps
+     * pinned for the package: shortcuts only in All apps or in folders are pinned
+     * too, so this is no set for LauncherApps.pinShortcuts (which replaces the
+     * whole set per package).
      */
     fun shortcutIds(packageName: String): List<String> =
         entries.filterIsInstance<LauncherEntry.Shortcut>().filter { it.packageName == packageName }.map { it.shortcutId }
@@ -85,8 +87,8 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
         return copy(entries = entries.toMutableList().also { it[i] = changed })
     }
 
-    /** Add [app] to the folder [folderId]; one already in it is not added twice. */
-    fun addToFolder(folderId: String, app: LauncherEntry.App) = updateFolder(folderId) { it.add(app) }
+    /** Add [item] (an app or a web app) to the folder [folderId]; one already in it is not added twice. */
+    fun addToFolder(folderId: String, item: LauncherEntry.Launchable) = updateFolder(folderId) { it.add(item) }
 
     fun removeFromFolder(folderId: String, appId: String) = updateFolder(folderId) { it.remove(appId) }
 
@@ -94,18 +96,57 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
     fun moveInFolder(folderId: String, appId: String, delta: Int) = updateFolder(folderId) { it.move(appId, delta) }
 
     /**
-     * Move the bar's app [entryId] into the folder [folderId] (if the folder
-     * has it already, it just leaves the bar). Only apps go into folders: a
-     * pinned shortcut, a link, a web page or another folder stays where it is.
+     * Move the bar's app or web app [entryId] into the folder [folderId] (if
+     * the folder has it already, it just leaves the bar). Only those go into
+     * folders: a link, a web page or another folder stays where it is.
      */
     fun moveIntoFolder(entryId: String, folderId: String): LauncherConfig {
-        val app = entries.getOrNull(indexOf(entryId)) as? LauncherEntry.App ?: return this
+        val item = entries.getOrNull(indexOf(entryId)) as? LauncherEntry.Launchable ?: return this
         if (folder(folderId) == null) return this
-        return addToFolder(folderId, app).remove(entryId)
+        return addToFolder(folderId, item).remove(entryId)
     }
 
     /** The custom folder icons in use (file names; see FolderIcons). */
     fun iconNames(): Set<String> = folders.mapNotNullTo(mutableSetOf()) { it.icon }
+
+    // --- Uninstalled apps --------------------------------------------------------
+
+    /**
+     * The bar without the apps and pinned shortcuts of [packageNames] (apps that
+     * were uninstalled; see PackageRemovedReceiver), on the bar and inside
+     * folders. Folders stay, also when this empties them.
+     */
+    fun withoutPackages(packageNames: Set<String>): LauncherConfig {
+        if (packageNames.isEmpty()) return this
+        val kept = entries.mapNotNull { entry ->
+            when (entry) {
+                is LauncherEntry.App -> entry.takeUnless { it.packageName in packageNames }
+                is LauncherEntry.Shortcut -> entry.takeUnless { it.packageName in packageNames }
+                is LauncherEntry.Folder -> {
+                    val apps = entry.apps.filterNot { it.packageName in packageNames }
+                    if (apps.size == entry.apps.size) entry else entry.copy(apps = apps)
+                }
+                is LauncherEntry.Link, is LauncherEntry.WebPage -> entry
+            }
+        }
+        return if (kept == entries) this else copy(entries = kept)
+    }
+
+    /**
+     * The bar without the pinned shortcut [shortcutId] of [packageName], on the
+     * bar and in folders: it was removed from the phone.
+     */
+    fun withoutShortcut(packageName: String, shortcutId: String): LauncherConfig {
+        val key = LauncherEntry.Launchable.shortcutKey(packageName, shortcutId)
+        val kept = entries.mapNotNull { entry ->
+            when {
+                entry is LauncherEntry.Shortcut && entry.key == key -> null
+                entry is LauncherEntry.Folder && entry.containsKey(key) -> entry.copy(apps = entry.apps.filterNot { it.key == key })
+                else -> entry
+            }
+        }
+        return if (kept == entries) this else copy(entries = kept)
+    }
 
     companion object {
         /** The four OS actions the web dock had (plan §1). */
@@ -123,9 +164,9 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
 /**
  * JSON form of [LauncherConfig]: `{"version":1,"entries":[{"type":"uri",…},…]}`.
  * Decoding is forgiving per entry, so one entry of an unknown future type does
- * not cost the user the rest of the bar — and per app inside a folder
- * (`{"type":"folder",…,"apps":[{"id":…,"packageName":…},…]}`), where anything
- * that is not an app is dropped: folders do not nest.
+ * not cost the user the rest of the bar — and per item inside a folder
+ * (`{"type":"folder",…,"apps":[{"type":"app",…},{"type":"shortcut",…}]}`),
+ * where anything but an app or a web app is dropped: folders do not nest.
  */
 object LauncherCodec {
 
@@ -171,14 +212,18 @@ object LauncherCodec {
         return LauncherConfig(entries.distinctBy { it.id })
     }
 
-    /** A folder's `apps`, keeping only the items that decode as apps (a malformed list counts as empty). */
+    /**
+     * A folder's `apps`, keeping the items that decode as an app or a web app
+     * (one without a type is an app: folders first stored apps only) and
+     * dropping the rest; a malformed list counts as empty.
+     */
     private fun forgiveFolderApps(element: JsonElement): JsonElement {
         if (element !is JsonObject || element.typeOf() != "folder") return element
         val apps = element["apps"] as? JsonArray ?: JsonArray(emptyList())
-        val kept = apps.filter { item ->
-            val type = item.typeOf()
-            (type == null || type == "app") &&
-                runCatching { json.decodeFromJsonElement(LauncherEntry.App.serializer(), item) }.isSuccess
+        val kept = apps.mapNotNull { item ->
+            if (item !is JsonObject) return@mapNotNull null
+            val typed = if (item.typeOf() == null) JsonObject(item + ("type" to JsonPrimitive("app"))) else item
+            typed.takeIf { runCatching { json.decodeFromJsonElement(LauncherEntry.Launchable.serializer(), it) }.isSuccess }
         }
         return JsonObject(element + ("apps" to JsonArray(kept)))
     }
@@ -190,7 +235,7 @@ object LauncherCodec {
         if (entry !is LauncherEntry.Folder) return entry
         return entry.copy(
             icon = entry.icon?.takeIf { LauncherEntry.Folder.isIconName(it) },
-            apps = entry.apps.distinctBy { it.packageName to it.activityName }.distinctBy { it.id },
+            apps = entry.apps.distinctBy { it.key }.distinctBy { it.id },
         )
     }
 }
