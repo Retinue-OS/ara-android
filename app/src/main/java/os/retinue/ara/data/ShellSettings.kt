@@ -1,6 +1,7 @@
 package os.retinue.ara.data
 
 import os.retinue.ara.shell.ShellUrls
+import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
 
 /**
@@ -17,6 +18,10 @@ data class ShellSettings(
     val wakeThreshold: Float = DEFAULT_WAKE_THRESHOLD,
     /** Where "Download phrase model" fetches the keyword model from. */
     val wakeModelUrl: String = DEFAULT_WAKE_MODEL_URL,
+    /** Check the update channel on its own and install what it offers (see UpdateRuntime). Off until the user turns it on. */
+    val autoUpdate: Boolean = false,
+    /** Which builds count as updates. */
+    val updateChannel: UpdateChannel = UpdateChannel.Nightly,
 ) {
     /** The normalized base URL, or null when it is not configured (or invalid). */
     val base: String? get() = ShellUrls.normalizeBase(baseUrl)

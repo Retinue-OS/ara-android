@@ -88,6 +88,9 @@ import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
+import os.retinue.ara.update.UpdateChannel
+import os.retinue.ara.update.UpdateRuntime
+import os.retinue.ara.update.UpdateState
 import os.retinue.ara.wake.WakeAlert
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeRuntime
@@ -160,6 +163,9 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
     private var notificationsAllowed by mutableStateOf(true)
+
+    /** Android lets Ara install apps, so an update needs no dialog (see UpdateRuntime). */
+    private var installAllowed by mutableStateOf(true)
 
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
@@ -243,6 +249,13 @@ class MainActivity : ComponentActivity(), ShellHost {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
                 viewModel.settings.filterNotNull().collect { applySettings(it) }
+            }
+        }
+        // The installer's confirmation dialog, when an update needs one: started
+        // from here while in front (a start from the background would be refused).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                UpdateRuntime.state.collect { if (it is UpdateState.AwaitingConfirmation && !it.shown) showUpdateConfirmation() }
             }
         }
 
@@ -405,6 +418,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         val busy by viewModel.modelBusy.collectAsStateWithLifecycle()
         val message by viewModel.modelMessage.collectAsStateWithLifecycle()
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
+        val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         Surface(Modifier.fillMaxSize()) {
             SettingsScreen(
                 state = SettingsState(
@@ -421,6 +435,8 @@ class MainActivity : ComponentActivity(), ShellHost {
                     overlayAllowed = overlayAllowed,
                     notificationsAllowed = notificationsAllowed,
                     page = pageState,
+                    update = update,
+                    installAllowed = installAllowed,
                 ),
                 actions = settingsActions,
             )
@@ -520,6 +536,48 @@ class MainActivity : ComponentActivity(), ShellHost {
                 Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
             }
         }
+
+        override fun setAutoUpdate(on: Boolean) {
+            viewModel.setAutoUpdate(on)
+        }
+
+        override fun setUpdateChannel(channel: UpdateChannel) {
+            viewModel.setUpdateChannel(channel)
+        }
+
+        override fun checkForUpdates() = UpdateRuntime.checkNow()
+
+        override fun installUpdate() = UpdateRuntime.installNow()
+
+        override fun confirmUpdate() {
+            val intent = UpdateRuntime.confirmation() ?: return
+            startUpdateConfirmation(intent)
+        }
+
+        override fun cancelUpdate() = UpdateRuntime.cancelConfirmation()
+
+        override fun allowUpdateInstalls() {
+            try {
+                startActivity(UpdateRuntime.installSettings(this@MainActivity))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** The installer's confirmation, once per request (see UpdateRuntime.takeConfirmation). */
+    private fun showUpdateConfirmation() {
+        val intent = UpdateRuntime.takeConfirmation() ?: return
+        startUpdateConfirmation(intent)
+    }
+
+    private fun startUpdateConfirmation(intent: Intent) {
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            // ActivityNotFoundException, or a SecurityException from a stale intent: never crash the shell.
+            Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun requestNotificationsIfNeeded() {
@@ -545,10 +603,12 @@ class MainActivity : ComponentActivity(), ShellHost {
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
         overlayAllowed = WakeAlert.canDrawOverlays(this)
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
+        installAllowed = UpdateRuntime.canInstall(this)
         viewModel.refreshModels()
         webView?.onResume()
         resumed = true
         WakeRuntime.setShellResumed(true)
+        UpdateRuntime.onShellResumed()
         tryDeliverWake()
     }
 

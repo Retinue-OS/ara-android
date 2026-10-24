@@ -77,8 +77,13 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # The commit and the tag go into BuildConfig: the shell's updater tells by
+      # them whether the installed build is the channel's latest.
       - name: Build release APK
         run: ./gradlew --no-daemon assembleRelease
+        env:
+          ARA_BUILD_SHA: ${{ github.sha }}
+          ARA_BUILD_TAG: ${{ needs.check.outputs.tag }}
 
       - name: Rename APK
         id: apk

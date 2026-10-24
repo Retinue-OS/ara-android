@@ -21,6 +21,11 @@
          another app is in front bring Ara forward directly. Without it Android
          10+ blocks the start and only the heads-up notification is shown. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Updates: Ara installs the APK it fetched from the release channel over
+         itself (the user allows "Install unknown apps" for Ara once); with the
+         second permission Android 12+ updates it without asking each time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -120,6 +125,12 @@
             android:name=".wake.WakeService"
             android:exported="false"
             android:foregroundServiceType="microphone|shortService" />
+
+        <!-- The package installer reports the outcome of an update here (through
+             a PendingIntent of Ara's own, so the receiver is not exported). -->
+        <receiver
+            android:name=".update.UpdateReceiver"
+            android:exported="false" />
 
         <!-- Files the page asks to view that the WebView cannot show (a PDF):
              a private copy in the cache, handed to the viewer app with a

@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherConfig
+import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
 
 // The same store file the voice client used, so the base URL and the
@@ -34,7 +37,18 @@ class AraStore(context: Context) {
             wakeMode = WakeMode.fromKey(p[K.wakeMode]),
             wakeThreshold = p[K.wakeThreshold] ?: ShellSettings.DEFAULT_WAKE_THRESHOLD,
             wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
+            autoUpdate = p[K.autoUpdate] ?: false,
+            updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
         )
+    }
+
+    /**
+     * When the update channel was last checked, in epoch ms (0 for never), as
+     * long as that check was this build's ([build]): after an update, the new
+     * build checks afresh. State, not a setting.
+     */
+    fun updateCheckedAt(build: String): Flow<Long> = store.data.map { p ->
+        if (p[K.updateCheckedBy] == build) p[K.updateCheckedAt] ?: 0L else 0L
     }
 
     val launcher: Flow<LauncherConfig> = store.data.map { p -> LauncherCodec.decode(p[K.launcher]) }
@@ -52,6 +66,15 @@ class AraStore(context: Context) {
     suspend fun setWakeThreshold(value: Float) = edit { it[K.wakeThreshold] = value.coerceIn(0.05f, 0.99f) }
 
     suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
+
+    suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }
+
+    suspend fun setUpdateChannel(channel: UpdateChannel) = edit { it[K.updateChannel] = channel.key }
+
+    suspend fun setUpdateCheckedAt(epochMs: Long, build: String) = edit {
+        it[K.updateCheckedAt] = epochMs
+        it[K.updateCheckedBy] = build
+    }
 
     /**
      * Apply [change] to the stored launcher atomically (no lost updates between
@@ -80,5 +103,9 @@ class AraStore(context: Context) {
         val wakeThreshold = floatPreferencesKey("wake_threshold")
         val wakeModelUrl = stringPreferencesKey("wake_model_url")
         val launcher = stringPreferencesKey("launcher_json")
+        val autoUpdate = booleanPreferencesKey("auto_update")
+        val updateChannel = stringPreferencesKey("update_channel")
+        val updateCheckedAt = longPreferencesKey("update_checked_at")
+        val updateCheckedBy = stringPreferencesKey("update_checked_by")
     }
 }
