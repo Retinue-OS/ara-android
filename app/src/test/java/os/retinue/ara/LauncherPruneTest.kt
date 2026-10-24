@@ -25,13 +25,6 @@ class LauncherPruneTest {
     private fun appIds(c: LauncherConfig, folderId: String) = c.folder(folderId)!!.apps.map { it.id }
 
     @Test
-    fun appPackageNames() {
-        // Apps on the bar and in folders; a web app's (pinned shortcut's) package is not an app of the bar.
-        assertEquals(setOf("com.example.camera", "com.example.gallery", "com.example.chess"), bar.appPackageNames())
-        assertEquals(emptySet(), LauncherConfig.DEFAULT.appPackageNames())
-    }
-
-    @Test
     fun uninstalledAppsLeaveTheBarAndFolders() {
         val pruned = bar.withoutPackages(setOf("com.example.camera"))
         // Every activity of the package goes, on the bar and in folders; the rest stays in order.

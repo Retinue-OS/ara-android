@@ -111,21 +111,10 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
 
     // --- Uninstalled apps --------------------------------------------------------
 
-    /** The packages of the bar's apps, those in folders included (pinned shortcuts not). */
-    fun appPackageNames(): Set<String> = buildSet {
-        entries.forEach { entry ->
-            when (entry) {
-                is LauncherEntry.App -> add(entry.packageName)
-                is LauncherEntry.Folder -> entry.apps.filterIsInstance<LauncherEntry.App>().forEach { add(it.packageName) }
-                else -> Unit
-            }
-        }
-    }
-
     /**
      * The bar without the apps and pinned shortcuts of [packageNames] (apps that
-     * were uninstalled), on the bar and inside folders. Folders stay, also when
-     * this empties them.
+     * were uninstalled; see PackageRemovedReceiver), on the bar and inside
+     * folders. Folders stay, also when this empties them.
      */
     fun withoutPackages(packageNames: Set<String>): LauncherConfig {
         if (packageNames.isEmpty()) return this

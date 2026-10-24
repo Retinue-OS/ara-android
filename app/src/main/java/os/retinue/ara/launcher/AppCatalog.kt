@@ -8,7 +8,6 @@ import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutInfo
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Process
 import android.util.Log
 import android.util.LruCache
@@ -60,30 +59,6 @@ object AppCatalog {
             }
             .distinctBy { it.packageName + "/" + it.activityName }
             .sortedWith { a, b -> collator.compare(a.label, b.label) }
-    }
-
-    /**
-     * Whether [packageName] is still on the device for this user. Only a really
-     * uninstalled app is gone: one that is disabled or on storage that is not
-     * mounted right now is still installed, and so (Android 15+) is an archived
-     * one, which keeps its data and comes back when it is restored.
-     */
-    @Suppress("DEPRECATION")
-    fun isInstalled(context: Context, packageName: String): Boolean {
-        val pm = context.packageManager
-        val info = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                val flags = PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong() or PackageManager.MATCH_ARCHIVED_PACKAGES
-                pm.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(flags))
-            } else {
-                pm.getPackageInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
-            }
-        } catch (_: PackageManager.NameNotFoundException) {
-            return false
-        }
-        val installed = ((info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_INSTALLED) != 0
-        val archived = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM && info.archiveTimeMillis > 0
-        return installed || archived
     }
 
     /** The app's category; a game that sets only the old `isGame` flag counts as a game, as in the system settings. */

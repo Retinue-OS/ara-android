@@ -178,11 +178,13 @@ from phone" to unpin it, which also takes it off the bar and out of every
 folder. Web apps Chrome installs as WebAPKs are ordinary apps in All apps.
 
 Uninstalled apps leave the bar by themselves, also from inside folders (a
-folder stays, even when that empties it): Android reports a removal while Ara
-runs (`LauncherApps.Callback`), and Ara checks the bar's apps each time it
-starts. An app update, a disabled app, an app on storage that is not mounted
-and (Android 15+) an archived app keep their place. A pinned shortcut leaves
-with its app when that is uninstalled while Ara runs.
+folder stays, even when that empties it), and an uninstalled browser takes the
+web apps it installed along. Android tells Ara when an app is uninstalled with
+its data (`ACTION_PACKAGE_FULLY_REMOVED`, declared in the manifest, so it
+reaches Ara also when it is not running). An app update, a disabled app, an
+app on storage that is not mounted and (Android 15+) an archived app keep their
+place; so does an app uninstalled with its data kept, whose tile then only says
+that no app can open it.
 
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.
