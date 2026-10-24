@@ -1,5 +1,6 @@
 package os.retinue.ara.ui
 
+import android.content.pm.ApplicationInfo
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import os.retinue.ara.R
 import os.retinue.ara.launcher.AppInfo
@@ -45,29 +47,65 @@ import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
 import java.text.Collator
 
-/** One tile of the drawer: an app, or a shortcut pinned to Ara (an installed web app). */
-private sealed interface DrawerItem {
+/**
+ * An item of All apps: an installed app, or a shortcut pinned to Ara (an
+ * installed web app), which is an app in every other way too. The folder
+ * editor offers the same items.
+ */
+internal sealed interface DrawerItem {
     val label: String
+
+    /** What it starts: the [LauncherEntry.Launchable.key] of an entry made from it. */
     val key: String
+
+    /** The app's Android category, which folder types suggest apps by; web apps have none. */
+    val category: Int
+
+    /** Whether its name or package contains [query] (an empty query matches every item). */
+    fun matches(query: String): Boolean
+
+    /** A new launcher entry for it, on the bar or in a folder. */
+    fun toEntry(): LauncherEntry.Launchable
 
     data class App(val app: AppInfo) : DrawerItem {
         override val label get() = app.label
-        override val key get() = "app:" + app.packageName + "/" + app.activityName
+        override val key get() = LauncherEntry.Launchable.appKey(app.packageName, app.activityName)
+        override val category get() = app.category
+        override fun matches(query: String): Boolean = app.matches(query)
+        override fun toEntry(): LauncherEntry.Launchable = app.toEntry()
     }
 
     data class Shortcut(val shortcut: PinnedShortcut) : DrawerItem {
         override val label get() = shortcut.label
-        override val key get() = "shortcut:" + shortcut.packageName + "/" + shortcut.shortcutId
+        override val key get() = LauncherEntry.Launchable.shortcutKey(shortcut.packageName, shortcut.shortcutId)
+        override val category get() = ApplicationInfo.CATEGORY_UNDEFINED
+        override fun matches(query: String): Boolean = shortcut.matches(query)
+        override fun toEntry(): LauncherEntry.Launchable = shortcut.toEntry()
+    }
+}
+
+/** [apps] and the web apps pinned to Ara ([shortcuts]) in one list, sorted by name. */
+internal fun drawerItems(apps: List<AppInfo>, shortcuts: List<PinnedShortcut>): List<DrawerItem> {
+    val collator = Collator.getInstance()
+    return (apps.map { DrawerItem.App(it) } + shortcuts.map { DrawerItem.Shortcut(it) })
+        .sortedWith { a, b -> collator.compare(a.label, b.label) }
+}
+
+@Composable
+internal fun DrawerItemIcon(item: DrawerItem, size: Dp) {
+    when (item) {
+        is DrawerItem.App -> AppIcon(item.app.packageName, item.app.activityName, size)
+        is DrawerItem.Shortcut -> ShortcutIcon(item.shortcut.packageName, item.shortcut.shortcutId, size)
     }
 }
 
 /**
  * "All apps": every launchable app and every shortcut pinned to Ara (web apps
- * a browser installed), searchable. Tap opens; long-press offers pinning an
- * app to the launcher bar, adding it to a folder, or a new folder with it, and
- * for a shortcut pinning it to the bar or removing it from the phone. Required
- * once the shell is the home screen, since otherwise other apps would be
- * unreachable.
+ * a browser installed), searchable. Tap opens; long-press offers pinning it to
+ * the launcher bar, adding it to a folder, or a new folder with it — for an
+ * app and a web app alike — and for a web app also removing it from the
+ * phone. Required once the shell is the home screen, since otherwise other
+ * apps would be unreachable.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,8 +117,8 @@ fun AppDrawer(
     isShortcutPinned: (PinnedShortcut) -> Boolean,
     onLaunch: (AppInfo) -> Unit,
     onPin: (AppInfo) -> Unit,
-    onAddToFolder: (AppInfo, LauncherEntry.Folder) -> Unit,
-    onNewFolder: (AppInfo) -> Unit,
+    onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
+    onNewFolder: (LauncherEntry.Launchable) -> Unit,
     onLaunchShortcut: (PinnedShortcut) -> Unit,
     onPinShortcut: (PinnedShortcut) -> Unit,
     onRemoveShortcut: (PinnedShortcut) -> Unit,
@@ -89,19 +127,8 @@ fun AppDrawer(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by rememberSaveable { mutableStateOf("") }
-    val items = remember(apps, shortcuts) {
-        val collator = Collator.getInstance()
-        (apps.map { DrawerItem.App(it) } + shortcuts.map { DrawerItem.Shortcut(it) })
-            .sortedWith { a, b -> collator.compare(a.label, b.label) }
-    }
-    val shown = remember(items, query) {
-        items.filter {
-            when (it) {
-                is DrawerItem.App -> it.app.matches(query)
-                is DrawerItem.Shortcut -> it.shortcut.matches(query)
-            }
-        }
-    }
+    val items = remember(apps, shortcuts) { drawerItems(apps, shortcuts) }
+    val shown = remember(items, query) { items.filter { it.matches(query) } }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f).padding(horizontal = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -130,8 +157,26 @@ fun AppDrawer(
             ) {
                 items(shown, key = { it.key }) { item ->
                     when (item) {
-                        is DrawerItem.App -> AppItem(item.app, folders, isPinned, onLaunch, onPin, onAddToFolder, onNewFolder)
-                        is DrawerItem.Shortcut -> ShortcutItem(item.shortcut, isShortcutPinned, onLaunchShortcut, onPinShortcut, onRemoveShortcut)
+                        is DrawerItem.App -> DrawerTile(
+                            item = item,
+                            folders = folders,
+                            pinned = isPinned(item.app),
+                            onLaunch = { onLaunch(item.app) },
+                            onPin = { onPin(item.app) },
+                            onAddToFolder = onAddToFolder,
+                            onNewFolder = onNewFolder,
+                            onRemove = null,
+                        )
+                        is DrawerItem.Shortcut -> DrawerTile(
+                            item = item,
+                            folders = folders,
+                            pinned = isShortcutPinned(item.shortcut),
+                            onLaunch = { onLaunchShortcut(item.shortcut) },
+                            onPin = { onPinShortcut(item.shortcut) },
+                            onAddToFolder = onAddToFolder,
+                            onNewFolder = onNewFolder,
+                            onRemove = { onRemoveShortcut(item.shortcut) },
+                        )
                     }
                 }
             }
@@ -139,24 +184,28 @@ fun AppDrawer(
     }
 }
 
+/**
+ * An app or web app in All apps. Long-press: pin it to the bar, add it to a
+ * folder or a new one and, given [onRemove] (web apps), remove it from the
+ * phone (unpin it).
+ */
 @Composable
-private fun AppItem(
-    app: AppInfo,
+private fun DrawerTile(
+    item: DrawerItem,
     folders: List<LauncherEntry.Folder>,
-    isPinned: (AppInfo) -> Boolean,
-    onLaunch: (AppInfo) -> Unit,
-    onPin: (AppInfo) -> Unit,
-    onAddToFolder: (AppInfo, LauncherEntry.Folder) -> Unit,
-    onNewFolder: (AppInfo) -> Unit,
+    pinned: Boolean,
+    onLaunch: () -> Unit,
+    onPin: () -> Unit,
+    onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
+    onNewFolder: (LauncherEntry.Launchable) -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
     var menu by remember { mutableStateOf(false) }
-    val pinned = isPinned(app)
     Box {
         AppTile(
-            label = if (pinned) "• " + app.label else app.label,
-            packageName = app.packageName,
-            activityName = app.activityName,
-            onClick = { onLaunch(app) },
+            label = if (pinned) "• " + item.label else item.label,
+            icon = { DrawerItemIcon(item, size = 44.dp) },
+            onClick = onLaunch,
             onLongClick = { menu = true },
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -166,10 +215,10 @@ private fun AppItem(
                 enabled = !pinned,
             ) {
                 menu = false
-                onPin(app)
+                onPin()
             }
             folders.forEach { folder ->
-                val inFolder = folder.containsApp(app.packageName, app.activityName)
+                val inFolder = folder.containsKey(item.key)
                 MenuItem(
                     text = stringResource(
                         if (inFolder) R.string.drawer_in_folder else R.string.drawer_add_to_folder,
@@ -179,47 +228,18 @@ private fun AppItem(
                     enabled = !inFolder,
                 ) {
                     menu = false
-                    onAddToFolder(app, folder)
+                    onAddToFolder(item.toEntry(), folder)
                 }
             }
             MenuItem(R.string.drawer_new_folder, Icons.Filled.CreateNewFolder) {
                 menu = false
-                onNewFolder(app)
+                onNewFolder(item.toEntry())
             }
-        }
-    }
-}
-
-/** A shortcut pinned to Ara: pin it to the bar, or remove it from the phone (unpin). */
-@Composable
-private fun ShortcutItem(
-    shortcut: PinnedShortcut,
-    isPinned: (PinnedShortcut) -> Boolean,
-    onLaunch: (PinnedShortcut) -> Unit,
-    onPin: (PinnedShortcut) -> Unit,
-    onRemove: (PinnedShortcut) -> Unit,
-) {
-    var menu by remember { mutableStateOf(false) }
-    val pinned = isPinned(shortcut)
-    Box {
-        AppTile(
-            label = if (pinned) "• " + shortcut.label else shortcut.label,
-            icon = { ShortcutIcon(shortcut.packageName, shortcut.shortcutId, size = 44.dp) },
-            onClick = { onLaunch(shortcut) },
-            onLongClick = { menu = true },
-        )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            MenuItem(
-                text = stringResource(if (pinned) R.string.drawer_pinned_already else R.string.drawer_pin),
-                icon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
-                enabled = !pinned,
-            ) {
-                menu = false
-                onPin(shortcut)
-            }
-            MenuItem(R.string.drawer_remove_shortcut, Icons.Filled.Delete) {
-                menu = false
-                onRemove(shortcut)
+            if (onRemove != null) {
+                MenuItem(R.string.drawer_remove_shortcut, Icons.Filled.Delete) {
+                    menu = false
+                    onRemove()
+                }
             }
         }
     }
@@ -237,18 +257,7 @@ internal fun AppInfo.matches(query: String): Boolean {
     return q.isEmpty() || label.contains(q, ignoreCase = true) || packageName.contains(q, ignoreCase = true)
 }
 
-/** An app in a grid (All apps, an open folder): its icon above its name. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun AppTile(
-    label: String,
-    packageName: String,
-    activityName: String,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) = AppTile(label, { AppIcon(packageName, activityName, size = 44.dp) }, onClick, onLongClick)
-
-/** A tile with any icon: an app's, a pinned shortcut's. */
+/** An app or web app in a grid (All apps, an open folder): its icon above its name. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AppTile(

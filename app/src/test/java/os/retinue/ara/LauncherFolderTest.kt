@@ -17,6 +17,7 @@ class LauncherFolderTest {
     private val camera = LauncherEntry.App("a1", "Camera", "com.example.camera", "com.example.camera.Main")
     private val gallery = LauncherEntry.App("a2", "Gallery", "com.example.gallery", "com.example.gallery.Main")
     private val chess = LauncherEntry.App("a3", "Chess", "com.example.chess", "com.example.chess.Main")
+    private val webApp = LauncherEntry.Shortcut("s1", "Web app", "com.example.browser", "pwa-1")
     private val photos = LauncherEntry.Folder("f1", "Photos", FolderKind.Photos, apps = listOf(camera, gallery))
     private val games = LauncherEntry.Folder("f2", "Games", FolderKind.Games, icon = "0b6c4e8e-1f2a-4d3b-9c8d-7e6f5a4b3c2d.png")
 
@@ -27,17 +28,21 @@ class LauncherFolderTest {
     fun folderRoundTrip() {
         // An empty label (the type's name, resolved when shown) is kept as such.
         val unnamed = LauncherEntry.Folder("f3", "", FolderKind.Media)
-        val c = LauncherConfig.DEFAULT.add(photos).add(games.add(chess)).add(unnamed)
+        val c = LauncherConfig.DEFAULT.add(photos).add(games.add(chess).add(webApp)).add(unnamed)
         val json = LauncherCodec.encode(c)
         assertTrue(json.contains("\"type\":\"folder\""))
         assertTrue(json.contains("\"kind\":\"photos\""))
         assertTrue(json.contains("\"kind\":\"games\""))
+        // Inside a folder each item says what it is.
+        assertTrue(json.contains("\"type\":\"shortcut\""))
         assertEquals(c, LauncherCodec.decode(json))
+        assertEquals(listOf(chess, webApp), LauncherCodec.decode(json).folder("f2")!!.apps)
     }
 
     @Test
-    fun folderDecodeKeepsOnlyApps() {
-        // Anything but an app inside a folder is dropped, the folder and its other apps kept.
+    fun folderDecodeKeepsOnlyAppsAndWebApps() {
+        // Anything but an app or a web app inside a folder is dropped, the folder and the rest kept;
+        // an item without a type is an app (folders first stored apps only).
         val raw = """{"version":1,"entries":[{"type":"folder","id":"f","label":"Mixed","kind":"games","apps":[
             {"id":"a1","label":"Camera","packageName":"com.example.camera","activityName":"com.example.camera.Main"},
             {"type":"folder","id":"inner","label":"Nested","apps":[]},
@@ -45,6 +50,7 @@ class LauncherFolderTest {
             {"type":"uri","id":"u","label":"Phone","uri":"tel:"},
             {"type":"web","id":"w","label":"Home","path":"/"},
             {"type":"shortcut","id":"s","label":"Web app","packageName":"com.android.chrome","shortcutId":"x"},
+            {"type":"shortcut","id":"s2","label":"Broken web app","packageName":"com.android.chrome"},
             {"id":"b","label":"Broken"},
             {"type":"app","id":"a2","label":"Gallery","packageName":"com.example.gallery","activityName":"com.example.gallery.Main"},
             {"id":"a9","label":"Camera again","packageName":"com.example.camera","activityName":"com.example.camera.Main"},
@@ -52,7 +58,9 @@ class LauncherFolderTest {
         ]}]}"""
         val folder = LauncherCodec.decode(raw).folder("f")!!
         assertEquals(FolderKind.Games, folder.kind)
-        assertEquals(listOf("a1", "a2"), folder.apps.map { it.id })
+        assertEquals(listOf("a1", "s", "a2"), folder.apps.map { it.id })
+        assertTrue(folder.apps[0] is LauncherEntry.App)
+        assertTrue(folder.apps[1] is LauncherEntry.Shortcut)
     }
 
     @Test
@@ -100,6 +108,11 @@ class LauncherFolderTest {
         // Unknown ids and entries that are not folders change nothing.
         assertSame(c, c.addToFolder("missing", chess))
         assertSame(c, c.addToFolder("phone", chess))
+        // A web app goes in once, like an app.
+        val withWeb = added.addToFolder("f1", webApp)
+        assertEquals(listOf("a1", "a2", "a3", "s1"), appIds(withWeb, "f1"))
+        assertSame(withWeb, withWeb.addToFolder("f1", webApp.copy(id = "other")))
+        assertTrue(withWeb.folder("f1")!!.containsShortcut("com.example.browser", "pwa-1"))
         // The same app may be in several folders and on the bar.
         val both = added.add(games).addToFolder("f2", chess).add(chess.copy(id = "bar-chess"))
         assertEquals(listOf("a3"), appIds(both, "f2"))
@@ -123,16 +136,18 @@ class LauncherFolderTest {
     }
 
     @Test
-    fun onlyAppsMoveIntoFolders() {
-        val webApp = LauncherEntry.Shortcut("s1", "Web app", "com.android.chrome", "x")
+    fun onlyAppsAndWebAppsMoveIntoFolders() {
         val c = LauncherConfig.DEFAULT.add(chess).add(photos).add(games).add(webApp)
         val moved = c.moveIntoFolder("a3", "f2")
         assertEquals(listOf("phone", "messages", "mail", "maps", "f1", "f2", "s1"), ids(moved))
         assertEquals(listOf("a3"), appIds(moved, "f2"))
-        // Folders do not nest, and pinned shortcuts and links stay on the bar.
+        // A web app moves like an app.
+        val movedWeb = moved.moveIntoFolder("s1", "f2")
+        assertEquals(listOf("phone", "messages", "mail", "maps", "f1", "f2"), ids(movedWeb))
+        assertEquals(listOf("a3", "s1"), appIds(movedWeb, "f2"))
+        // Folders do not nest, and links stay on the bar.
         assertSame(c, c.moveIntoFolder("f1", "f2"))
         assertSame(c, c.moveIntoFolder("f2", "f2"))
-        assertSame(c, c.moveIntoFolder("s1", "f2"))
         assertSame(c, c.moveIntoFolder("phone", "f2"))
         assertSame(c, c.moveIntoFolder("a3", "missing"))
         assertSame(c, c.moveIntoFolder("a3", "phone"))

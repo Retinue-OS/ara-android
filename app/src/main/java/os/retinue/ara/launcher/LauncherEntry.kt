@@ -12,15 +12,36 @@ sealed class LauncherEntry {
     abstract val id: String
     abstract val label: String
 
+    /**
+     * An entry that behaves like an app: an installed app, or a pinned shortcut
+     * such as an installed web app. These are what All apps lists and the only
+     * things a folder holds, so folders cannot nest. [key] names what the entry
+     * starts, whatever its id.
+     */
+    @Serializable
+    sealed interface Launchable {
+        val id: String
+        val label: String
+        val packageName: String
+        val key: String
+
+        companion object {
+            fun appKey(packageName: String, activityName: String) = "app:$packageName/$activityName"
+            fun shortcutKey(packageName: String, shortcutId: String) = "shortcut:$packageName/$shortcutId"
+        }
+    }
+
     /** An installed app's launcher activity. */
     @Serializable
     @SerialName("app")
     data class App(
         override val id: String,
         override val label: String,
-        val packageName: String,
+        override val packageName: String,
         val activityName: String,
-    ) : LauncherEntry()
+    ) : LauncherEntry(), Launchable {
+        override val key: String get() = Launchable.appKey(packageName, activityName)
+    }
 
     /**
      * A pinned shortcut another app asked the launcher to hold (Chrome's
@@ -33,9 +54,11 @@ sealed class LauncherEntry {
     data class Shortcut(
         override val id: String,
         override val label: String,
-        val packageName: String,
+        override val packageName: String,
         val shortcutId: String,
-    ) : LauncherEntry()
+    ) : LauncherEntry(), Launchable {
+        override val key: String get() = Launchable.shortcutKey(packageName, shortcutId)
+    }
 
     /** A URI handed to Android: `tel:`, `sms:`, `mailto:`, `geo:`, `https:`, `intent:` … */
     @Serializable
@@ -56,13 +79,13 @@ sealed class LauncherEntry {
     ) : LauncherEntry()
 
     /**
-     * A folder of installed apps. It holds apps only — never pinned shortcuts,
-     * links, web pages or other folders — so folders cannot nest. [kind] is
-     * the folder type picked when it was made (its symbol, default name and
-     * suggested apps); [icon], when set, names an image in app storage (see
-     * FolderIcons) drawn instead of the type's symbol. An empty [label] means
-     * the folder has no name of its own and shows its type's name, in the
-     * phone's current language.
+     * A folder of apps: installed apps and installed web apps ([Launchable]),
+     * never links, web pages or other folders, so folders cannot nest. [kind]
+     * is the folder type picked when it was made (its symbol, default name
+     * and suggested apps); [icon], when set, names an image in app storage
+     * (see FolderIcons) drawn instead of the type's symbol. An empty [label]
+     * means the folder has no name of its own and shows its type's name, in
+     * the phone's current language.
      */
     @Serializable
     @SerialName("folder")
@@ -71,16 +94,21 @@ sealed class LauncherEntry {
         override val label: String,
         val kind: FolderKind = FolderKind.General,
         val icon: String? = null,
-        val apps: List<App> = emptyList(),
+        val apps: List<Launchable> = emptyList(),
     ) : LauncherEntry() {
 
-        fun containsApp(packageName: String, activityName: String): Boolean =
-            apps.any { it.packageName == packageName && it.activityName == activityName }
+        fun containsKey(key: String): Boolean = apps.any { it.key == key }
 
-        /** Append [app]; an app already in the folder is not added twice. */
-        fun add(app: App): Folder {
-            if (containsApp(app.packageName, app.activityName) || apps.any { it.id == app.id }) return this
-            return copy(apps = apps + app)
+        fun containsApp(packageName: String, activityName: String): Boolean =
+            containsKey(Launchable.appKey(packageName, activityName))
+
+        fun containsShortcut(packageName: String, shortcutId: String): Boolean =
+            containsKey(Launchable.shortcutKey(packageName, shortcutId))
+
+        /** Append [item]; one already in the folder is not added twice. */
+        fun add(item: Launchable): Folder {
+            if (containsKey(item.key) || apps.any { it.id == item.id }) return this
+            return copy(apps = apps + item)
         }
 
         fun remove(appId: String): Folder =

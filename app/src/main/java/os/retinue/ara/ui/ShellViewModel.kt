@@ -110,7 +110,8 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pin(app: AppInfo) = updateLauncher { it.add(app.toEntry()) }
 
-    fun addToFolder(app: AppInfo, folderId: String) = updateLauncher { it.addToFolder(folderId, app.toEntry()) }
+    /** Add an app or web app to the folder [folderId]. */
+    fun addToFolder(item: LauncherEntry.Launchable, folderId: String) = updateLauncher { it.addToFolder(folderId, item) }
 
     /**
      * Save a folder from the editor. [newIcon], a picked image not stored yet,
@@ -130,23 +131,17 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         editLauncher(stored) { if (isNew) it.add(saved) else it.replace(saved) }
     }
 
-    fun pin(shortcut: PinnedShortcut) = updateLauncher {
-        it.add(LauncherEntry.Shortcut(newId(), shortcut.label, shortcut.packageName, shortcut.shortcutId))
-    }
+    fun pin(shortcut: PinnedShortcut) = updateLauncher { it.add(shortcut.toEntry()) }
 
     /** Off the bar only: a shortcut stays pinned, and listed under All apps. */
     fun removeEntry(entry: LauncherEntry) = updateLauncher { it.remove(entry.id) }
 
     fun resetLauncher() = updateLauncher { LauncherConfig.DEFAULT }
 
-    /** Remove a shortcut for good: unpinned, off the bar and out of All apps. */
+    /** Remove a shortcut (a web app) for good: unpinned, off the bar, out of folders and out of All apps. */
     fun forget(shortcut: PinnedShortcut) {
         viewModelScope.launch {
-            editLauncher { config ->
-                config.entries
-                    .filter { it is LauncherEntry.Shortcut && it.packageName == shortcut.packageName && it.shortcutId == shortcut.shortcutId }
-                    .fold(config) { c, e -> c.remove(e.id) }
-            }
+            editLauncher { it.withoutShortcut(shortcut.packageName, shortcut.shortcutId) }
             AppCatalog.unpinShortcut(appCtx, shortcut.packageName, shortcut.shortcutId)
             _shortcuts.value = AppCatalog.pinnedShortcuts(appCtx)
         }
@@ -221,3 +216,6 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
 /** A new launcher entry for this app, on the bar or in a folder. */
 fun AppInfo.toEntry() = LauncherEntry.App(ShellViewModel.newId(), label, packageName, activityName)
+
+/** A new launcher entry for this pinned shortcut (a web app), on the bar or in a folder. */
+fun PinnedShortcut.toEntry() = LauncherEntry.Shortcut(ShellViewModel.newId(), label, packageName, shortcutId)

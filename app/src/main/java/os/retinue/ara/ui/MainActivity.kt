@@ -302,6 +302,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                             FolderEditor(
                                 request = request,
                                 apps = apps,
+                                shortcuts = shortcuts,
                                 onSave = { folder, newIcon ->
                                     viewModel.saveFolder(folder, request.isNew, newIcon)
                                     folderEditor = null
@@ -857,10 +858,10 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
     }
 
-    /** Open the folder editor on a new folder; made from All apps, it starts with [app] in it. */
-    private fun newFolder(app: AppInfo? = null) {
+    /** Open the folder editor on a new folder; made from All apps, it starts with [item] (an app or web app) in it. */
+    private fun newFolder(item: LauncherEntry.Launchable? = null) {
         showDrawer = false
-        val folder = LauncherEntry.Folder(ShellViewModel.newId(), label = "", apps = listOfNotNull(app?.toEntry()))
+        val folder = LauncherEntry.Folder(ShellViewModel.newId(), label = "", apps = listOfNotNull(item))
         folderEditor = FolderEditorRequest(folder, isNew = true)
     }
 
@@ -871,7 +872,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     private fun launchShortcut(shortcut: PinnedShortcut) {
         showDrawer = false
-        openEntry(LauncherEntry.Shortcut(ShellViewModel.newId(), shortcut.label, shortcut.packageName, shortcut.shortcutId))
+        openEntry(shortcut.toEntry())
     }
 
     private fun pinShortcut(shortcut: PinnedShortcut) {
@@ -879,9 +880,12 @@ class MainActivity : ComponentActivity(), ShellHost {
         Toast.makeText(this, getString(R.string.drawer_pinned, shortcut.label), Toast.LENGTH_SHORT).show()
     }
 
-    private fun launchFolderApp(app: LauncherEntry.App) {
+    private fun launchFolderApp(item: LauncherEntry.Launchable) {
         openFolderId = null
-        ShellIntents.launchApp(this, app.packageName, app.activityName)
+        when (item) {
+            is LauncherEntry.App -> ShellIntents.launchApp(this, item.packageName, item.activityName)
+            is LauncherEntry.Shortcut -> ShellIntents.launchShortcut(this, item.packageName, item.shortcutId)
+        }
     }
 
     private fun pinApp(app: AppInfo) {
@@ -891,10 +895,10 @@ class MainActivity : ComponentActivity(), ShellHost {
         if (!wasPinned) Toast.makeText(this, getString(R.string.drawer_pinned, app.label), Toast.LENGTH_SHORT).show()
     }
 
-    private fun addToFolder(app: AppInfo, folder: LauncherEntry.Folder) {
-        viewModel.addToFolder(app, folder.id)
+    private fun addToFolder(item: LauncherEntry.Launchable, folder: LauncherEntry.Folder) {
+        viewModel.addToFolder(item, folder.id)
         val name = folder.label.ifBlank { getString(folder.kind.nameRes) }
-        Toast.makeText(this, getString(R.string.drawer_added_to_folder, app.label, name), Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.drawer_added_to_folder, item.label, name), Toast.LENGTH_SHORT).show()
     }
 
     // --- Home role -----------------------------------------------------------

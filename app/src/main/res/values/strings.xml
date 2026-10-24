@@ -69,9 +69,14 @@
     <string name="folder_kind_smart_home">Smart home</string>
 
     <!-- Pinned shortcuts (Chrome's installed web apps, other apps' shortcuts). -->
-    <string name="pin_shortcut_title">Add to the launcher bar?</string>
+    <string name="pin_shortcut_title">Add to All apps?</string>
     <string name="pin_shortcut_add">Add</string>
-    <string name="pin_shortcut_added">Added to the launcher bar</string>
+    <string name="pin_shortcut_only_all_apps">Only in All apps</string>
+    <string name="pin_shortcut_also_bar">Also on the launcher bar</string>
+    <string name="pin_shortcut_also_folder">Also in %1$s</string>
+    <string name="pin_shortcut_added">%1$s added to All apps</string>
+    <string name="pin_shortcut_added_bar">%1$s added to All apps and the launcher bar</string>
+    <string name="pin_shortcut_added_folder">%1$s added to All apps and %2$s</string>
     <string name="pin_shortcut_failed">The shortcut could not be added.</string>
     <string name="shortcut_unavailable">This shortcut is no longer available</string>
     <string name="shortcut_not_home">Shortcuts open only while Ara is the default home app.</string>

@@ -161,17 +161,21 @@ Entries are stored on the device (DataStore, as JSON) and are one of:
 
 The defaults are Phone, Messages, Mail and Maps — the four OS actions the web
 app's dock used to have. The bar scrolls sideways when it is full. The last
-slot is always **All apps**: a searchable list of launchable apps (tap to open,
-long-press to pin it to the bar or put it in a folder). It is what keeps other
-apps reachable once Ara is the home screen. Long-press a bar entry to edit,
-move, or remove it; the editor in the shell settings adds links, web pages and
-folders and reorders everything.
+slot is always **All apps**: a searchable list of launchable apps and installed
+web apps (tap to open, long-press to pin it to the bar or put it in a folder).
+It is what keeps other apps reachable once Ara is the home screen. Long-press a
+bar entry to edit, move, or remove it; the editor in the shell settings adds
+links, web pages and folders and reorders everything.
 
 As home app Ara accepts pinned shortcuts (a browser's "Install app" / "Add to
-home screen", other apps' shortcuts) after a confirmation: they go on the bar
-and are listed in All apps with the apps. Removing one from the bar keeps it in
-All apps; long-press it there and choose "Remove from phone" to unpin it. Web
-apps Chrome installs as WebAPKs are ordinary apps in All apps.
+home screen" — an installed web app from Edge or Chrome — and other apps'
+shortcuts) after a confirmation. Like a newly installed app, an accepted one
+is listed in All apps; the confirmation can also put it on the bar or into a
+folder right away. From then on it behaves like an app: pin it to the bar, add
+it to folders, move it from the bar into a folder. Taking it off the bar or
+out of a folder keeps it in All apps; long-press it there and choose "Remove
+from phone" to unpin it, which also takes it off the bar and out of every
+folder. Web apps Chrome installs as WebAPKs are ordinary apps in All apps.
 
 Uninstalled apps leave the bar by themselves, also from inside folders (a
 folder stays, even when that empties it): Android reports a removal while Ara
@@ -185,10 +189,11 @@ App discovery uses a `<queries>` declaration for launcher activities — no
 
 ### Folders
 
-A folder holds installed apps — only apps (web apps Chrome installs as WebAPKs
-included). Pinned shortcuts, links, web pages and other folders cannot go in,
-so folders never nest: the stored form has room for apps only, and anything
-else found in a stored folder is dropped when it is read.
+A folder holds apps: installed apps and installed web apps (pinned shortcuts,
+see above; web apps Chrome installs as WebAPKs are apps anyway). Links, web
+pages and other folders cannot go in, so folders never nest: the stored form
+has room for apps and web apps only, and anything else found in a stored
+folder is dropped when it is read.
 
 - **Create** one with *New folder* in the long-press menu of **All apps**, with
   *New folder with this app* in an app's long-press menu inside All apps, or
@@ -199,15 +204,16 @@ else found in a stored folder is dropped when it is read.
   yourself, its name, shown in the phone's current language. Types that match
   an Android app category (Social, Media, Photos, Games, News, Travel, Work)
   list the installed apps of that category first, as suggestions; apps declare
-  their category in their manifest, so not every app has one.
+  their category in their manifest, so not every app has one (web apps have
+  none).
 - **Icon:** the type's symbol, or an image **from photos** (the system photo
   picker) or **from files** (any document provider: the device's storage,
   Drive, Nextcloud …). The image is cropped to its centre square, scaled to
   192 px and kept as a PNG in Ara's own storage, so the original may be moved
   or deleted. An icon that is replaced, or whose folder is removed, is deleted.
 - **Apps:** the editor lists the folder's apps (reorder, remove) and the
-  installed apps to add (searchable). Apps also go in from All apps
-  (long-press → *Add to …*) and from the bar (long-press an app on the bar →
+  installed apps and web apps to add (searchable). Both also go in from All
+  apps (long-press → *Add to …*) and from the bar (long-press one on the bar →
   *Move to …*). An app may be in several folders and on the bar as well.
 - **Use:** tap the folder to open it over the bar; tap an app to start it,
   long-press one to move it or take it out; **+** adds apps and the pencil

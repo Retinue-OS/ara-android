@@ -102,6 +102,7 @@ import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.FolderIcons
 import os.retinue.ara.launcher.FolderKind
 import os.retinue.ara.launcher.LauncherEntry
+import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.launcher.PreparedIcon
 
 // --- Folder types --------------------------------------------------------------
@@ -204,16 +205,16 @@ fun FolderIcon(folder: LauncherEntry.Folder, size: Dp = 34.dp) {
 // --- Open folder ---------------------------------------------------------------
 
 /**
- * An open folder, over the bar like All apps: its apps (tap to open,
- * long-press to move or take one out), and buttons to add apps or edit it.
+ * An open folder, over the bar like All apps: its apps and web apps (tap to
+ * open, long-press to move or take one out), and buttons to add apps or edit it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderSheet(
     folder: LauncherEntry.Folder,
-    onLaunch: (LauncherEntry.App) -> Unit,
-    onMove: (LauncherEntry.App, Int) -> Unit,
-    onRemove: (LauncherEntry.App) -> Unit,
+    onLaunch: (LauncherEntry.Launchable) -> Unit,
+    onMove: (LauncherEntry.Launchable, Int) -> Unit,
+    onRemove: (LauncherEntry.Launchable) -> Unit,
     /** Open the editor; true to start at the apps to add. */
     onEdit: (addApps: Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -255,8 +256,7 @@ fun FolderSheet(
                         Box {
                             AppTile(
                                 label = app.label,
-                                packageName = app.packageName,
-                                activityName = app.activityName,
+                                icon = { LaunchableIcon(app, size = 44.dp) },
                                 onClick = { onLaunch(app) },
                                 onLongClick = { menu = true },
                             )
@@ -322,14 +322,16 @@ private sealed interface IconChoice {
  * Make or edit a folder: its name, its type (a standard folder type: symbol,
  * default name and the apps it suggests), its icon (the type's symbol, or an
  * image from the photo picker or any document provider, cropped to a square)
- * and its apps — apps only, so no folder goes into another. Full screen like
- * the settings; nothing is stored before Save.
+ * and its apps — what All apps lists, [apps] and the web apps pinned to Ara
+ * ([shortcuts]), so no folder goes into another. Full screen like the
+ * settings; nothing is stored before Save.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FolderEditor(
     request: FolderEditorRequest,
     apps: List<AppInfo>,
+    shortcuts: List<PinnedShortcut>,
     onSave: (folder: LauncherEntry.Folder, newIcon: ByteArray?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -394,11 +396,13 @@ fun FolderEditor(
         onSave(folder, (icon as? IconChoice.Picked)?.icon?.png)
     }
 
-    val inFolder = remember(draft.apps) { draft.apps.mapTo(HashSet()) { it.packageName + "/" + it.activityName } }
-    val available = remember(apps, inFolder, query) {
-        apps.filter { it.packageName + "/" + it.activityName !in inFolder && it.matches(query) }
+    // Apps and web apps together, as in All apps.
+    val candidates = remember(apps, shortcuts) { drawerItems(apps, shortcuts) }
+    val inFolder = remember(draft.apps) { draft.apps.mapTo(HashSet()) { it.key } }
+    val available = remember(candidates, inFolder, query) {
+        candidates.filter { it.key !in inFolder && it.matches(query) }
     }
-    // Apps of the type's Android categories first, unless searching.
+    // Apps of the type's Android categories first, unless searching (web apps have no category).
     val suggested = if (query.isBlank()) available.filter { draft.kind.suggests(it.category) } else emptyList()
     val others = if (suggested.isEmpty()) available else available.filterNot { draft.kind.suggests(it.category) }
 
@@ -507,7 +511,7 @@ fun FolderEditor(
             }
             itemsIndexed(draft.apps, key = { _, app -> "in/" + app.id }) { index, app ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    AppIcon(app.packageName, app.activityName, size = 36.dp)
+                    LaunchableIcon(app, size = 36.dp)
                     Text(
                         app.label,
                         style = MaterialTheme.typography.bodyLarge,
@@ -543,13 +547,13 @@ fun FolderEditor(
                 item(key = "suggested-title") {
                     EditorSubtitle(stringResource(R.string.folder_suggested, kindNames.getValue(draft.kind)))
                 }
-                items(suggested, key = { "suggested/" + it.packageName + "/" + it.activityName }) { app ->
-                    AddAppRow(app) { draft = draft.add(app.toEntry()) }
+                items(suggested, key = { "suggested/" + it.key }) { candidate ->
+                    AddAppRow(candidate) { draft = draft.add(candidate.toEntry()) }
                 }
                 item(key = "others-title") { EditorSubtitle(stringResource(R.string.launcher_all_apps)) }
             }
-            items(others, key = { "other/" + it.packageName + "/" + it.activityName }) { app ->
-                AddAppRow(app) { draft = draft.add(app.toEntry()) }
+            items(others, key = { "other/" + it.key }) { candidate ->
+                AddAppRow(candidate) { draft = draft.add(candidate.toEntry()) }
             }
         }
     }
@@ -565,9 +569,9 @@ private fun EditorSubtitle(text: String) {
     Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
 }
 
-/** An app that can go into the folder: tap the row to add it. */
+/** An app or web app that can go into the folder: tap the row to add it. */
 @Composable
-private fun AddAppRow(app: AppInfo, onAdd: () -> Unit) {
+private fun AddAppRow(candidate: DrawerItem, onAdd: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -575,9 +579,9 @@ private fun AddAppRow(app: AppInfo, onAdd: () -> Unit) {
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AppIcon(app.packageName, app.activityName, size = 36.dp)
+        DrawerItemIcon(candidate, size = 36.dp)
         Text(
-            app.label,
+            candidate.label,
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
