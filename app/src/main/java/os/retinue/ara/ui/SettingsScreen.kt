@@ -126,6 +126,9 @@ interface SettingsActions {
     /** Show the installer's confirmation again. */
     fun confirmUpdate()
 
+    /** Give up on a confirmation the user does not want to give. */
+    fun cancelUpdate()
+
     /** Open the system page where the user allows Ara to install apps. */
     fun allowUpdateInstalls()
 }
@@ -446,9 +449,9 @@ private fun UpdatesSection(state: SettingsState, actions: SettingsActions) {
 
     Text(stringResource(R.string.update_channel), style = MaterialTheme.typography.labelLarge)
     UpdateChannel.entries.forEach { channel ->
-        val label = when (channel) {
-            UpdateChannel.Nightly -> R.string.update_channel_nightly
-            UpdateChannel.Release -> R.string.update_channel_release
+        val (label, hint) = when (channel) {
+            UpdateChannel.Nightly -> R.string.update_channel_nightly to R.string.update_channel_nightly_hint
+            UpdateChannel.Release -> R.string.update_channel_release to R.string.update_channel_release_hint
         }
         val selected = state.settings.updateChannel == channel
         Row(
@@ -456,18 +459,16 @@ private fun UpdatesSection(state: SettingsState, actions: SettingsActions) {
                 .fillMaxWidth()
                 .selectable(
                     selected = selected,
-                    enabled = channel.selectable,
                     onClick = { actions.setUpdateChannel(channel) },
                     role = Role.RadioButton,
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RadioButton(selected = selected, onClick = null, enabled = channel.selectable)
-            Text(
-                stringResource(label),
-                modifier = Modifier.padding(start = 8.dp),
-                color = if (channel.selectable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            RadioButton(selected = selected, onClick = null)
+            Column(modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)) {
+                Text(stringResource(label))
+                Text(stringResource(hint), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 
@@ -489,6 +490,7 @@ private fun UpdatesSection(state: SettingsState, actions: SettingsActions) {
         }
         if (update is UpdateState.AwaitingConfirmation) {
             Button(onClick = actions::confirmUpdate) { Text(stringResource(R.string.update_confirm)) }
+            OutlinedButton(onClick = actions::cancelUpdate) { Text(stringResource(R.string.update_cancel)) }
         }
     }
     if (!state.installAllowed) {
@@ -504,7 +506,7 @@ private fun updateStatus(update: UpdateState): String = when (update) {
     is UpdateState.UpToDate -> stringResource(R.string.update_status_up_to_date, update.latest.tag, ago(update.checkedAt))
     is UpdateState.NoBuilds -> stringResource(R.string.update_status_no_builds, ago(update.checkedAt))
     is UpdateState.Available -> stringResource(
-        if (update.waitingForWifi) R.string.update_status_available_wifi else R.string.update_status_available,
+        if (update.waitingForUnmetered) R.string.update_status_available_unmetered else R.string.update_status_available,
         update.release.tag,
     )
     is UpdateState.Downloading -> stringResource(R.string.update_status_downloading, update.release.tag, (update.progress * 100).toInt())

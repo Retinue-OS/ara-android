@@ -4,9 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
+import android.widget.Toast
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -32,6 +34,7 @@ import okhttp3.Request
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
+import os.retinue.ara.wake.WakeRuntime
 
 /** Where the updater is, for the settings screen. */
 sealed class UpdateState {
@@ -41,8 +44,8 @@ sealed class UpdateState {
     data class UpToDate(val checkedAt: Long, val latest: ReleaseInfo) : UpdateState()
     data class NoBuilds(val checkedAt: Long) : UpdateState()
 
-    /** A newer build; [waitingForWifi] when the automatic install holds off on a metered network. */
-    data class Available(val checkedAt: Long, val release: ReleaseInfo, val apk: ReleaseAsset, val waitingForWifi: Boolean) : UpdateState()
+    /** A newer build; [waitingForUnmetered] when the automatic install holds off until the network is unmetered. */
+    data class Available(val checkedAt: Long, val release: ReleaseInfo, val apk: ReleaseAsset, val waitingForUnmetered: Boolean) : UpdateState()
     data class Downloading(val release: ReleaseInfo, val progress: Float) : UpdateState()
 
     /** Handed to the package installer; the outcome comes back through [UpdateReceiver]. */
@@ -51,8 +54,8 @@ sealed class UpdateState {
     /**
      * The installer wants the user's confirmation: [confirm] opens its dialog.
      * The shell shows it once ([shown]) when it is in front; the settings
-     * offer it again in case it was dismissed. [release] is null when the
-     * process was restarted in between.
+     * offer it again in case it was dismissed, or to cancel. [release] is null
+     * when the process was restarted in between.
      */
     data class AwaitingConfirmation(val release: ReleaseInfo?, val confirm: Intent, val shown: Boolean) : UpdateState()
 
@@ -69,7 +72,7 @@ sealed class UpdateState {
  * releases of [UpdateSource.REPO]), downloads the build it offers and hands it
  * to the package installer as an update of this app. With auto-update on it
  * does all of that by itself when the shell comes to the front, at most every
- * [CHECK_INTERVAL_MS] and over Wi-Fi only; otherwise only the settings' buttons
+ * [CHECK_INTERVAL_MS] and over unmetered networks only; otherwise only the settings' buttons
  * start anything. Everything runs on the main thread except the network and
  * file work; the state is for the settings screen.
  */
@@ -101,11 +104,22 @@ object UpdateRuntime {
     private var autoUpdate = false
     private var channel = UpdateChannel.Nightly
     private var lastCheckAt = 0L
+
+    /** The one check or download running. */
     private var job: Job? = null
+
+    /** Gives up on an install the installer never reports on. */
+    private var watchdog: Job? = null
 
     /** The running job was started by the runtime, not from the settings. */
     private var automatic = false
     private var downloaded: File? = null
+
+    /** The installer session committed last, until it has reported; 0 for none. */
+    private var pendingSession = 0
+
+    /** Sessions given up on: the installer reports them aborted, which is not a failure to show. */
+    private val ignoredSessions = mutableSetOf<Int>()
 
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
@@ -121,12 +135,15 @@ object UpdateRuntime {
 
     private val userAgent: String get() = "Ara/${BuildConfig.VERSION_NAME} (Android)"
 
+    /** The build whose check the stored check time belongs to: a new build checks afresh. */
+    private val buildId: String get() = "${installed.tag}@${installed.sha}"
+
     fun init(context: Context) {
         app = context.applicationContext
         store = AraStore(app)
         scope.launch {
-            withContext(Dispatchers.IO) { cleanUp() }
-            lastCheckAt = store.updateCheckedAt.first()
+            cleanUp()
+            lastCheckAt = store.updateCheckedAt(buildId).first()
             store.settings
                 .map { it.autoUpdate to it.updateChannel }
                 .distinctUntilChanged()
@@ -137,11 +154,30 @@ object UpdateRuntime {
         }
     }
 
-    /** Leftovers of an earlier process: a downloaded APK, an installer session never finished. */
-    private fun cleanUp() {
-        dir().listFiles()?.forEach { it.delete() }
+    /**
+     * Leftovers of an earlier process: a downloaded APK, and installer sessions
+     * never committed (a process died while writing one; each stages a copy of
+     * the APK). A committed one is in the installer's hands, its dialog possibly
+     * still up for the user to finish, and is left alone until the next attempt
+     * replaces it ([retireSessions]); what it reports is shown.
+     */
+    private suspend fun cleanUp() {
         val installer = app.packageManager.packageInstaller
-        installer.mySessions.forEach { runCatching { installer.abandonSession(it.sessionId) } }
+        val orphans = withContext(Dispatchers.IO) {
+            dir().listFiles()?.forEach { it.delete() }
+            installer.mySessions.filter { !it.isSealed }.map { it.sessionId }
+        }
+        ignoredSessions += orphans
+        orphans.forEach { runCatching { installer.abandonSession(it) } }
+    }
+
+    /** Sessions of earlier attempts, still in the installer's hands: the new attempt replaces them. */
+    private fun retireSessions() {
+        val installer = app.packageManager.packageInstaller
+        installer.mySessions.forEach {
+            ignoredSessions += it.sessionId
+            runCatching { installer.abandonSession(it.sessionId) }
+        }
     }
 
     private fun configure(auto: Boolean, ch: UpdateChannel) {
@@ -154,11 +190,14 @@ object UpdateRuntime {
         if (channelChanged) {
             // Whatever was found was found on the old channel.
             cancel()
-            if (!_state.value.busy && _state.value !is UpdateState.AwaitingConfirmation) _state.value = UpdateState.Idle
+            val s = _state.value
+            if (!s.busy && s !is UpdateState.AwaitingConfirmation) _state.value = UpdateState.Idle
             lastCheckAt = 0L
-            scope.launch { store.setUpdateCheckedAt(0L) }
-        } else if (turnedOff && automatic) {
-            cancel()
+            scope.launch { store.setUpdateCheckedAt(0L, buildId) }
+        } else if (turnedOff) {
+            if (automatic) cancel()
+            val s = _state.value
+            if (s is UpdateState.Available && s.waitingForUnmetered) _state.value = s.copy(waitingForUnmetered = false)
         }
         if (auto && (channelChanged || turnedOn)) check(automatic = true)
     }
@@ -166,19 +205,16 @@ object UpdateRuntime {
     /** Stop a check or download in progress (an install already handed over runs on). */
     private fun cancel() {
         val j = job ?: return
-        if (j.isActive && (_state.value is UpdateState.Checking || _state.value is UpdateState.Downloading)) {
-            j.cancel()
-            _state.value = UpdateState.Idle
-        }
+        if (j.isActive && _state.value.busy && _state.value !is UpdateState.Installing) j.cancel()
     }
 
-    /** The shell came to the front: with auto-update on, check when due, or finish a build that waited for Wi-Fi. */
+    /** The shell came to the front: with auto-update on, check when due, or finish a build that waited for an unmetered network. */
     fun onShellResumed() {
         scope.launch {
             loaded.await()
             if (!autoUpdate) return@launch
             val s = _state.value
-            if (s is UpdateState.Available && s.waitingForWifi && !metered()) {
+            if (s is UpdateState.Available && s.waitingForUnmetered && unmetered()) {
                 start(automatic = true) { downloadAndInstall(s.release, s.apk) }
             } else if (UpdateLogic.checkDue(System.currentTimeMillis(), lastCheckAt, CHECK_INTERVAL_MS)) {
                 check(automatic = true)
@@ -189,25 +225,41 @@ object UpdateRuntime {
     /** The settings' "Check for updates". With auto-update on, what it finds is installed too. */
     fun checkNow() = check(automatic = false)
 
-    /** The settings' "Install": the build the last check found, Wi-Fi or not. */
+    /** The settings' "Install": the build the last check found, whatever the network. */
     fun installNow() {
         val s = _state.value as? UpdateState.Available ?: return
         start(automatic = false) { downloadAndInstall(s.release, s.apk) }
     }
 
+    /**
+     * The settings' "Cancel" on a confirmation the user does not want to give:
+     * the session is abandoned (its abort report ignored), so a new attempt can start.
+     */
+    fun cancelConfirmation() {
+        if (_state.value !is UpdateState.AwaitingConfirmation) return
+        val id = pendingSession
+        if (id != 0) {
+            ignoredSessions += id
+            runCatching { app.packageManager.packageInstaller.abandonSession(id) }
+        }
+        finish()
+        _state.value = UpdateState.Idle
+    }
+
     private fun check(automatic: Boolean) = start(automatic) {
         _state.value = UpdateState.Checking
-        val releases = withContext(Dispatchers.IO) { fetchReleases() }
+        val ch = channel
+        val releases = withContext(Dispatchers.IO) { fetchReleases(ch) }
         val now = System.currentTimeMillis()
         lastCheckAt = now
-        store.setUpdateCheckedAt(now)
-        when (val d = UpdateLogic.decide(installed, releases, channel)) {
+        store.setUpdateCheckedAt(now, buildId)
+        when (val d = UpdateLogic.decide(installed, releases, ch)) {
             is UpdateDecision.NoBuilds -> _state.value = UpdateState.NoBuilds(now)
             is UpdateDecision.UpToDate -> _state.value = UpdateState.UpToDate(now, d.latest)
             is UpdateDecision.Available -> {
-                val waitForWifi = autoUpdate && metered()
-                _state.value = UpdateState.Available(now, d.release, d.apk, waitingForWifi = waitForWifi)
-                if (autoUpdate && !waitForWifi) downloadAndInstall(d.release, d.apk)
+                val wait = autoUpdate && !unmetered()
+                _state.value = UpdateState.Available(now, d.release, d.apk, waitingForUnmetered = wait)
+                if (autoUpdate && !wait) downloadAndInstall(d.release, d.apk)
             }
         }
     }
@@ -222,6 +274,8 @@ object UpdateRuntime {
             try {
                 block()
             } catch (e: CancellationException) {
+                // cancel(): the download may have reported progress since; nothing is in progress now.
+                if (_state.value.busy && _state.value !is UpdateState.Installing) _state.value = UpdateState.Idle
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "update failed", e)
@@ -230,9 +284,10 @@ object UpdateRuntime {
         }
     }
 
-    private fun fetchReleases(): List<ReleaseInfo> {
+    private fun fetchReleases(channel: UpdateChannel): List<ReleaseInfo> {
+        val endpoint = UpdateSource.endpoint(channel)
         val request = Request.Builder()
-            .url(UpdateSource.RELEASES_URL)
+            .url(endpoint.url)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .header("User-Agent", userAgent)
@@ -241,9 +296,11 @@ object UpdateRuntime {
             if (resp.code == 429 || (resp.code == 403 && resp.header("X-RateLimit-Remaining") == "0")) {
                 throw IOException(app.getString(R.string.update_rate_limited))
             }
+            // "No latest release" is an answer, not an error.
+            if (resp.code == 404 && endpoint.single) return emptyList()
             if (!resp.isSuccessful) throw IOException(app.getString(R.string.update_http_error, resp.code))
             val body = resp.body?.string() ?: throw IOException(app.getString(R.string.update_http_error, resp.code))
-            return UpdateLogic.parseReleases(body)
+            return if (endpoint.single) listOf(UpdateLogic.parseRelease(body)) else UpdateLogic.parseReleases(body)
         }
     }
 
@@ -253,21 +310,29 @@ object UpdateRuntime {
             download(apk) { progress -> _state.value = UpdateState.Downloading(release, progress) }
         }
         downloaded = file
+        // Installing restarts Ara: an automatic install waits for the end of a voice conversation.
+        if (automatic) WakeRuntime.voiceActive.first { !it }
         _state.value = UpdateState.Installing(release)
-        try {
+        Toast.makeText(app, app.getString(R.string.update_installing_toast, release.tag), Toast.LENGTH_LONG).show()
+        retireSessions()
+        val sessionId = try {
             withContext(Dispatchers.IO) { UpdateInstaller.install(app, file) }
         } catch (e: Exception) {
             file.delete()
             downloaded = null
             throw e
         }
+        pendingSession = sessionId
         // From here the outcome arrives in UpdateReceiver: installed (Android
         // restarts Ara), a confirmation to show, or a failure. Should none come,
         // the attempt is given up rather than blocking the next.
-        delay(INSTALL_TIMEOUT_MS)
-        val s = _state.value
-        if (s is UpdateState.Installing && s.release == release) {
-            onInstallFailed(PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_install_no_report))
+        watchdog?.cancel()
+        watchdog = scope.launch {
+            delay(INSTALL_TIMEOUT_MS)
+            val s = _state.value
+            if (s is UpdateState.Installing && s.release == release && pendingSession == sessionId) {
+                onInstallFailed(sessionId, PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_install_no_report))
+            }
         }
     }
 
@@ -322,25 +387,36 @@ object UpdateRuntime {
     // --- Reported by UpdateReceiver ---------------------------------------------
 
     /** The installer wants the user to confirm (first install through Ara, or "Install unknown apps" still off). */
-    fun onUserActionNeeded(confirm: Intent?) {
-        val release = (_state.value as? UpdateState.Installing)?.release
+    fun onUserActionNeeded(sessionId: Int, confirm: Intent?) {
+        if (sessionId in ignoredSessions) return
         if (confirm == null) {
-            onInstallFailed(PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_no_confirmation))
+            onInstallFailed(sessionId, PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_no_confirmation))
             return
         }
+        val release = (_state.value as? UpdateState.Installing)?.release
+        pendingSession = sessionId
         _state.value = UpdateState.AwaitingConfirmation(release, confirm, shown = false)
     }
 
-    fun onInstalled() {
-        downloaded?.delete()
-        downloaded = null
+    fun onInstalled(sessionId: Int) {
+        if (sessionId in ignoredSessions) return
+        finish()
         _state.value = UpdateState.Installed
     }
 
-    fun onInstallFailed(status: Int, message: String?) {
+    fun onInstallFailed(sessionId: Int, status: Int, message: String?) {
+        if (sessionId in ignoredSessions) return
+        finish()
+        _state.value = UpdateState.Failed(installFailure(status, message))
+    }
+
+    /** The install attempt is over, one way or the other. */
+    private fun finish() {
+        watchdog?.cancel()
+        watchdog = null
+        pendingSession = 0
         downloaded?.delete()
         downloaded = null
-        _state.value = UpdateState.Failed(installFailure(status, message))
     }
 
     /**
@@ -377,9 +453,14 @@ object UpdateRuntime {
     fun installSettings(context: Context): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.packageName))
 
-    private fun metered(): Boolean {
+    /**
+     * The active network is unmetered (Wi-Fi, typically; a metered hotspot is
+     * not): where an 85 MB download may go unasked. No network is not unmetered.
+     */
+    private fun unmetered(): Boolean {
         val cm = app.getSystemService(ConnectivityManager::class.java) ?: return false
-        return cm.isActiveNetworkMetered
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
     }
 
     private fun dir(): File = File(app.cacheDir, DIR).apply { mkdirs() }

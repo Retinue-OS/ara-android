@@ -554,6 +554,8 @@ class MainActivity : ComponentActivity(), ShellHost {
             startUpdateConfirmation(intent)
         }
 
+        override fun cancelUpdate() = UpdateRuntime.cancelConfirmation()
+
         override fun allowUpdateInstalls() {
             try {
                 startActivity(UpdateRuntime.installSettings(this@MainActivity))

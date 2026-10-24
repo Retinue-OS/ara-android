@@ -9,14 +9,11 @@ enum class UpdateChannel(val key: String) {
     Nightly("nightly"),
 
     /**
-     * Proper releases (not pre-releases). None has been published yet, so the
-     * channel is shown but cannot be chosen ([selectable]); the rule below is
-     * what will serve it once there are some.
+     * Proper releases (not pre-releases): GitHub's "latest release". None has
+     * been published yet, so the channel offers nothing until the first one;
+     * the settings say so after a check.
      */
     Release("release");
-
-    /** Whether the settings let the user pick this channel. */
-    val selectable: Boolean get() = this == Nightly
 
     /** Whether a published (non-draft) release belongs to this channel. */
     fun accepts(release: ReleaseInfo): Boolean = when (this) {
@@ -34,7 +31,19 @@ enum class UpdateChannel(val key: String) {
 /** The GitHub repository whose releases carry the shell's builds. */
 object UpdateSource {
     const val REPO = "Retinue-OS/ara-android"
+    private const val API = "https://api.github.com/repos/$REPO"
 
-    /** The releases, newest first; drafts the token cannot see are not listed anyway. */
-    const val RELEASES_URL = "https://api.github.com/repos/$REPO/releases?per_page=30"
+    /** What the API answers with at [url]: a list of releases, or a [single] release. */
+    data class Endpoint(val url: String, val single: Boolean)
+
+    /**
+     * Where a channel's builds are read from. The nightlies are pre-releases,
+     * which GitHub's "latest release" never is, so they come from the list of
+     * recent releases (newest first); the release channel is that latest
+     * release itself, which is 404 while there is none.
+     */
+    fun endpoint(channel: UpdateChannel): Endpoint = when (channel) {
+        UpdateChannel.Nightly -> Endpoint("$API/releases?per_page=30", single = false)
+        UpdateChannel.Release -> Endpoint("$API/releases/latest", single = true)
+    }
 }

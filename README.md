@@ -67,7 +67,7 @@ from the web app's Settings page (it calls `RetinueShell.openSettings()`).
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults. |
 | **Wake phrase** | Mode, sensitivity, and the models (see below). |
-| **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases once there are any (see [Updates](#updates)). |
+| **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 
 Nothing environment-specific is baked into the APK.
 
@@ -269,19 +269,25 @@ Ara is not in an app store, so it updates itself from the GitHub releases of
 
 - **Install updates automatically** (off by default). On, Ara checks the channel
   whenever it comes to the front, at most every six hours (the nightly is built
-  once a day), and installs a new build as soon as the phone is on Wi-Fi (a
-  nightly is about 85 MB; *Install* in the settings does not wait for Wi-Fi).
+  once a day), and installs a new build as soon as the phone is on an unmetered
+  network — Wi-Fi, typically; a metered hotspot does not count (a nightly is
+  about 85 MB; *Install* in the settings does not wait for that).
+  Installing restarts Ara (Android kills the app it replaces and, as it is the
+  home app, starts it again; the page is reloaded), so an automatic install
+  waits for the end of a voice conversation and announces itself with a toast.
   Off, nothing is fetched until *Check for updates* is tapped, and a build it
   finds waits for *Install*.
 - **Channel**: which releases count. *Nightly builds* are the pre-releases the
-  nightly workflow publishes (tags `nightly-…`). *Releases* will be the proper,
-  non-pre-release ones; none exists yet, so the option is shown but cannot be
-  chosen (`UpdateChannel.selectable`).
+  nightly workflow publishes (tags `nightly-…`), read from the list of recent
+  releases. *Releases* are the proper, non-pre-release ones — GitHub's "latest
+  release". None has been published so far, so that channel reports "no build
+  yet" after a check and installs nothing until the first one appears; nothing
+  in the app needs to change for it.
 - The installed build (its release tag and commit, from `BuildConfig`), the
   result of the last check, and the buttons.
 
 What counts as an update is the channel's newest published release that ships
-an `.apk` asset (drafts never count), when it is not the installed build: not
+an `.apk` asset (drafts and unpublished entries never count), when it is not the installed build: not
 the same tag, nor the same commit. A local build knows neither and so is
 offered the latest build; a branch build from CI knows its commit but not
 where it stands, so it is offered the latest nightly too — turn auto-update
@@ -297,8 +303,13 @@ user to allow **Install unknown apps** for Ara once (the settings offer the
 system page); after that, since Ara holds
 `UPDATE_PACKAGES_WITHOUT_USER_ACTION` and updates itself, Android 12+ installs
 without a dialog and restarts Ara with the new build. Where Android does ask,
-the dialog is shown while Ara is in front, and *Confirm installation* in the
-settings shows it again.
+the dialog is shown while Ara is in front; *Confirm installation* in the
+settings shows it again, and *Cancel* gives the attempt up. A committed
+installer session survives a restart of Ara (its dialog may still be up); the
+next attempt replaces it, and a session a crash left uncommitted is dropped at
+start. A check made by one build does not count for the next, so a freshly
+installed build checks again on its first resume (with auto-update on) and
+reports itself up to date.
 
 The check is a single unauthenticated request to the GitHub API (60 per hour
 per network address); when the limit is hit, the settings say so. Nothing is

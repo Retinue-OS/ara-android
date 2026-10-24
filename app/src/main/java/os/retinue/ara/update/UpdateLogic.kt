@@ -61,15 +61,19 @@ object UpdateLogic {
     /** Parse the GitHub releases list. Throws on malformed JSON. */
     fun parseReleases(body: String): List<ReleaseInfo> = json.decodeFromString<List<ReleaseInfo>>(body)
 
+    /** Parse one release (the latest-release endpoint). Throws on malformed JSON. */
+    fun parseRelease(body: String): ReleaseInfo = json.decodeFromString<ReleaseInfo>(body)
+
     /**
      * The newest published release of [channel] that ships an APK, or null.
-     * Drafts never count. Newest by publication time (the list is normally in
-     * that order already, but the API sorts by creation time).
+     * Drafts and anything without a publication time never count. Newest by
+     * publication time (the list is normally in that order already, but the
+     * API sorts by creation time).
      */
     fun latestOn(channel: UpdateChannel, releases: List<ReleaseInfo>): ReleaseInfo? =
         releases.asSequence()
-            .filter { !it.draft && channel.accepts(it) && it.apk != null }
-            .maxWithOrNull(compareBy(nullsFirst()) { it.publishedAt })
+            .filter { !it.draft && it.publishedAt != null && channel.accepts(it) && it.apk != null }
+            .maxByOrNull { it.publishedAt!! }
 
     /**
      * Whether [release] is the installed build: the same tag, or (a tag the

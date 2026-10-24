@@ -42,8 +42,14 @@ class AraStore(context: Context) {
         )
     }
 
-    /** When the update channel was last checked (epoch ms; 0 for never). State, not a setting. */
-    val updateCheckedAt: Flow<Long> = store.data.map { p -> p[K.updateCheckedAt] ?: 0L }
+    /**
+     * When the update channel was last checked, in epoch ms (0 for never), as
+     * long as that check was this build's ([build]): after an update, the new
+     * build checks afresh. State, not a setting.
+     */
+    fun updateCheckedAt(build: String): Flow<Long> = store.data.map { p ->
+        if (p[K.updateCheckedBy] == build) p[K.updateCheckedAt] ?: 0L else 0L
+    }
 
     val launcher: Flow<LauncherConfig> = store.data.map { p -> LauncherCodec.decode(p[K.launcher]) }
 
@@ -65,7 +71,10 @@ class AraStore(context: Context) {
 
     suspend fun setUpdateChannel(channel: UpdateChannel) = edit { it[K.updateChannel] = channel.key }
 
-    suspend fun setUpdateCheckedAt(epochMs: Long) = edit { it[K.updateCheckedAt] = epochMs }
+    suspend fun setUpdateCheckedAt(epochMs: Long, build: String) = edit {
+        it[K.updateCheckedAt] = epochMs
+        it[K.updateCheckedBy] = build
+    }
 
     /**
      * Apply [change] to the stored launcher atomically (no lost updates between
@@ -97,5 +106,6 @@ class AraStore(context: Context) {
         val autoUpdate = booleanPreferencesKey("auto_update")
         val updateChannel = stringPreferencesKey("update_channel")
         val updateCheckedAt = longPreferencesKey("update_checked_at")
+        val updateCheckedBy = stringPreferencesKey("update_checked_by")
     }
 }

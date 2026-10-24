@@ -12,6 +12,7 @@ import os.retinue.ara.update.ReleaseInfo
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.update.UpdateDecision
 import os.retinue.ara.update.UpdateLogic
+import os.retinue.ara.update.UpdateSource
 
 class UpdateLogicTest {
 
@@ -53,6 +54,29 @@ class UpdateLogicTest {
     }
 
     @Test
+    fun parsesASingleRelease() {
+        val body = """{"tag_name":"v1.0","draft":false,"prerelease":false,"target_commitish":"main","published_at":"2026-11-01T10:00:00Z",
+            "html_url":"https://github.com/Retinue-OS/ara-android/releases/tag/v1.0",
+            "assets":[{"name":"ara-1.0.apk","size":10,"browser_download_url":"https://example.com/ara-1.0.apk"}]}"""
+        val r = UpdateLogic.parseRelease(body)
+        assertEquals("v1.0", r.tag)
+        assertFalse(r.prerelease)
+        assertEquals("ara-1.0.apk", r.apk?.name)
+        assertTrue(UpdateChannel.Release.accepts(r))
+        assertFalse(UpdateChannel.Nightly.accepts(r))
+    }
+
+    @Test
+    fun endpointsPerChannel() {
+        val nightly = UpdateSource.endpoint(UpdateChannel.Nightly)
+        assertFalse(nightly.single)
+        assertTrue(nightly.url.startsWith("https://api.github.com/repos/Retinue-OS/ara-android/releases?"))
+        val release = UpdateSource.endpoint(UpdateChannel.Release)
+        assertTrue(release.single)
+        assertEquals("https://api.github.com/repos/Retinue-OS/ara-android/releases/latest", release.url)
+    }
+
+    @Test
     fun channelsSortTheReleases() {
         val release = ReleaseInfo(tag = "v1.0", prerelease = false, commit = "main", publishedAt = "2026-11-01T10:00:00Z",
             assets = listOf(ReleaseAsset("ara-1.0.apk", 1, "https://example.com/ara-1.0.apk")))
@@ -74,9 +98,10 @@ class UpdateLogicTest {
     @Test
     fun newestByPublicationNotByListOrder() {
         assertEquals(oct20, UpdateLogic.latestOn(UpdateChannel.Nightly, listOf(oct12x3, oct14, oct20)))
-        // Never published (null) sorts last.
+        // Never published (null) does not count at all.
         val unpublished = oct20.copy(tag = "nightly-2026-10-30", publishedAt = null)
         assertEquals(oct20, UpdateLogic.latestOn(UpdateChannel.Nightly, listOf(unpublished) + releases))
+        assertNull(UpdateLogic.latestOn(UpdateChannel.Nightly, listOf(unpublished)))
     }
 
     @Test
@@ -140,7 +165,5 @@ class UpdateLogicTest {
         assertEquals(UpdateChannel.Nightly, UpdateChannel.fromKey(null))
         assertEquals(UpdateChannel.Nightly, UpdateChannel.fromKey("bogus"))
         assertEquals(UpdateChannel.Release, UpdateChannel.fromKey("release"))
-        assertTrue(UpdateChannel.Nightly.selectable)
-        assertFalse(UpdateChannel.Release.selectable)
     }
 }

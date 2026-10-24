@@ -12,9 +12,10 @@ class UpdateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != UpdateInstaller.ACTION_STATUS) return
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
-        Log.i(TAG, "install status $status: ${message ?: ""}")
+        Log.i(TAG, "session $sessionId status $status: ${message ?: ""}")
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 val confirm: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -23,10 +24,10 @@ class UpdateReceiver : BroadcastReceiver() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                 }
-                UpdateRuntime.onUserActionNeeded(confirm)
+                UpdateRuntime.onUserActionNeeded(sessionId, confirm)
             }
-            PackageInstaller.STATUS_SUCCESS -> UpdateRuntime.onInstalled()
-            else -> UpdateRuntime.onInstallFailed(status, message)
+            PackageInstaller.STATUS_SUCCESS -> UpdateRuntime.onInstalled(sessionId)
+            else -> UpdateRuntime.onInstallFailed(sessionId, status, message)
         }
     }
 

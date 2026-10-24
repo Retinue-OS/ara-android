@@ -20,8 +20,8 @@ object UpdateInstaller {
     /** The status broadcast's action (the receiver's PendingIntent is Ara's own). */
     const val ACTION_STATUS = "os.retinue.ara.action.UPDATE_STATUS"
 
-    /** Blocks while the APK is copied into the session: call off the main thread. */
-    fun install(context: Context, apk: File) {
+    /** Returns the session's id (the status broadcast names it). Blocks while the APK is copied in: call off the main thread. */
+    fun install(context: Context, apk: File): Int {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -50,5 +50,6 @@ object UpdateInstaller {
             runCatching { installer.abandonSession(sessionId) }
             throw e
         }
+        return sessionId
     }
 }
