@@ -39,7 +39,8 @@ data class ContentDisposition(val inline: Boolean, val filename: String?) {
                     "filename*" -> if (extended == null) extended = extValue(value)
                 }
             }
-            val name = (extended ?: plain)?.takeIf { it.isNotBlank() }
+            // An empty filename* is no name: filename still counts.
+            val name = (extended?.takeIf { it.isNotBlank() } ?: plain)?.takeIf { it.isNotBlank() }
             return ContentDisposition(inline = type == "inline", filename = name)
         }
 

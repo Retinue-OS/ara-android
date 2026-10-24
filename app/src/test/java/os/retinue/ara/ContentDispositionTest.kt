@@ -41,7 +41,7 @@ class ContentDispositionTest {
 
     @Test
     fun fallsBackToFilenameWhenFilenameStarDoesNotDecode() {
-        for (star in listOf("UTF-16''x.txt", "UTF-8''bad%zz.txt", "UTF-8''cut%4", "UTF-8''%C3", "no-quotes.txt")) {
+        for (star in listOf("UTF-16''x.txt", "UTF-8''bad%zz.txt", "UTF-8''cut%4", "UTF-8''%C3", "no-quotes.txt", "UTF-8''", "UTF-8''%20")) {
             assertEquals("plain.txt", ContentDisposition.parse("attachment; filename=plain.txt; filename*=$star")!!.filename, star)
         }
     }

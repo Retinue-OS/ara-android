@@ -221,9 +221,14 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
         }
     }
 
+    /**
+     * The type to save or open the file as: the callback's, else the response's,
+     * else the extension's. A generic octet-stream from either says nothing and
+     * would keep a PDF out of its viewer, so it defers to the extension.
+     */
     private fun mimeOf(body: ResponseBody, name: String, mimetype: String?): String =
         mimetype?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
-            ?: body.contentType()?.let { "${it.type}/${it.subtype}" }
+            ?: body.contentType()?.let { "${it.type}/${it.subtype}" }?.takeIf { it != "application/octet-stream" }
             ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
             ?: "application/octet-stream"
 
