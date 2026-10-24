@@ -29,7 +29,13 @@ android {
         targetSdk = 35
         versionCode = 2
         // CI appends the commit, so the settings show which build is installed.
-        versionName = "2.0" + (System.getenv("ARA_BUILD_SHA")?.take(7)?.let { "+$it" } ?: "")
+        val buildSha = System.getenv("ARA_BUILD_SHA").orEmpty()
+        versionName = "2.0" + (buildSha.take(7).takeIf { it.isNotEmpty() }?.let { "+$it" } ?: "")
+        // What the updater compares with the release channel (see update/UpdateLogic):
+        // the commit, and the release tag the nightly workflow builds for. Both
+        // are empty in a local build, which then matches no published build.
+        buildConfigField("String", "BUILD_SHA", "\"$buildSha\"")
+        buildConfigField("String", "BUILD_TAG", "\"${System.getenv("ARA_BUILD_TAG").orEmpty()}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // No BuildConfig secrets are baked in: the Retinue base URL, the client

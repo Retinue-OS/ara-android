@@ -8,11 +8,12 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import os.retinue.ara.data.AraStore
+import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.wake.WakeRuntime
 
 /**
- * Process start: wake detection follows the stored wake settings for as long as
- * the process lives (the activity and the wake service come and go).
+ * Process start: wake detection and the updater follow the stored settings for
+ * as long as the process lives (the activity and the wake service come and go).
  */
 class AraApp : Application() {
 
@@ -21,6 +22,7 @@ class AraApp : Application() {
     override fun onCreate() {
         super.onCreate()
         WakeRuntime.init(this)
+        UpdateRuntime.init(this)
         scope.launch {
             AraStore(this@AraApp).settings
                 .map { it.wakeMode to it.wakeThreshold }

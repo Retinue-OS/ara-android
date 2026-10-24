@@ -1,5 +1,6 @@
 package os.retinue.ara.ui
 
+import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -27,12 +29,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -56,6 +60,9 @@ import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.ShellUrls
+import os.retinue.ara.update.UpdateChannel
+import os.retinue.ara.update.UpdateRuntime
+import os.retinue.ara.update.UpdateState
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeStatus
@@ -79,6 +86,10 @@ data class SettingsState(
     val notificationsAllowed: Boolean,
     /** The web page's load status and console errors, for the diagnostics. */
     val page: PageState,
+    /** Where the updater is (see UpdateRuntime). */
+    val update: UpdateState,
+    /** Android lets Ara install apps ("Install unknown apps"). */
+    val installAllowed: Boolean,
 )
 
 /** What the settings screen can ask for. */
@@ -105,11 +116,23 @@ interface SettingsActions {
     fun allowFullScreenIntent()
     fun allowOverlay()
     fun openNotificationSettings()
+    fun setAutoUpdate(on: Boolean)
+    fun setUpdateChannel(channel: UpdateChannel)
+    fun checkForUpdates()
+
+    /** Install the build the last check found. */
+    fun installUpdate()
+
+    /** Show the installer's confirmation again. */
+    fun confirmUpdate()
+
+    /** Open the system page where the user allows Ara to install apps. */
+    fun allowUpdateInstalls()
 }
 
 /**
  * The shell's native settings (plan §1): base URL, client certificate, page
- * status, home role, launcher editor, wake phrase.
+ * status, home role, launcher editor, wake phrase, updates.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,6 +166,8 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
             LauncherSection(state, actions)
             HorizontalDivider()
             WakeSection(state, actions)
+            HorizontalDivider()
+            UpdatesSection(state, actions)
             HorizontalDivider()
             Text(
                 stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
@@ -388,3 +413,110 @@ private fun WakeSection(state: SettingsState, actions: SettingsActions) {
 @Composable
 private fun yesNo(present: Boolean): String =
     stringResource(if (present) R.string.wake_model_present else R.string.wake_model_missing)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun UpdatesSection(state: SettingsState, actions: SettingsActions) {
+    SectionTitle(R.string.settings_section_updates)
+    Text(stringResource(R.string.update_explainer), style = MaterialTheme.typography.bodySmall)
+    val installed = UpdateRuntime.installed
+    Text(
+        when {
+            installed.fromChannel -> stringResource(R.string.update_installed_build, installed.tag, installed.shortSha)
+            installed.sha.isNotEmpty() -> stringResource(R.string.update_installed_branch_build, installed.shortSha)
+            else -> stringResource(R.string.update_installed_local_build)
+        },
+        style = MaterialTheme.typography.bodyMedium,
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = state.settings.autoUpdate,
+                onValueChange = actions::setAutoUpdate,
+                role = Role.Switch,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(R.string.update_auto), modifier = Modifier.weight(1f))
+        Switch(checked = state.settings.autoUpdate, onCheckedChange = null)
+    }
+    Text(stringResource(R.string.update_auto_hint), style = MaterialTheme.typography.bodySmall)
+
+    Text(stringResource(R.string.update_channel), style = MaterialTheme.typography.labelLarge)
+    UpdateChannel.entries.forEach { channel ->
+        val label = when (channel) {
+            UpdateChannel.Nightly -> R.string.update_channel_nightly
+            UpdateChannel.Release -> R.string.update_channel_release
+        }
+        val selected = state.settings.updateChannel == channel
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .selectable(
+                    selected = selected,
+                    enabled = channel.selectable,
+                    onClick = { actions.setUpdateChannel(channel) },
+                    role = Role.RadioButton,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = selected, onClick = null, enabled = channel.selectable)
+            Text(
+                stringResource(label),
+                modifier = Modifier.padding(start = 8.dp),
+                color = if (channel.selectable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
+    val update = state.update
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(updateStatus(update), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        if (update.busy) CircularProgressIndicator(modifier = Modifier.size(24.dp))
+    }
+    if (update is UpdateState.Downloading) {
+        LinearProgressIndicator(progress = { update.progress }, modifier = Modifier.fillMaxWidth())
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = actions::checkForUpdates,
+            enabled = !update.busy && update !is UpdateState.AwaitingConfirmation,
+        ) { Text(stringResource(R.string.update_check_now)) }
+        if (update is UpdateState.Available) {
+            Button(onClick = actions::installUpdate) { Text(stringResource(R.string.update_install, update.release.tag)) }
+        }
+        if (update is UpdateState.AwaitingConfirmation) {
+            Button(onClick = actions::confirmUpdate) { Text(stringResource(R.string.update_confirm)) }
+        }
+    }
+    if (!state.installAllowed) {
+        Text(stringResource(R.string.update_install_not_allowed), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = actions::allowUpdateInstalls) { Text(stringResource(R.string.update_allow_installs)) }
+    }
+}
+
+@Composable
+private fun updateStatus(update: UpdateState): String = when (update) {
+    UpdateState.Idle -> stringResource(R.string.update_status_idle)
+    UpdateState.Checking -> stringResource(R.string.update_status_checking)
+    is UpdateState.UpToDate -> stringResource(R.string.update_status_up_to_date, update.latest.tag, ago(update.checkedAt))
+    is UpdateState.NoBuilds -> stringResource(R.string.update_status_no_builds, ago(update.checkedAt))
+    is UpdateState.Available -> stringResource(
+        if (update.waitingForWifi) R.string.update_status_available_wifi else R.string.update_status_available,
+        update.release.tag,
+    )
+    is UpdateState.Downloading -> stringResource(R.string.update_status_downloading, update.release.tag, (update.progress * 100).toInt())
+    is UpdateState.Installing -> stringResource(R.string.update_status_installing, update.release.tag)
+    is UpdateState.AwaitingConfirmation -> stringResource(
+        R.string.update_status_confirm,
+        update.release?.tag ?: stringResource(R.string.update_the_update),
+    )
+    UpdateState.Installed -> stringResource(R.string.update_status_installed)
+    is UpdateState.Failed -> stringResource(R.string.update_status_failed, update.message)
+}
+
+/** "3 hours ago", in the phone's language. */
+private fun ago(epochMs: Long): String =
+    DateUtils.getRelativeTimeSpanString(epochMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()

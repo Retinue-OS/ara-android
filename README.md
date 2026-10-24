@@ -44,9 +44,13 @@ libraries for `arm64-v8a` and `x86_64` only (phones and the emulator).
 
 CI (`.github/workflows/ci.yml`) assembles the debug APK and runs the unit tests
 on every pull request and push to `main`; the nightly workflow publishes a
-signed release APK (see `keystore/README.md`). Debug and release builds are
+signed release APK (see `keystore/README.md`) as a GitHub pre-release tagged
+`nightly-YYYY-MM-DD` (`-Xn` for a manual run). Debug and release builds are
 both signed with the checked-in test certificate, so any CI APK installs over
-the previous one without uninstalling.
+the previous one without uninstalling. Both workflows pass the commit as
+`ARA_BUILD_SHA`, and the nightly its tag as `ARA_BUILD_TAG`; they end up in
+`BuildConfig` and in the version shown in the settings, and the updater (see
+[Updates](#updates)) compares them with the channel.
 
 ---
 
@@ -63,6 +67,7 @@ from the web app's Settings page (it calls `RetinueShell.openSettings()`).
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults. |
 | **Wake phrase** | Mode, sensitivity, and the models (see below). |
+| **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases once there are any (see [Updates](#updates)). |
 
 Nothing environment-specific is baked into the APK.
 
@@ -254,6 +259,55 @@ The file's name comes from that header, read by the shell itself
 made safe (`shell/FileNames`). Android's own `URLUtil.guessFileName` names it
 only when the header carries none: it takes a name only from a bare
 `attachment; filename="…"`, and otherwise falls back to the URL's last segment.
+
+---
+
+## Updates
+
+Ara is not in an app store, so it updates itself from the GitHub releases of
+`Retinue-OS/ara-android`. The **Updates** section of the shell settings has:
+
+- **Install updates automatically** (off by default). On, Ara checks the channel
+  whenever it comes to the front, at most every six hours (the nightly is built
+  once a day), and installs a new build as soon as the phone is on Wi-Fi (a
+  nightly is about 85 MB; *Install* in the settings does not wait for Wi-Fi).
+  Off, nothing is fetched until *Check for updates* is tapped, and a build it
+  finds waits for *Install*.
+- **Channel**: which releases count. *Nightly builds* are the pre-releases the
+  nightly workflow publishes (tags `nightly-…`). *Releases* will be the proper,
+  non-pre-release ones; none exists yet, so the option is shown but cannot be
+  chosen (`UpdateChannel.selectable`).
+- The installed build (its release tag and commit, from `BuildConfig`), the
+  result of the last check, and the buttons.
+
+What counts as an update is the channel's newest published release that ships
+an `.apk` asset (drafts never count), when it is not the installed build: not
+the same tag, nor the same commit. A local build knows neither and so is
+offered the latest build; a branch build from CI knows its commit but not
+where it stands, so it is offered the latest nightly too — turn auto-update
+off on a phone that runs branch builds. Changing the channel starts over.
+
+Installing goes through Android's package installer as a self-update, so it
+only ever succeeds for an APK **signed like the installed one** (the nightly
+test certificate; see `keystore/README.md`) with a version code that is not
+lower; anything else is refused by Android, whatever the download was. The
+APK is fetched over HTTPS from GitHub, checked against the size the release
+states, and kept in the cache only until it is installed. Android asks the
+user to allow **Install unknown apps** for Ara once (the settings offer the
+system page); after that, since Ara holds
+`UPDATE_PACKAGES_WITHOUT_USER_ACTION` and updates itself, Android 12+ installs
+without a dialog and restarts Ara with the new build. Where Android does ask,
+the dialog is shown while Ara is in front, and *Confirm installation* in the
+settings shows it again.
+
+The check is a single unauthenticated request to the GitHub API (60 per hour
+per network address); when the limit is hit, the settings say so. Nothing is
+sent but the request itself (`User-Agent: Ara/<version> (Android)`).
+
+Implementation: `update/UpdateLogic.kt` (which release, framework-free and
+unit-tested), `update/UpdateRuntime.kt` (checking, downloading, state for the
+settings), `update/UpdateInstaller.kt` and `update/UpdateReceiver.kt` (the
+`PackageInstaller` session and its status broadcast).
 
 ---
 

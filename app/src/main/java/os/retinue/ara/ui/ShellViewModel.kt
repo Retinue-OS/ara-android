@@ -22,6 +22,7 @@ import os.retinue.ara.launcher.FolderIcons
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeModelStatus
@@ -76,6 +77,8 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setWakeMode(mode: WakeMode) = viewModelScope.launch { store.setWakeMode(mode) }
     fun setWakeThreshold(value: Float) = viewModelScope.launch { store.setWakeThreshold(value) }
     fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
+    fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
+    fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
         viewModelScope.launch { editLauncher(change = change) }
