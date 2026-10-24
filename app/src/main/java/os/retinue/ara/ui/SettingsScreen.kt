@@ -510,6 +510,7 @@ private fun updateStatus(update: UpdateState): String = when (update) {
         update.release.tag,
     )
     is UpdateState.Downloading -> stringResource(R.string.update_status_downloading, update.release.tag, (update.progress * 100).toInt())
+    is UpdateState.Waiting -> stringResource(R.string.update_status_waiting_voice, update.release.tag)
     is UpdateState.Installing -> stringResource(R.string.update_status_installing, update.release.tag)
     is UpdateState.AwaitingConfirmation -> stringResource(
         R.string.update_status_confirm,

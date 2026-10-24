@@ -267,16 +267,18 @@ only when the header carries none: it takes a name only from a bare
 Ara is not in an app store, so it updates itself from the GitHub releases of
 `Retinue-OS/ara-android`. The **Updates** section of the shell settings has:
 
-- **Install updates automatically** (off by default). On, Ara checks the channel
-  whenever it comes to the front, at most every six hours (the nightly is built
-  once a day), and installs a new build as soon as the phone is on an unmetered
+- **Install updates automatically** (off by default). Turning it on checks at
+  once; after that Ara checks the channel whenever it comes to the front, at
+  most every six hours (the nightly is built once a day; a check that failed,
+  offline or rate-limited, is retried after half an hour at the earliest), and
+  installs a new build the next time it comes to the front on an unmetered
   network — Wi-Fi, typically; a metered hotspot does not count (a nightly is
   about 85 MB; *Install* in the settings does not wait for that).
   Installing restarts Ara (Android kills the app it replaces and, as it is the
   home app, starts it again; the page is reloaded), so an automatic install
-  waits for the end of a voice conversation and announces itself with a toast.
-  Off, nothing is fetched until *Check for updates* is tapped, and a build it
-  finds waits for *Install*.
+  waits for the end of a voice conversation (half an hour at most) and
+  announces itself with a toast. Off, nothing is fetched until *Check for
+  updates* is tapped, and a build it finds waits for *Install*.
 - **Channel**: which releases count. *Nightly builds* are the pre-releases the
   nightly workflow publishes (tags `nightly-…`), read from the list of recent
   releases. *Releases* are the proper, non-pre-release ones — GitHub's "latest
@@ -297,8 +299,9 @@ Installing goes through Android's package installer as a self-update, so it
 only ever succeeds for an APK **signed like the installed one** (the nightly
 test certificate; see `keystore/README.md`) with a version code that is not
 lower; anything else is refused by Android, whatever the download was. The
-APK is fetched over HTTPS from GitHub, checked against the size the release
-states, and kept in the cache only until it is installed. Android asks the
+APK is fetched over HTTPS from GitHub (a redirect to plain HTTP is not
+followed), checked against the size the release states, and kept in the cache
+only until it is installed or the attempt is given up. Android asks the
 user to allow **Install unknown apps** for Ara once (the settings offer the
 system page); after that, since Ara holds
 `UPDATE_PACKAGES_WITHOUT_USER_ACTION` and updates itself, Android 12+ installs

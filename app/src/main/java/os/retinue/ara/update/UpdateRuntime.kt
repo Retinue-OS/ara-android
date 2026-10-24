@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import os.retinue.ara.BuildConfig
@@ -48,6 +49,9 @@ sealed class UpdateState {
     data class Available(val checkedAt: Long, val release: ReleaseInfo, val apk: ReleaseAsset, val waitingForUnmetered: Boolean) : UpdateState()
     data class Downloading(val release: ReleaseInfo, val progress: Float) : UpdateState()
 
+    /** Downloaded; an automatic install holds off while the web app holds a voice conversation. */
+    data class Waiting(val release: ReleaseInfo) : UpdateState()
+
     /** Handed to the package installer; the outcome comes back through [UpdateReceiver]. */
     data class Installing(val release: ReleaseInfo) : UpdateState()
 
@@ -59,12 +63,16 @@ sealed class UpdateState {
      */
     data class AwaitingConfirmation(val release: ReleaseInfo?, val confirm: Intent, val shown: Boolean) : UpdateState()
 
-    /** Normally never seen: Android restarts the app with the new build. */
+    /**
+     * The attempt this process made succeeded. Normally never seen: Android
+     * restarts the app with the new build, and the report reaching that build
+     * is not shown as this.
+     */
     data object Installed : UpdateState()
     data class Failed(val message: String) : UpdateState()
 
     /** A check, download or install is in progress. */
-    val busy: Boolean get() = this is Checking || this is Downloading || this is Installing
+    val busy: Boolean get() = this is Checking || this is Downloading || this is Waiting || this is Installing
 }
 
 /**
@@ -91,6 +99,12 @@ object UpdateRuntime {
     /** The installer has this long to report (an 85 MB APK verifies in seconds) before the attempt counts as failed. */
     private val INSTALL_TIMEOUT_MS: Long = TimeUnit.MINUTES.toMillis(3)
 
+    /** After a check that failed (offline, rate-limited), the next automatic one waits this long rather than for the next resume. */
+    private val FAILED_RETRY_MS: Long = TimeUnit.MINUTES.toMillis(30)
+
+    /** An automatic install waits for the end of a voice conversation at most this long (the flag can outlive a destroyed page). */
+    private val VOICE_WAIT_MS: Long = TimeUnit.MINUTES.toMillis(30)
+
     /** What this APK was built from (empty fields in a local build). */
     val installed = InstalledBuild(BuildConfig.BUILD_TAG, BuildConfig.BUILD_SHA)
 
@@ -104,6 +118,9 @@ object UpdateRuntime {
     private var autoUpdate = false
     private var channel = UpdateChannel.Nightly
     private var lastCheckAt = 0L
+
+    /** No automatic check before this (epoch ms), after one failed. */
+    private var retryAt = 0L
 
     /** The one check or download running. */
     private var job: Job? = null
@@ -128,8 +145,9 @@ object UpdateRuntime {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
+            // github.com sends the APK download on to another https host; never to plain http.
             .followRedirects(true)
-            .followSslRedirects(true)
+            .followSslRedirects(false)
             .build()
     }
 
@@ -216,8 +234,9 @@ object UpdateRuntime {
             val s = _state.value
             if (s is UpdateState.Available && s.waitingForUnmetered && unmetered()) {
                 start(automatic = true) { downloadAndInstall(s.release, s.apk) }
-            } else if (UpdateLogic.checkDue(System.currentTimeMillis(), lastCheckAt, CHECK_INTERVAL_MS)) {
-                check(automatic = true)
+            } else {
+                val now = System.currentTimeMillis()
+                if (now >= retryAt && UpdateLogic.checkDue(now, lastCheckAt, CHECK_INTERVAL_MS)) check(automatic = true)
             }
         }
     }
@@ -249,7 +268,16 @@ object UpdateRuntime {
     private fun check(automatic: Boolean) = start(automatic) {
         _state.value = UpdateState.Checking
         val ch = channel
-        val releases = withContext(Dispatchers.IO) { fetchReleases(ch) }
+        val releases = try {
+            withContext(Dispatchers.IO) { fetchReleases(ch) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Offline or rate-limited: not again at the very next resume, but soon.
+            retryAt = System.currentTimeMillis() + FAILED_RETRY_MS
+            throw e
+        }
+        retryAt = 0L
         val now = System.currentTimeMillis()
         lastCheckAt = now
         store.setUpdateCheckedAt(now, buildId)
@@ -274,8 +302,13 @@ object UpdateRuntime {
             try {
                 block()
             } catch (e: CancellationException) {
-                // cancel(): the download may have reported progress since; nothing is in progress now.
-                if (_state.value.busy && _state.value !is UpdateState.Installing) _state.value = UpdateState.Idle
+                // cancel(): the download may have reported progress since; nothing is in
+                // progress now, and a file downloaded for an install that will not happen goes.
+                if (_state.value.busy && _state.value !is UpdateState.Installing) {
+                    _state.value = UpdateState.Idle
+                    downloaded?.delete()
+                    downloaded = null
+                }
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "update failed", e)
@@ -310,8 +343,11 @@ object UpdateRuntime {
             download(apk) { progress -> _state.value = UpdateState.Downloading(release, progress) }
         }
         downloaded = file
-        // Installing restarts Ara: an automatic install waits for the end of a voice conversation.
-        if (automatic) WakeRuntime.voiceActive.first { !it }
+        if (automatic && WakeRuntime.voiceActive.value) {
+            // Installing restarts Ara: an automatic install waits for the end of a voice conversation.
+            _state.value = UpdateState.Waiting(release)
+            withTimeoutOrNull(VOICE_WAIT_MS) { WakeRuntime.voiceActive.first { !it } }
+        }
         _state.value = UpdateState.Installing(release)
         Toast.makeText(app, app.getString(R.string.update_installing_toast, release.tag), Toast.LENGTH_LONG).show()
         retireSessions()
@@ -331,7 +367,11 @@ object UpdateRuntime {
             delay(INSTALL_TIMEOUT_MS)
             val s = _state.value
             if (s is UpdateState.Installing && s.release == release && pendingSession == sessionId) {
-                onInstallFailed(sessionId, PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_install_no_report))
+                // Whatever the installer still does with the session is no longer this attempt's.
+                ignoredSessions += sessionId
+                runCatching { app.packageManager.packageInstaller.abandonSession(sessionId) }
+                finish()
+                _state.value = UpdateState.Failed(app.getString(R.string.update_install_no_report))
             }
         }
     }
@@ -386,9 +426,17 @@ object UpdateRuntime {
 
     // --- Reported by UpdateReceiver ---------------------------------------------
 
+    /**
+     * Whether a report is about the attempt in progress, or, with none in
+     * progress, about a session an earlier process committed (its dialog was
+     * still up, or the process did not live to see the report).
+     */
+    private fun concerns(sessionId: Int): Boolean =
+        sessionId !in ignoredSessions && (pendingSession == 0 || sessionId == pendingSession)
+
     /** The installer wants the user to confirm (first install through Ara, or "Install unknown apps" still off). */
     fun onUserActionNeeded(sessionId: Int, confirm: Intent?) {
-        if (sessionId in ignoredSessions) return
+        if (!concerns(sessionId)) return
         if (confirm == null) {
             onInstallFailed(sessionId, PackageInstaller.STATUS_FAILURE, app.getString(R.string.update_no_confirmation))
             return
@@ -399,13 +447,15 @@ object UpdateRuntime {
     }
 
     fun onInstalled(sessionId: Int) {
-        if (sessionId in ignoredSessions) return
+        if (!concerns(sessionId)) return
+        // The report of the update that produced this very build reaches it here: nothing is pending then.
+        val own = sessionId == pendingSession
         finish()
-        _state.value = UpdateState.Installed
+        _state.value = if (own) UpdateState.Installed else UpdateState.Idle
     }
 
     fun onInstallFailed(sessionId: Int, status: Int, message: String?) {
-        if (sessionId in ignoredSessions) return
+        if (!concerns(sessionId)) return
         finish()
         _state.value = UpdateState.Failed(installFailure(status, message))
     }

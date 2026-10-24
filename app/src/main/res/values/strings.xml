@@ -182,7 +182,7 @@
     <string name="update_installed_branch_build">Installed: a branch build of commit %1$s, not from a channel.</string>
     <string name="update_installed_local_build">Installed: a local build, not from a channel.</string>
     <string name="update_auto">Install updates automatically</string>
-    <string name="update_auto_hint">Checks the channel when Ara comes to the front, at most every six hours, and installs a new build over an unmetered network (Wi-Fi). Off: nothing is fetched until you check here.</string>
+    <string name="update_auto_hint">Turning this on checks at once; after that Ara checks when it comes to the front, at most every six hours, and installs a new build over an unmetered network (Wi-Fi), once a voice conversation has ended. Installing restarts Ara. Off: nothing is fetched until you check here.</string>
     <string name="update_channel">Channel</string>
     <string name="update_channel_nightly">Nightly builds</string>
     <string name="update_channel_nightly_hint">A build of the latest code, most days.</string>
@@ -193,7 +193,8 @@
     <string name="update_status_up_to_date">Up to date: %1$s is the latest build (checked %2$s).</string>
     <string name="update_status_no_builds">No build has been published on this channel yet (checked %1$s).</string>
     <string name="update_status_available">%1$s is available.</string>
-    <string name="update_status_available_unmetered">%1$s is available; it is installed once the phone is on an unmetered network (Wi-Fi), or when you install it now.</string>
+    <string name="update_status_available_unmetered">%1$s is available; it is installed the next time Ara comes to the front on an unmetered network (Wi-Fi), or when you install it now.</string>
+    <string name="update_status_waiting_voice">%1$s is downloaded; it is installed when the voice conversation ends.</string>
     <string name="update_status_downloading">Downloading %1$s… %2$d%%</string>
     <string name="update_status_installing">Installing %1$s…</string>
     <string name="update_status_confirm">Android asks you to confirm the installation of %1$s.</string>
