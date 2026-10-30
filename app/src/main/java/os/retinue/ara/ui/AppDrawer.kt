@@ -122,6 +122,9 @@ fun AppDrawer(
     onLaunchShortcut: (PinnedShortcut) -> Unit,
     onPinShortcut: (PinnedShortcut) -> Unit,
     onRemoveShortcut: (PinnedShortcut) -> Unit,
+    /** The long-press item for the other way of opening an app (see [AlternateOpenItem]); null for none. */
+    alternateOpen: Int?,
+    onLaunchAlternate: (LauncherEntry.Launchable) -> Unit,
     onDismiss: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -162,6 +165,8 @@ fun AppDrawer(
                             folders = folders,
                             pinned = isPinned(item.app),
                             onLaunch = { onLaunch(item.app) },
+                            alternateOpen = alternateOpen,
+                            onLaunchAlternate = { onLaunchAlternate(item.toEntry()) },
                             onPin = { onPin(item.app) },
                             onAddToFolder = onAddToFolder,
                             onNewFolder = onNewFolder,
@@ -172,6 +177,8 @@ fun AppDrawer(
                             folders = folders,
                             pinned = isShortcutPinned(item.shortcut),
                             onLaunch = { onLaunchShortcut(item.shortcut) },
+                            alternateOpen = alternateOpen,
+                            onLaunchAlternate = { onLaunchAlternate(item.toEntry()) },
                             onPin = { onPinShortcut(item.shortcut) },
                             onAddToFolder = onAddToFolder,
                             onNewFolder = onNewFolder,
@@ -185,9 +192,9 @@ fun AppDrawer(
 }
 
 /**
- * An app or web app in All apps. Long-press: pin it to the bar, add it to a
- * folder or a new one and, given [onRemove] (web apps), remove it from the
- * phone (unpin it).
+ * An app or web app in All apps. Long-press: open it the other way
+ * ([alternateOpen]), pin it to the bar, add it to a folder or a new one and,
+ * given [onRemove] (web apps), remove it from the phone (unpin it).
  */
 @Composable
 private fun DrawerTile(
@@ -195,6 +202,8 @@ private fun DrawerTile(
     folders: List<LauncherEntry.Folder>,
     pinned: Boolean,
     onLaunch: () -> Unit,
+    alternateOpen: Int?,
+    onLaunchAlternate: () -> Unit,
     onPin: () -> Unit,
     onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
     onNewFolder: (LauncherEntry.Launchable) -> Unit,
@@ -209,6 +218,12 @@ private fun DrawerTile(
             onLongClick = { menu = true },
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (alternateOpen != null) {
+                AlternateOpenItem(alternateOpen) {
+                    menu = false
+                    onLaunchAlternate()
+                }
+            }
             MenuItem(
                 text = stringResource(if (pinned) R.string.drawer_pinned_already else R.string.drawer_pin),
                 icon = { Icon(Icons.Filled.PushPin, contentDescription = null) },

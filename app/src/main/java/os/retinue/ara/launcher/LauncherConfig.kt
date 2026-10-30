@@ -188,6 +188,19 @@ object LauncherCodec {
         ).toString()
     }
 
+    /** One entry on its own (handed to the split-screen window in an intent). */
+    fun encodeEntry(entry: LauncherEntry): String = json.encodeToString(LauncherEntry.serializer(), entry)
+
+    /** An entry from [encodeEntry]; null for anything unreadable. */
+    fun decodeEntry(raw: String?): LauncherEntry? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            normalize(json.decodeFromString(LauncherEntry.serializer(), raw))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Decode; null input (never configured) or an unreadable document gives the defaults. */
     fun decode(raw: String?): LauncherConfig {
         if (raw.isNullOrBlank()) return LauncherConfig.DEFAULT

@@ -100,6 +100,23 @@
             </intent-filter>
         </activity>
 
+        <!-- The shell's split-screen window (see SplitShellActivity): the home
+             activity is always full screen, so a second activity in a task of its
+             own (its own affinity) shows the same page in one half of the screen.
+             Not exported: only Ara starts it, and Recents brings it back. The same
+             config changes are handled in place, as the shared WebView must
+             survive them here too. -->
+        <activity
+            android:name=".ui.SplitShellActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity="${applicationId}.split"
+            android:resizeableActivity="true"
+            android:autoRemoveFromRecents="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale"
+            android:label="@string/app_name" />
+
         <!-- Pinned shortcuts (Chrome's "Install app" / "Add to home screen", other
              apps' shortcuts): ShortcutManager.requestPinShortcut() works only when
              the default home app has an activity for CONFIRM_PIN_SHORTCUT, which

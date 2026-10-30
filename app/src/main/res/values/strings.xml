@@ -19,6 +19,10 @@
     <string name="launcher_uri">URI</string>
     <string name="launcher_path">Path in the web app</string>
     <string name="launcher_options">Options</string>
+    <string name="launcher_open_beside">Open beside Ara</string>
+    <string name="launcher_open_full">Open full screen</string>
+    <string name="split_page_elsewhere">Ara\'s page is open in its other window. Tap to show it here.</string>
+    <string name="split_page_show_here">Show the page here</string>
     <string name="launcher_move_to_folder">Move to %1$s</string>
 
     <!-- Launcher folders: apps only, never other folders. -->
@@ -136,6 +140,13 @@
     <string name="settings_pin_test">Test: pin a shortcut</string>
     <string name="settings_pin_test_label">Ara test</string>
     <string name="settings_pin_refused">Android refused the shortcut request.</string>
+
+    <string name="settings_section_split">Split screen</string>
+    <string name="settings_split_explainer">The home screen cannot share the screen with an app, so Ara has a second window for split screen. It shows the same page, in the same place, as the home screen, and what you open from it goes in the other half.</string>
+    <string name="settings_split_launch">Open apps beside Ara</string>
+    <string name="settings_split_launch_hint">Apps, web apps and links from the home screen open in split screen, next to Ara. Long-press one to open it full screen instead. Android decides which half each gets; its divider swaps them.</string>
+    <string name="settings_split_recents">Keep Ara in recent apps</string>
+    <string name="settings_split_recents_hint">When the split-screen Ara is not among the recent apps (swiped away, or never opened), the home screen puts it back there, ready to pair with an app.</string>
 
     <string name="settings_section_launcher">Launcher bar</string>
     <string name="settings_launcher_hint">Add links, web-app pages and folders here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it, or an app to move it into a folder.</string>

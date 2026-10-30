@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.HorizontalSplit
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Map
@@ -78,14 +80,18 @@ internal fun slotWidth(available: Dp, slots: Int): Dp =
 
 /**
  * The bottom launcher bar: the configured entries (scrolling horizontally when
- * there are many) and, always last, "All apps". Long-press an entry for edit /
- * remove / move (an app or web app also into a folder) and the shell settings;
- * long-press "All apps" for a new folder.
+ * there are many) and, always last, "All apps". Long-press an entry to open it
+ * the other way ([alternateOpen]), edit / remove / move it (an app or web app
+ * also into a folder) and for the shell settings; long-press "All apps" for a
+ * new folder.
  */
 @Composable
 fun LauncherBar(
     entries: List<LauncherEntry>,
     onOpen: (LauncherEntry) -> Unit,
+    /** The long-press item for the other way of opening an app or link (see [AlternateOpenItem]); null for none. */
+    alternateOpen: Int?,
+    onOpenAlternate: (LauncherEntry) -> Unit,
     onEdit: (LauncherEntry) -> Unit,
     onRemove: (LauncherEntry) -> Unit,
     onMove: (LauncherEntry, Int) -> Unit,
@@ -120,6 +126,10 @@ fun LauncherBar(
                                 width = width,
                             )
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                // What Android starts: apps, web apps and links (not pages of the web app, not folders).
+                                if (alternateOpen != null && (entry is LauncherEntry.Launchable || entry is LauncherEntry.Link)) {
+                                    AlternateOpenItem(alternateOpen) { menu = false; onOpenAlternate(entry) }
+                                }
                                 MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
                                 if (index > 0) {
                                     MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
@@ -168,6 +178,17 @@ fun LauncherBar(
             }
         }
     }
+}
+
+/**
+ * The long-press item that opens an app the other way than a tap does, on
+ * the home screen: beside Ara in split screen ([R.string.launcher_open_beside])
+ * or full screen ([R.string.launcher_open_full]).
+ */
+@Composable
+internal fun AlternateOpenItem(textRes: Int, onClick: () -> Unit) {
+    val icon = if (textRes == R.string.launcher_open_full) Icons.Filled.Fullscreen else Icons.Filled.HorizontalSplit
+    MenuItem(textRes, icon, onClick)
 }
 
 @Composable

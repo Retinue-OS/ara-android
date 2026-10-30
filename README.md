@@ -65,6 +65,7 @@ from the web app's Settings page (it calls `RetinueShell.openSettings()`).
 | **Retinue base URL** | The web app's origin, e.g. `https://agents.example.com` (`https://` is assumed if omitted). Pages on this origin stay in the shell; nothing else gets the bridge, the microphone or the certificate. |
 | **Client certificate** | The installed certificate Ara presents to that origin (mTLS). |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
+| **Split screen** | Open apps beside Ara, and keep Ara in recent apps (both off by default; see [Split screen](#split-screen)). |
 | **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults. |
 | **Wake phrase** | Mode, sensitivity, and the models (see below). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
@@ -169,8 +170,9 @@ app's dock used to have. The bar scrolls sideways when it is full. The last
 slot is always **All apps**: a searchable list of launchable apps and installed
 web apps (tap to open, long-press to pin it to the bar or put it in a folder).
 It is what keeps other apps reachable once Ara is the home screen. Long-press a
-bar entry to edit, move, or remove it; the editor in the shell settings adds
-links, web pages and folders and reorders everything.
+bar entry to edit, move, or remove it, or to open it the other way: beside Ara
+in split screen, or full screen (see [Split screen](#split-screen)); the editor
+in the shell settings adds links, web pages and folders and reorders everything.
 
 As home app Ara accepts pinned shortcuts (a browser's "Install app" / "Add to
 home screen" — an installed web app from Edge or Chrome — and other apps'
@@ -238,6 +240,50 @@ Settings → **Set as default home app** asks Android for the home role
 is already held or cannot be requested. Ara declares `MAIN` + `HOME` + `DEFAULT`
 next to its normal launcher entry, so it can be switched back from the system
 settings at any time.
+
+---
+
+## Split screen
+
+Android keeps the home activity full screen, behind everything: the home screen
+can never share the screen with an app. So Ara has a second window,
+`SplitShellActivity`, an ordinary activity in a task of its own that Android may
+put in one half of the screen. It is the same shell — the same page and the same
+bar — and both windows show **one page in one state**: there is a single
+WebView (with its bridge and speech, see `ShellPage`), which moves to the window
+that comes to the front. You are always at the same place in the web app, a
+voice conversation keeps going, and there is one connection. A window that does
+not hold the page shows a placeholder (seen only when both are visible at once,
+in a desktop or freeform mode; tap it to bring the page there).
+
+What the split-screen window starts — bar entries, apps from folders and All
+apps, links from the page — opens **beside it**, in the other half
+(`FLAG_ACTIVITY_LAUNCH_ADJACENT`; a pinned shortcut is sent through its
+`PendingIntent` with that flag). From a full-screen split window this enters
+split screen on Android 12L and later; on Android 12 the app opens full screen.
+
+Settings → **Split screen**:
+
+- **Open apps beside Ara** (off by default): a tap on the home screen opens the
+  app in split screen. The home screen brings up the split-screen window, which
+  starts the app beside itself once it is in front. Long-press an app, web app
+  or link on the bar, in a folder or in All apps for the other way (*Open full
+  screen*, or *Open beside Ara* while the setting is off). An app that does not
+  get there (one that refuses split screen, or Android 12) covers Ara full
+  screen, and Ara's window goes to the back, so Back from the app leads home.
+- **Keep Ara in recent apps** (off by default): whenever the home screen comes
+  up and the split-screen window is not among the recent apps (never opened, or
+  swiped away), the home screen starts it straight to the back, so its tile is
+  there to pair with any app from Recents. Android shows a new task's splash
+  screen even then, so this is a brief flash of the background, and the tile
+  becomes the most recent one (the quick switch to the last app then lands on
+  Ara once).
+
+**Which half.** Android puts the app it starts beside Ara in its "side stage",
+by default the bottom (portrait) or right (landscape) half, so Ara lands on top.
+There is no API for an app to choose. Swapping the two once with the divider
+(double-tap it on stock Android, or the swap button in its menu on One UI) is
+remembered by the system, so later apps open on the other side.
 
 ---
 
@@ -427,6 +473,11 @@ if it wakes too easily, lower it if it is hard to trigger.
   notification.
 - On WebViews without `WEB_MESSAGE_LISTENER` (only very old ones) there is no
   bridge: no wake event, native speech or settings link for the page.
+- **Split screen** behaviour differs between Android versions and makers (which
+  half the app gets, whether an app already running is moved into the split or
+  opened anew). The WebView's autofill stays tied to the window it was created
+  in (normally the home screen), so autofill may not show in the split-screen
+  window.
 
 ---
 
@@ -449,8 +500,9 @@ web/       ShellWebView, ShellWebClients,           — the WebView, its setup a
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
 data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
-ui/        MainActivity, ShellViewModel,            — the Compose shell, settings, bar, drawer,
-           LauncherBar, AppDrawer, LauncherFolders,   folders (open folder, folder editor)
+ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
+           ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
+           LauncherBar, AppDrawer, LauncherFolders,   drawer, folders (open folder, folder editor)
            SettingsScreen
 assets/    retinue-shell.js                         — page side of the bridge and the speech stand-in
 ```

@@ -79,6 +79,8 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
     fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
+    fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
+    fun setKeepSplitInRecents(on: Boolean) = viewModelScope.launch { store.setKeepSplitInRecents(on) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
         viewModelScope.launch { editLauncher(change = change) }

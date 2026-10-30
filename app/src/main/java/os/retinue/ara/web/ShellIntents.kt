@@ -1,11 +1,14 @@
 package os.retinue.ara.web
 
+import android.app.Activity
+import android.app.ActivityOptions
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
 import android.net.Uri
+import android.os.Build
 import android.os.Process
 import android.os.UserManager
 import android.util.Log
@@ -18,12 +21,26 @@ import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.UrlRouter
 
 /**
+ * A window of the shell that may start things beside itself, in the other half
+ * of split screen: the split-screen window (see SplitShellActivity). What
+ * [ShellIntents] starts from it while [launchAdjacent] carries
+ * FLAG_ACTIVITY_LAUNCH_ADJACENT, so the app opens next to the shell instead of
+ * over it (and splits a full screen where Android supports that).
+ */
+interface SplitAware {
+    val launchAdjacent: Boolean
+}
+
+/**
  * Everything the shell hands to Android: web links for the browser, other
  * schemes, sanitized `intent:` URLs, and launcher entries.
  */
 object ShellIntents {
 
     private const val TAG = "ShellIntents"
+
+    /** A start in the other half of split screen; Android honours the adjacent flag only for a new task. */
+    private const val ADJACENT = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
 
     /** Open an http(s) URL in the user's default browser. */
     fun openInBrowser(context: Context, url: String): Boolean = start(
@@ -137,6 +154,11 @@ object ShellIntents {
      */
     fun launchShortcut(context: Context, packageName: String, shortcutId: String): Boolean {
         val apps = context.getSystemService(LauncherApps::class.java)
+        if (apps != null && context is Activity && adjacent(context) &&
+            startShortcutAdjacent(context, apps, packageName, shortcutId)
+        ) {
+            return true
+        }
         val failure = if (apps == null) {
             R.string.shortcut_unavailable
         } else {
@@ -162,6 +184,34 @@ object ShellIntents {
         return false
     }
 
+    /**
+     * A shortcut beside the split-screen window. LauncherApps.startShortcut
+     * takes no intent flags, but the shortcut's PendingIntent can be sent with
+     * them. False when that is not possible; the caller then starts it the
+     * usual way.
+     */
+    private fun startShortcutAdjacent(activity: Activity, apps: LauncherApps, packageName: String, shortcutId: String): Boolean =
+        try {
+            val pending = apps.getShortcutIntent(packageName, shortcutId, null, Process.myUserHandle())
+            if (pending == null) {
+                false
+            } else {
+                val options = ActivityOptions.makeBasic()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    // The shortcut's PendingIntent is not Ara's: Ara, in front, lends it the start.
+                    options.setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                }
+                activity.startIntentSender(pending.intentSender, null, ADJACENT, ADJACENT, 0, options.toBundle())
+                true
+            }
+        } catch (e: Exception) {
+            // Not the home app, a locked user, a shortcut that is gone …: the usual start says why.
+            Log.w(TAG, "could not start shortcut $packageName/$shortcutId beside the shell", e)
+            false
+        }
+
+    private fun adjacent(context: Context): Boolean = (context as? SplitAware)?.launchAdjacent == true
+
     private fun startLink(context: Context, uri: String, fromPage: Boolean): Boolean {
         val parsed = Uri.parse(uri.trim())
         if (UrlRouter.isRefusedIntentData(parsed.scheme)) {
@@ -180,7 +230,8 @@ object ShellIntents {
     }
 
     private fun start(context: Context, intent: Intent, toastOnFailure: Boolean = true): Boolean {
-        if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (adjacent(context)) intent.addFlags(ADJACENT)
         return try {
             context.startActivity(intent)
             true

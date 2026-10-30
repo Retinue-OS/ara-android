@@ -1,5 +1,6 @@
 package os.retinue.ara.web
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Context
@@ -199,7 +200,7 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         main.post {
             try {
-                app.startActivity(intent)
+                startViewer(intent)
             } catch (e: ActivityNotFoundException) {
                 // Nothing on the phone shows this type: keep the file where the user finds it.
                 executor.execute {
@@ -263,6 +264,19 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
             total += n
             if (total > MAX_BYTES) throw IOException("File too large")
             out.write(buf, 0, n)
+        }
+    }
+
+    /**
+     * The viewer, beside the split-screen window when the page is there (as
+     * everything that window starts), else as before from the application.
+     */
+    private fun startViewer(intent: Intent) {
+        val window = host as? Activity
+        if (window != null && !window.isDestroyed && (host as? SplitAware)?.launchAdjacent == true) {
+            window.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT))
+        } else {
+            app.startActivity(intent)
         }
     }
 
