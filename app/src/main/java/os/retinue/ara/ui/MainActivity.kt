@@ -7,6 +7,7 @@ import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
@@ -183,6 +184,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
 
+    /** The page waits for a file chooser or the microphone permission started from this window. */
+    internal val awaitsResult: Boolean get() = pendingFileCallback != null || pendingAudioRequest != null
+
     /** Asked for after the mic permission (two requests at once lose the second). */
     private var askNotificationsAfterMic = false
 
@@ -199,6 +203,14 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     /** Split-screen window: the launcher entry to start beside it once it is in front. */
     private var pendingEntry: LauncherEntry? = null
+
+    /**
+     * Split-screen window started only to be among the recent apps, on its way
+     * to the back: it does not take the page (it still passes through
+     * onStart and onResume), until it really comes to the front.
+     */
+    internal var parking = false
+        private set
 
     private val wakeExpiry = Runnable { tryDeliverWake() }
 
@@ -405,12 +417,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         val replayed = ShellDecisions.isReplayedIntent(restored, fromHistory)
         when (ShellDecisions.splitRequest(hasEntry = raw != null, park = park, replayed = replayed)) {
             ShellDecisions.SplitRequest.Open -> {
+                parking = false
                 pendingEntry = LauncherCodec.decodeEntry(raw)
                 if (resumed) openPendingEntry()
             }
-            // Back at once: only the Recents tile stays (the home screen takes the page back on resume).
-            ShellDecisions.SplitRequest.Park -> moveTaskToBack(true)
-            ShellDecisions.SplitRequest.Show -> Unit
+            // Back at once: only the Recents tile stays, and the page stays with the home screen.
+            ShellDecisions.SplitRequest.Park -> parking = moveTaskToBack(true)
+            ShellDecisions.SplitRequest.Show -> parking = false
         }
     }
 
@@ -712,7 +725,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         super.onStart()
         page.windowStarted(this)
         // The window coming to the front shows the page.
-        page.take(this)
+        if (!parking) page.take(this)
     }
 
     override fun onResume() {
@@ -725,8 +738,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         installAllowed = UpdateRuntime.canInstall(this)
         viewModel.refreshModels()
         page.windowResumed(this)
-        // Also here: the other window may have had it meanwhile (parked, or both up in a desktop mode).
-        page.take(this)
+        // Also here: the other window may have had it meanwhile (both up in a desktop mode).
+        if (!parking) page.take(this)
         resumed = true
         UpdateRuntime.onShellResumed()
         tryDeliverWake()
@@ -736,7 +749,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && parking) {
+            // It did come to the front after all (a parked window never gets focus).
+            parking = false
+            page.take(this)
+        }
         if (hasFocus) tryDeliverWake()
+    }
+
+    /** Split screen begins or ends: a waiting wake may go out now (see [ShellDecisions.pendingWake]). */
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        tryDeliverWake()
     }
 
     override fun onPause() {
@@ -750,6 +774,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     }
 
     override fun onStop() {
+        parking = false
         page.windowStopped(this)
         super.onStop()
     }
@@ -1067,6 +1092,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
      */
     private fun keepSplitWindowInRecents() {
         if (isSplitWindow || !resumed || !settingsLoaded || !settings.keepSplitInRecents) return
+        // Never in the middle of a wake or a conversation (the start pauses this window, which ends
+        // showing over the keyguard), nor over the keyguard: a later, quiet resume does it.
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (pendingWakeAt != 0L || keyguardLocked || WakeRuntime.voiceActive.value) return
         val now = SystemClock.elapsedRealtime()
         val since = SplitShellActivity.lastParkAt?.let { now - it }
         if (!ShellDecisions.parkSplitWindow(true, SplitShellActivity.inRecents(this), since)) return
@@ -1225,11 +1254,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     }
 
     /**
-     * The other window took the page. A sign-in dialog here is cancelled
-     * (its page is gone from this window), so the page offers a retry there.
+     * The other window took the page: what the page asked of this window is
+     * answered now, as it would never be otherwise. A sign-in dialog is
+     * cancelled (the page offers a retry there), a file chooser comes back
+     * empty (the page takes no new one while one is open), a microphone
+     * request is denied (the page may ask again).
      */
     internal fun onPageLeft() {
         authPrompt?.cancel()
+        pendingFileCallback?.onReceiveValue(null)
+        pendingFileCallback = null
+        pendingAudioRequest?.deny()
+        pendingAudioRequest = null
     }
 
     // --- ShellHost -----------------------------------------------------------

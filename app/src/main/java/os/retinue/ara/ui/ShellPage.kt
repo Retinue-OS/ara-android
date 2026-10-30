@@ -1,5 +1,6 @@
 package os.retinue.ara.ui
 
+import android.annotation.SuppressLint
 import android.content.MutableContextWrapper
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -36,6 +37,8 @@ import os.retinue.ara.web.configureShellWebView
  * are the owner's too. It is destroyed with the last window, as before there
  * were two. Main thread only.
  */
+// Holding the WebView beyond one activity is the point; the last window to close destroys it.
+@SuppressLint("StaticFieldLeak")
 object ShellPage {
 
     /** The WebView (replaced when its renderer is gone); null while no window exists. */
@@ -82,7 +85,7 @@ object ShellPage {
      * page, or else to the visible one that came up last.
      */
     private val onWake: () -> Unit = {
-        (owner?.takeIf { it in started } ?: started.lastOrNull())?.onDirectWake()
+        (owner?.takeIf { it in started } ?: started.lastOrNull { !it.parking })?.onDirectWake()
     }
 
     /**
@@ -164,8 +167,15 @@ object ShellPage {
         reportWindows()
     }
 
+    /**
+     * A window that stops while the other one stays visible (a pop-up or
+     * desktop window closed over the home screen) hands it the page; in a
+     * plain switch the other one has taken it already. Not while it waits for
+     * a file or the microphone for the page: that answer comes back to it.
+     */
     fun windowStopped(window: MainActivity) {
         started -= window
+        if (owner === window && !window.awaitsResult) started.lastOrNull { !it.parking }?.let(::take)
         reportWindows()
     }
 

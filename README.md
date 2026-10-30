@@ -273,8 +273,9 @@ Settings → **Split screen**:
   screen, and Ara's window goes to the back, so Back from the app leads home.
 - **Keep Ara in recent apps** (off by default): whenever the home screen comes
   up and the split-screen window is not among the recent apps (never opened, or
-  swiped away), the home screen starts it straight to the back, so its tile is
-  there to pair with any app from Recents. Android shows a new task's splash
+  swiped away), the home screen starts it straight to the back (not during a
+  wake or a conversation, nor over the lock screen), so its tile is there to
+  pair with any app from Recents. Android shows a new task's splash
   screen even then, so this is a brief flash of the background, and the tile
   becomes the most recent one (the quick switch to the last app then lands on
   Ara once).

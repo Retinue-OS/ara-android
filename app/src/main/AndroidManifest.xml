@@ -114,8 +114,7 @@
             android:resizeableActivity="true"
             android:autoRemoveFromRecents="false"
             android:windowSoftInputMode="adjustResize"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale"
-            android:label="@string/app_name" />
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density|fontScale" />
 
         <!-- Pinned shortcuts (Chrome's "Install app" / "Add to home screen", other
              apps' shortcuts): ShortcutManager.requestPinShortcut() works only when
