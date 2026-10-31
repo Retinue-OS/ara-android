@@ -39,6 +39,8 @@ class AraStore(context: Context) {
             wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
+            splitLaunch = p[K.splitLaunch] ?: false,
+            keepSplitInRecents = p[K.keepSplitInRecents] ?: false,
         )
     }
 
@@ -70,6 +72,10 @@ class AraStore(context: Context) {
     suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }
 
     suspend fun setUpdateChannel(channel: UpdateChannel) = edit { it[K.updateChannel] = channel.key }
+
+    suspend fun setSplitLaunch(on: Boolean) = edit { it[K.splitLaunch] = on }
+
+    suspend fun setKeepSplitInRecents(on: Boolean) = edit { it[K.keepSplitInRecents] = on }
 
     suspend fun setUpdateCheckedAt(epochMs: Long, build: String) = edit {
         it[K.updateCheckedAt] = epochMs
@@ -107,5 +113,7 @@ class AraStore(context: Context) {
         val updateChannel = stringPreferencesKey("update_channel")
         val updateCheckedAt = longPreferencesKey("update_checked_at")
         val updateCheckedBy = stringPreferencesKey("update_checked_by")
+        val splitLaunch = booleanPreferencesKey("split_launch")
+        val keepSplitInRecents = booleanPreferencesKey("keep_split_in_recents")
     }
 }

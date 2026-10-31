@@ -8,7 +8,9 @@ import org.junit.Test
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellDecisions.BackAction
 import os.retinue.ara.shell.ShellDecisions.IntentAction
+import os.retinue.ara.shell.ShellDecisions.LaunchTarget
 import os.retinue.ara.shell.ShellDecisions.PendingWake
+import os.retinue.ara.shell.ShellDecisions.SplitRequest
 import os.retinue.ara.shell.ShellDecisions.UnhandledEvent
 import os.retinue.ara.shell.ShellDecisions.WakeDelivery
 import os.retinue.ara.shell.ShellMessages
@@ -140,7 +142,8 @@ class WakeTimingTest {
         resumed: Boolean = true,
         focused: Boolean = true,
         locked: Boolean = false,
-    ) = ShellDecisions.pendingWake(age, loaded, resumed, focused, locked)
+        multiWindow: Boolean = false,
+    ) = ShellDecisions.pendingWake(age, loaded, resumed, focused, locked, multiWindow)
 
     @Test
     fun deliversOnlyToAVisibleFocusedShell() {
@@ -149,6 +152,14 @@ class WakeTimingTest {
         assertEquals(PendingWake.Wait, decide(focused = false))
         assertEquals(PendingWake.Wait, decide(locked = true))
         assertEquals(PendingWake.Wait, decide(loaded = false))
+    }
+
+    @Test
+    fun inSplitScreenThePagesHalfNeedsNoFocus() {
+        // The other app has focus; Ara's half is resumed and visible, and can take the mic.
+        assertEquals(PendingWake.Deliver, decide(focused = false, multiWindow = true))
+        assertEquals(PendingWake.Wait, decide(focused = false, multiWindow = true, resumed = false))
+        assertEquals(PendingWake.Wait, decide(focused = false, multiWindow = true, locked = true))
     }
 
     @Test
@@ -171,5 +182,47 @@ class WakeTimingTest {
         assertEquals(UnhandledEvent.LoadWake, ShellDecisions.onUnhandledEvent(isWake = true, onStartPage = false))
         assertEquals(UnhandledEvent.LoadStart, ShellDecisions.onUnhandledEvent(isWake = false, onStartPage = false))
         assertEquals(UnhandledEvent.Nothing, ShellDecisions.onUnhandledEvent(isWake = false, onStartPage = true))
+    }
+}
+
+class SplitScreenDecisionsTest {
+
+    @Test
+    fun theSplitWindowStartsEverythingBesideItself() {
+        for (splitLaunch in listOf(true, false)) {
+            for (alternate in listOf(true, false)) {
+                assertEquals(LaunchTarget.Beside, ShellDecisions.launchTarget(splitWindow = true, splitLaunch, alternate))
+            }
+        }
+    }
+
+    @Test
+    fun theHomeScreenFollowsTheSettingAndTheLongPressFlipsIt() {
+        fun home(splitLaunch: Boolean, alternate: Boolean) =
+            ShellDecisions.launchTarget(splitWindow = false, splitLaunch = splitLaunch, alternate = alternate)
+        assertEquals(LaunchTarget.Here, home(splitLaunch = false, alternate = false))
+        assertEquals(LaunchTarget.ThroughSplitWindow, home(splitLaunch = false, alternate = true))
+        assertEquals(LaunchTarget.ThroughSplitWindow, home(splitLaunch = true, alternate = false))
+        assertEquals(LaunchTarget.Here, home(splitLaunch = true, alternate = true))
+    }
+
+    @Test
+    fun splitWindowRequests() {
+        assertEquals(SplitRequest.Open, ShellDecisions.splitRequest(hasEntry = true, park = false, replayed = false))
+        assertEquals(SplitRequest.Park, ShellDecisions.splitRequest(hasEntry = false, park = true, replayed = false))
+        assertEquals(SplitRequest.Show, ShellDecisions.splitRequest(hasEntry = false, park = false, replayed = false))
+        // A relaunch from Recents repeats the creating intent: it neither opens the app again nor parks.
+        assertEquals(SplitRequest.Show, ShellDecisions.splitRequest(hasEntry = true, park = false, replayed = true))
+        assertEquals(SplitRequest.Show, ShellDecisions.splitRequest(hasEntry = false, park = true, replayed = true))
+    }
+
+    @Test
+    fun theSplitWindowIsPutBackInRecentsOnlyWhenMissingAndNotTooOften() {
+        assertTrue(ShellDecisions.parkSplitWindow(keepInRecents = true, inRecents = false, sinceLastAttemptMs = null))
+        assertFalse(ShellDecisions.parkSplitWindow(keepInRecents = false, inRecents = false, sinceLastAttemptMs = null))
+        assertFalse(ShellDecisions.parkSplitWindow(keepInRecents = true, inRecents = true, sinceLastAttemptMs = null))
+        // An attempt that did not take is not repeated on every resume.
+        assertFalse(ShellDecisions.parkSplitWindow(true, false, sinceLastAttemptMs = ShellDecisions.PARK_RETRY_MS - 1))
+        assertTrue(ShellDecisions.parkSplitWindow(true, false, sinceLastAttemptMs = ShellDecisions.PARK_RETRY_MS))
     }
 }

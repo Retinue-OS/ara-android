@@ -102,6 +102,12 @@ interface SettingsActions {
 
     /** Ask Android to pin a shortcut to Ara, the way a browser installing a web app does. */
     fun testPinShortcut()
+
+    /** Home-screen taps open apps beside the split-screen window. */
+    fun setSplitLaunch(on: Boolean)
+
+    /** The home screen keeps the split-screen window among the recent apps. */
+    fun setKeepSplitInRecents(on: Boolean)
     fun addEntry(template: LauncherEntry)
     fun addFolder()
     fun editEntry(entry: LauncherEntry)
@@ -135,7 +141,7 @@ interface SettingsActions {
 
 /**
  * The shell's native settings (plan §1): base URL, client certificate, page
- * status, home role, launcher editor, wake phrase, updates.
+ * status, home role, split screen, launcher editor, wake phrase, updates.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -165,6 +171,8 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
             PageDiagnostics(state.page, state.settings.certificateAlias)
             HorizontalDivider()
             HomeSection(state, actions)
+            HorizontalDivider()
+            SplitSection(state, actions)
             HorizontalDivider()
             LauncherSection(state, actions)
             HorizontalDivider()
@@ -242,6 +250,30 @@ private fun HomeSection(state: SettingsState, actions: SettingsActions) {
     )
     OutlinedButton(onClick = actions::testPinShortcut) {
         Text(stringResource(R.string.settings_pin_test))
+    }
+}
+
+@Composable
+private fun SplitSection(state: SettingsState, actions: SettingsActions) {
+    SectionTitle(R.string.settings_section_split)
+    Text(stringResource(R.string.settings_split_explainer), style = MaterialTheme.typography.bodySmall)
+    SettingSwitch(R.string.settings_split_launch, state.settings.splitLaunch, actions::setSplitLaunch)
+    Text(stringResource(R.string.settings_split_launch_hint), style = MaterialTheme.typography.bodySmall)
+    SettingSwitch(R.string.settings_split_recents, state.settings.keepSplitInRecents, actions::setKeepSplitInRecents)
+    Text(stringResource(R.string.settings_split_recents_hint), style = MaterialTheme.typography.bodySmall)
+}
+
+/** A setting that is on or off: the whole row toggles it. */
+@Composable
+private fun SettingSwitch(label: Int, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, onValueChange = onChange, role = Role.Switch),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(stringResource(label), modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -432,19 +464,7 @@ private fun UpdatesSection(state: SettingsState, actions: SettingsActions) {
         style = MaterialTheme.typography.bodyMedium,
     )
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .toggleable(
-                value = state.settings.autoUpdate,
-                onValueChange = actions::setAutoUpdate,
-                role = Role.Switch,
-            ),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(stringResource(R.string.update_auto), modifier = Modifier.weight(1f))
-        Switch(checked = state.settings.autoUpdate, onCheckedChange = null)
-    }
+    SettingSwitch(R.string.update_auto, state.settings.autoUpdate, actions::setAutoUpdate)
     Text(stringResource(R.string.update_auto_hint), style = MaterialTheme.typography.bodySmall)
 
     Text(stringResource(R.string.update_channel), style = MaterialTheme.typography.labelLarge)

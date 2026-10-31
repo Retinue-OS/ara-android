@@ -22,6 +22,13 @@ data class ShellSettings(
     val autoUpdate: Boolean = false,
     /** Which builds count as updates. */
     val updateChannel: UpdateChannel = UpdateChannel.Nightly,
+    /**
+     * A tap on the home screen opens the app in split screen, beside the
+     * split-screen window (see SplitShellActivity), rather than full screen.
+     */
+    val splitLaunch: Boolean = false,
+    /** The home screen keeps the split-screen window among the recent apps, ready to pair. */
+    val keepSplitInRecents: Boolean = false,
 ) {
     /** The normalized base URL, or null when it is not configured (or invalid). */
     val base: String? get() = ShellUrls.normalizeBase(baseUrl)

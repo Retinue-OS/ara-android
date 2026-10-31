@@ -1,11 +1,13 @@
 package os.retinue.ara.ui
 
 import android.Manifest
+import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
@@ -15,12 +17,15 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
+import android.util.Log
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.widget.FrameLayout
+import android.window.SplashScreen
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -30,6 +35,7 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -55,7 +61,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -77,10 +82,10 @@ import kotlinx.coroutines.launch
 import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppInfo
+import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.shell.PageFailure
-import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatus
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
@@ -94,22 +99,20 @@ import os.retinue.ara.update.UpdateState
 import os.retinue.ara.wake.WakeAlert
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeRuntime
-import os.retinue.ara.web.NativeSpeech
-import os.retinue.ara.web.ShellBridge
-import os.retinue.ara.web.ShellChromeClient
-import os.retinue.ara.web.ShellDownloads
 import os.retinue.ara.web.ShellHost
 import os.retinue.ara.web.ShellIntents
-import os.retinue.ara.web.ShellWebView
-import os.retinue.ara.web.ShellWebViewClient
-import os.retinue.ara.web.configureShellWebView
+import os.retinue.ara.web.SplitAware
 
 /**
  * The shell (plan §1): a full-size WebView showing the Retinue web app, the
  * launcher bar below it, and native settings on top when asked for. Also the
  * home activity when the user makes the shell their default home app.
+ *
+ * The same shell runs in a second window for split screen
+ * ([SplitShellActivity], [isSplitWindow]); the page itself is shared between
+ * the two (see [ShellPage]) and shown by the one in front.
  */
-class MainActivity : ComponentActivity(), ShellHost {
+open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     companion object {
         /**
@@ -121,27 +124,38 @@ class MainActivity : ComponentActivity(), ShellHost {
 
         /** The shortcut the settings' pin test asks for. */
         private const val TEST_SHORTCUT_ID = "ara-pin-test"
+
+        /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
+        private const val SPLIT_CHECK_MS = 1_500L
+
+        private const val TAG = "MainActivity"
     }
+
+    /** This is the split-screen window ([SplitShellActivity]), not the home screen. */
+    protected open val isSplitWindow: Boolean get() = false
+
+    /** Everything the split-screen window starts opens in the other half of the screen. */
+    override val launchAdjacent: Boolean get() = isSplitWindow
 
     private val viewModel: ShellViewModel by viewModels()
 
-    // --- Web state -----------------------------------------------------------
-    private var webView by mutableStateOf<WebView?>(null)
-    private lateinit var bridge: ShellBridge
-    private lateinit var speech: NativeSpeech
-    private var settings = ShellSettings()
-    private var currentRouter = UrlRouter(null)
-    override val router: UrlRouter get() = currentRouter
+    // --- Web state (one page for both windows) -------------------------------
+    private val page = ShellPage
+    private val webView: WebView? get() = page.webView
+    private val bridge get() = page.bridge
+    private val settings: ShellSettings get() = page.settings
+    override val router: UrlRouter get() = page.router
     override val certificateAlias: String? get() = settings.certificateAlias
-    private var loadedBase: String? = null
-    private var pageReady = false
 
-    /** Between onPageStarted and onPageFinished of the main frame. */
-    private var pageLoading = false
+    /** This window shows the page (the other one shows a placeholder). */
+    private val showsPage: Boolean get() = page.owner === this
 
-    /** The main frame's load status (progress bar, failure card, diagnostics). */
-    private val pageTracker = PageStatusTracker()
-    private var pageState by mutableStateOf(PageState())
+    /**
+     * This window's place for the page in its layout: [ShellPage] moves the
+     * WebView in and out of it, Compose only hosts the container.
+     */
+    internal lateinit var pageContainer: FrameLayout
+        private set
 
     // --- Native overlays -----------------------------------------------------
     private var showSettings by mutableStateOf(false)
@@ -170,6 +184,9 @@ class MainActivity : ComponentActivity(), ShellHost {
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
 
+    /** The page waits for a file chooser or the microphone permission started from this window. */
+    internal val awaitsResult: Boolean get() = pendingFileCallback != null || pendingAudioRequest != null
+
     /** Asked for after the mic permission (two requests at once lose the second). */
     private var askNotificationsAfterMic = false
 
@@ -182,12 +199,30 @@ class MainActivity : ComponentActivity(), ShellHost {
     /** The pending wake has loaded the start page (once per wake) and waits for it. */
     private var wakeLoadIssued = false
     private var settingsLoaded = false
-    private var resumed = false
+    private var resumed by mutableStateOf(false)
+
+    /** Split-screen window: the launcher entry to start beside it once it is in front. */
+    private var pendingEntry: LauncherEntry? = null
+
+    /**
+     * Split-screen window started only to be among the recent apps, on its way
+     * to the back: it does not take the page (it still passes through
+     * onStart and onResume), until it really comes to the front.
+     */
+    internal var parking = false
+        private set
 
     private val wakeExpiry = Runnable { tryDeliverWake() }
 
-    /** This instance's wake handler, so onDestroy clears only its own. */
-    private val onWakeHandler: () -> Unit = { acceptWake(fromIntent = false) }
+    /**
+     * An app the home screen handed over that did not open beside this
+     * window (Android 12 does not split for it, some apps refuse split
+     * screen) covers it full screen: this window goes to the back, so Back
+     * from the app leads home, as after any launch from the home screen.
+     */
+    private val splitCheck = Runnable {
+        if (!isInMultiWindowMode && !resumed) moveTaskToBack(true)
+    }
 
     private val keyguardCallback = object : KeyguardManager.KeyguardDismissCallback() {
         override fun onDismissSucceeded() {
@@ -238,13 +273,12 @@ class MainActivity : ComponentActivity(), ShellHost {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        speech = NativeSpeech(this) { js -> if (::bridge.isInitialized) bridge.run(js) }
-        createWebView()
+        pageContainer = FrameLayout(this)
+        page.open(this)
         refreshHomeRole()
         micGranted = hasMic()
 
         onBackPressedDispatcher.addCallback(this, backCallback)
-        WakeRuntime.onWake = onWakeHandler
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
@@ -264,10 +298,17 @@ class MainActivity : ComponentActivity(), ShellHost {
                 val launcher by viewModel.launcher.collectAsStateWithLifecycle()
                 val apps by viewModel.apps.collectAsStateWithLifecycle()
                 val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
+                val stored by viewModel.settings.collectAsStateWithLifecycle()
                 val voiceActive by WakeRuntime.voiceActive.collectAsStateWithLifecycle()
                 KeepScreenOn(voiceActive)
+                // A long-press offers the other way of opening: beside Ara or full screen (home screen only).
+                val alternateOpen = when {
+                    isSplitWindow -> null
+                    stored?.splitLaunch == true -> R.string.launcher_open_full
+                    else -> R.string.launcher_open_beside
+                }
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    ShellLayout(launcher.entries)
+                    ShellLayout(launcher.entries, alternateOpen)
                     // Sheets are windows above everything here, so they step aside for the folder editor.
                     val editor = folderEditor
                     if (showDrawer && editor == null) {
@@ -278,9 +319,11 @@ class MainActivity : ComponentActivity(), ShellHost {
                             folders = launcher.folders,
                             isPinned = { launcher.containsApp(it.packageName, it.activityName) },
                             isShortcutPinned = { launcher.containsShortcut(it.packageName, it.shortcutId) },
-                            onLaunch = ::launchApp,
+                            onLaunch = { launchApp(it) },
                             onPin = ::pinApp,
-                            onLaunchShortcut = ::launchShortcut,
+                            onLaunchShortcut = { launchShortcut(it) },
+                            alternateOpen = alternateOpen,
+                            onLaunchAlternate = { item -> launchFromDrawer(item, alternate = true) },
                             onPinShortcut = ::pinShortcut,
                             onRemoveShortcut = viewModel::forget,
                             onAddToFolder = ::addToFolder,
@@ -300,7 +343,9 @@ class MainActivity : ComponentActivity(), ShellHost {
                         } else if (editor == null) {
                             FolderSheet(
                                 folder = folder,
-                                onLaunch = ::launchFolderApp,
+                                onLaunch = { launchFolderApp(it) },
+                                alternateOpen = alternateOpen,
+                                onLaunchAlternate = { launchFolderApp(it, alternate = true) },
                                 onMove = { app, delta -> viewModel.updateLauncher { it.moveInFolder(id, app.id, delta) } },
                                 onRemove = { app -> viewModel.updateLauncher { it.removeFromFolder(id, app.id) } },
                                 onEdit = { addApps -> folderEditor = FolderEditorRequest(folder, isNew = false, addApps = addApps) },
@@ -351,32 +396,86 @@ class MainActivity : ComponentActivity(), ShellHost {
         }
 
         handleIntent(intent, initial = true, restored = savedInstanceState != null)
+        handleSplitIntent(intent, restored = savedInstanceState != null)
+    }
+
+    /** The split-screen window has been asked for: an entry to start beside it, or only a place in Recents. */
+    private fun handleSplitIntent(intent: Intent?, restored: Boolean) {
+        if (!isSplitWindow || intent == null) return
+        val raw = intent.getStringExtra(SplitShellActivity.EXTRA_ENTRY)
+        val park = intent.getBooleanExtra(SplitShellActivity.EXTRA_PARK, false)
+        if (raw != null || park) {
+            // A recreated activity must not see them again.
+            setIntent(
+                Intent(intent).apply {
+                    removeExtra(SplitShellActivity.EXTRA_ENTRY)
+                    removeExtra(SplitShellActivity.EXTRA_PARK)
+                },
+            )
+        }
+        val fromHistory = (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        val replayed = ShellDecisions.isReplayedIntent(restored, fromHistory)
+        when (ShellDecisions.splitRequest(hasEntry = raw != null, park = park, replayed = replayed)) {
+            ShellDecisions.SplitRequest.Open -> {
+                parking = false
+                pendingEntry = LauncherCodec.decodeEntry(raw)
+                if (resumed) openPendingEntry()
+            }
+            // Back at once: only the Recents tile stays, and the page stays with the home screen.
+            ShellDecisions.SplitRequest.Park -> parking = moveTaskToBack(true)
+            ShellDecisions.SplitRequest.Show -> parking = false
+        }
+    }
+
+    /**
+     * Start the entry the home screen handed over, beside this window, once it
+     * is in front: Android puts the app in the other half of the screen next
+     * to the task it is started from, which must be this one, in front.
+     */
+    private fun openPendingEntry() {
+        if (pendingEntry == null) return
+        window.decorView.post {
+            val entry = pendingEntry ?: return@post
+            pendingEntry = null
+            openEntry(entry)
+            window.decorView.removeCallbacks(splitCheck)
+            window.decorView.postDelayed(splitCheck, SPLIT_CHECK_MS)
+        }
     }
 
     // --- Layout --------------------------------------------------------------
 
+    /** [alternateOpen]: the long-press item for the other way of opening an app (null for none). */
     @Composable
-    private fun ShellLayout(entries: List<LauncherEntry>) {
+    private fun ShellLayout(entries: List<LauncherEntry>, alternateOpen: Int?) {
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Column(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
         ) {
-            val view = webView
             Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding().imePadding()) {
-                if (view != null) {
-                    key(view) {
-                        AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
-                    }
+                AndroidView(
+                    factory = {
+                        // Only ever in one place (a recreated node gets it from the old one).
+                        (pageContainer.parent as? ViewGroup)?.removeView(pageContainer)
+                        pageContainer
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (page.owner === this@MainActivity) {
+                    PageStatusOverlay()
+                } else if (page.webView != null) {
+                    PageElsewhere()
                 }
-                PageStatusOverlay()
             }
             // The bar hides while the keyboard is up, so the page keeps its height.
             if (!imeVisible) {
                 LauncherBar(
                     entries = entries,
-                    onOpen = ::openEntry,
+                    onOpen = { openEntry(it) },
+                    alternateOpen = alternateOpen,
+                    onOpenAlternate = { openEntry(it, alternate = true) },
                     onEdit = ::editLauncherEntry,
                     onRemove = ::removeLauncherEntry,
                     onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
@@ -391,13 +490,35 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     /**
+     * In place of the page while the other window shows it (both windows are
+     * visible at once only in a desktop or freeform mode, or for a moment
+     * while one replaces the other): a tap brings it here.
+     */
+    @Composable
+    private fun PageElsewhere() {
+        Box(
+            Modifier.fillMaxSize().clickable(onClickLabel = stringResource(R.string.split_page_show_here)) { page.take(this@MainActivity) },
+            contentAlignment = Alignment.Center,
+        ) {
+            // Only while this window is in front, so a window on its way out does not flash the text.
+            if (resumed) {
+                Text(
+                    stringResource(R.string.split_page_elsewhere),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+
+    /**
      * Over the web area: a progress bar while loading, and in place of a page
      * that did not load, why. A page that loaded with console errors is not
      * covered; those are in the settings' diagnostics.
      */
     @Composable
     private fun BoxScope.PageStatusOverlay() {
-        val state = pageState
+        val state = page.state
         when (val status = state.status) {
             is PageStatus.Loading -> PageProgressBar(status.progress, Modifier.align(Alignment.TopCenter))
             is PageStatus.Failed -> PageFailureCard(
@@ -435,7 +556,7 @@ class MainActivity : ComponentActivity(), ShellHost {
                     fullScreenIntentAllowed = fullScreenIntentAllowed,
                     overlayAllowed = overlayAllowed,
                     notificationsAllowed = notificationsAllowed,
-                    page = pageState,
+                    page = page.state,
                     update = update,
                     installAllowed = installAllowed,
                 ),
@@ -546,6 +667,14 @@ class MainActivity : ComponentActivity(), ShellHost {
             viewModel.setUpdateChannel(channel)
         }
 
+        override fun setSplitLaunch(on: Boolean) {
+            viewModel.setSplitLaunch(on)
+        }
+
+        override fun setKeepSplitInRecents(on: Boolean) {
+            viewModel.setKeepSplitInRecents(on)
+        }
+
         override fun checkForUpdates() = UpdateRuntime.checkNow()
 
         override fun installUpdate() = UpdateRuntime.installNow()
@@ -594,7 +723,9 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     override fun onStart() {
         super.onStart()
-        WakeRuntime.setShellVisible(true)
+        page.windowStarted(this)
+        // The window coming to the front shows the page.
+        if (!parking) page.take(this)
     }
 
     override fun onResume() {
@@ -606,22 +737,35 @@ class MainActivity : ComponentActivity(), ShellHost {
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
         installAllowed = UpdateRuntime.canInstall(this)
         viewModel.refreshModels()
-        webView?.onResume()
+        page.windowResumed(this)
+        // Also here: the other window may have had it meanwhile (both up in a desktop mode).
+        if (!parking) page.take(this)
         resumed = true
-        WakeRuntime.setShellResumed(true)
         UpdateRuntime.onShellResumed()
         tryDeliverWake()
+        openPendingEntry()
+        keepSplitWindowInRecents()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && parking) {
+            // It did come to the front after all (a parked window never gets focus).
+            parking = false
+            page.take(this)
+        }
         if (hasFocus) tryDeliverWake()
+    }
+
+    /** Split screen begins or ends: a waiting wake may go out now (see [ShellDecisions.pendingWake]). */
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        tryDeliverWake()
     }
 
     override fun onPause() {
         resumed = false
-        WakeRuntime.setShellResumed(false)
-        webView?.onPause()
+        page.windowPaused(this)
         // Only a wake shows the shell over the keyguard and turns the screen on
         // (see acceptWake); a pending wake keeps waiting for the unlock.
         setShowWhenLocked(false)
@@ -630,16 +774,16 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     override fun onStop() {
-        WakeRuntime.setShellVisible(false)
+        parking = false
+        page.windowStopped(this)
         super.onStop()
     }
 
     override fun onDestroy() {
-        if (WakeRuntime.onWake === onWakeHandler) WakeRuntime.onWake = null
         window.decorView.removeCallbacks(wakeExpiry)
-        speech.shutdown()
-        webView?.let { destroyWebView(it) }
-        webView = null
+        window.decorView.removeCallbacks(splitCheck)
+        // The page goes to the other window, or with the last one.
+        page.close(this)
         super.onDestroy()
     }
 
@@ -650,6 +794,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent, initial = false, alreadyInFront = alreadyInFront)
+        handleSplitIntent(intent, restored = false)
     }
 
     private fun handleIntent(
@@ -688,24 +833,29 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     // --- Settings → web ------------------------------------------------------
 
+    /**
+     * Both windows read the settings; the page is shared, so the first to see
+     * a change applies it to the page and the other finds nothing to do.
+     */
     private fun applySettings(s: ShellSettings) {
         val aliasChanged = s.certificateAlias != settings.certificateAlias
-        settings = s
+        page.settings = s
         settingsLoaded = true
-        currentRouter = UrlRouter(s.baseUrl)
+        page.router = UrlRouter(s.baseUrl)
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
+        keepSplitWindowInRecents()
         if (base == null) {
-            loadedBase = null
+            page.loadedBase = null
             showSettings = true
             webView?.loadUrl("about:blank")
             tryDeliverWake()
             return
         }
-        if (base != loadedBase || aliasChanged) {
-            loadedBase = base
+        if (base != page.loadedBase || aliasChanged) {
+            page.loadedBase = base
             bridge.install()
-            pageReady = false
+            page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
             if (pendingWakeAt != 0L) wakeLoadIssued = true
             webView?.loadUrl(ShellUrls.startUrl(base))
@@ -723,6 +873,8 @@ class MainActivity : ComponentActivity(), ShellHost {
      * page can open the mic ([tryDeliverWake]).
      */
     private fun acceptWake(fromIntent: Boolean) {
+        // The page answers in this window.
+        page.take(this)
         closeOverlays()
         pendingWakeAt = SystemClock.elapsedRealtime()
         WakeRuntime.wakeAccepted()
@@ -738,6 +890,9 @@ class MainActivity : ComponentActivity(), ShellHost {
         tryDeliverWake()
     }
 
+    /** A wake heard while this window is visible (see [ShellPage]). */
+    internal fun onDirectWake() = acceptWake(fromIntent = false)
+
     private fun pendingWakeDecision(): ShellDecisions.PendingWake? {
         val since = pendingWakeAt
         if (since == 0L) return null
@@ -748,6 +903,7 @@ class MainActivity : ComponentActivity(), ShellHost {
             resumed = resumed,
             windowFocused = hasWindowFocus(),
             keyguardLocked = keyguardLocked,
+            inMultiWindow = isInMultiWindowMode,
         )
     }
 
@@ -785,8 +941,8 @@ class MainActivity : ComponentActivity(), ShellHost {
         closeOverlays()
         val base = settings.base
         val url = webView?.url
-        val onOrigin = pageReady && router.isConfiguredOrigin(url)
-        val startLoading = wakeLoadIssued || (pageLoading && base != null && ShellUrls.isStartPage(base, url))
+        val onOrigin = page.pageReady && router.isConfiguredOrigin(url)
+        val startLoading = wakeLoadIssued || (page.pageLoading && base != null && ShellUrls.isStartPage(base, url))
         when (ShellDecisions.wakeDelivery(base != null, onOrigin, startLoading)) {
             ShellDecisions.WakeDelivery.DispatchEvent -> {
                 completeWake()
@@ -794,7 +950,7 @@ class MainActivity : ComponentActivity(), ShellHost {
             }
             ShellDecisions.WakeDelivery.LoadStartPage -> if (base != null) {
                 wakeLoadIssued = true
-                pageReady = false
+                page.pageReady = false
                 webView?.loadUrl(ShellUrls.startUrl(base))
             }
             ShellDecisions.WakeDelivery.WaitForPage -> Unit
@@ -807,7 +963,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     private fun loadWakePage() {
         val base = settings.base ?: return
-        pageReady = false
+        page.pageReady = false
         webView?.loadUrl(ShellUrls.wakeUrl(base))
     }
 
@@ -820,7 +976,7 @@ class MainActivity : ComponentActivity(), ShellHost {
         when (ShellDecisions.onUnhandledEvent(isWake, ShellUrls.isStartPage(base, webView?.url))) {
             ShellDecisions.UnhandledEvent.LoadWake -> loadWakePage()
             ShellDecisions.UnhandledEvent.LoadStart -> {
-                pageReady = false
+                page.pageReady = false
                 webView?.loadUrl(ShellUrls.startUrl(base))
             }
             ShellDecisions.UnhandledEvent.Nothing -> Unit
@@ -840,7 +996,9 @@ class MainActivity : ComponentActivity(), ShellHost {
         override fun handleOnBackPressed() {
             val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
                 openFolderId != null || folderEditor != null || confirmRemove != null
-            when (ShellDecisions.onBack(overlay, webView?.canGoBack() == true, isDefaultHome)) {
+            // The split-screen window is a plain app: at the root, Back leaves it.
+            val webCanGoBack = showsPage && webView?.canGoBack() == true
+            when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
                     confirmRemove != null -> confirmRemove = null
@@ -867,36 +1025,90 @@ class MainActivity : ComponentActivity(), ShellHost {
         val base = settings.base ?: return openSettings()
         val url = ShellUrls.startUrl(base)
         updatePage { onLoadRequested(url) }
-        pageReady = false
+        page.pageReady = false
         webView?.loadUrl(url)
     }
 
-    /**
-     * Apply [change] to the tracker and publish its state to Compose. Inside
-     * [change] the tracker is the innermost receiver, so `onPageStarted(url)`
-     * there is the tracker's, not this activity's.
-     */
-    private fun updatePage(change: PageStatusTracker.() -> Unit) {
-        pageTracker.change()
-        pageState = pageTracker.state
-    }
+    /** Apply [change] to the shared page's status tracker (see [ShellPage.updateState]). */
+    private fun updatePage(change: PageStatusTracker.() -> Unit) = page.updateState(change)
 
     // --- Launcher ------------------------------------------------------------
 
-    private fun openEntry(entry: LauncherEntry) {
+    /**
+     * Open a launcher entry: a folder over the bar, a page of the web app in
+     * the WebView, anything else through Android — here, beside this window,
+     * or through the split-screen window ([ShellDecisions.launchTarget]).
+     * [alternate] is the long-press choice, the other way of opening it.
+     */
+    private fun openEntry(entry: LauncherEntry, alternate: Boolean = false) {
         if (entry is LauncherEntry.Folder) {
             openFolderId = entry.id
             return
         }
         if (entry is LauncherEntry.WebPage) {
             val base = settings.base ?: return openSettings()
+            page.take(this)
             webView?.loadUrl(ShellUrls.webPathUrl(base, entry.path))
             return
         }
+        val target = ShellDecisions.launchTarget(isSplitWindow, settings.splitLaunch, alternate)
+        if (target == ShellDecisions.LaunchTarget.ThroughSplitWindow) {
+            openInSplitWindow(entry)
+            return
+        }
+        // Here or beside this window: ShellIntents asks this window (SplitAware).
         when (val r = ShellIntents.launch(this, entry, router)) {
-            is Route.Load -> webView?.loadUrl(r.url)
+            is Route.Load -> {
+                page.take(this)
+                webView?.loadUrl(r.url)
+            }
             is Route.Browser -> ShellIntents.openInBrowser(this, r.url)
             else -> Unit
+        }
+    }
+
+    /**
+     * From the home screen: bring up the split-screen window, which starts
+     * [entry] beside itself once it is in front (see [handleSplitIntent]).
+     */
+    private fun openInSplitWindow(entry: LauncherEntry) {
+        try {
+            startActivity(SplitShellActivity.openIntent(this, entry))
+        } catch (e: Exception) {
+            // Never lose the tap: open it the usual way.
+            Log.w(TAG, "split-screen window did not start", e)
+            when (val r = ShellIntents.launch(this, entry, router)) {
+                is Route.Load -> webView?.loadUrl(r.url)
+                is Route.Browser -> ShellIntents.openInBrowser(this, r.url)
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * The home screen keeps the split-screen window among the recent apps when
+     * the setting asks for it: if it is not there (never opened, or swiped
+     * away), it is started straight to the back ([SplitShellActivity.parkIntent]).
+     */
+    private fun keepSplitWindowInRecents() {
+        if (isSplitWindow || !resumed || !settingsLoaded || !settings.keepSplitInRecents) return
+        // Never in the middle of a wake or a conversation (the start pauses this window, which ends
+        // showing over the keyguard), nor over the keyguard: a later, quiet resume does it.
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (pendingWakeAt != 0L || keyguardLocked || WakeRuntime.voiceActive.value) return
+        val now = SystemClock.elapsedRealtime()
+        val since = SplitShellActivity.lastParkAt?.let { now - it }
+        if (!ShellDecisions.parkSplitWindow(true, SplitShellActivity.inRecents(this), since)) return
+        SplitShellActivity.lastParkAt = now
+        // A new task always gets a splash screen; without the icon it is a plain flash of the background.
+        val options = ActivityOptions.makeBasic()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            options.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_SOLID_COLOR)
+        }
+        try {
+            startActivity(SplitShellActivity.parkIntent(this), options.toBundle())
+        } catch (e: Exception) {
+            Log.w(TAG, "split-screen window could not be put among the recent apps", e)
         }
     }
 
@@ -927,7 +1139,7 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     private fun launchApp(app: AppInfo) {
         showDrawer = false
-        ShellIntents.launchApp(this, app.packageName, app.activityName)
+        openEntry(app.toEntry())
     }
 
     private fun launchShortcut(shortcut: PinnedShortcut) {
@@ -935,17 +1147,25 @@ class MainActivity : ComponentActivity(), ShellHost {
         openEntry(shortcut.toEntry())
     }
 
+    /** All apps' long-press choice: the other way of opening an app or web app. */
+    private fun launchFromDrawer(item: LauncherEntry.Launchable, alternate: Boolean) {
+        showDrawer = false
+        openEntry(item.asEntry(), alternate)
+    }
+
     private fun pinShortcut(shortcut: PinnedShortcut) {
         viewModel.pin(shortcut)
         Toast.makeText(this, getString(R.string.drawer_pinned, shortcut.label), Toast.LENGTH_SHORT).show()
     }
 
-    private fun launchFolderApp(item: LauncherEntry.Launchable) {
+    private fun launchFolderApp(item: LauncherEntry.Launchable, alternate: Boolean = false) {
         openFolderId = null
-        when (item) {
-            is LauncherEntry.App -> ShellIntents.launchApp(this, item.packageName, item.activityName)
-            is LauncherEntry.Shortcut -> ShellIntents.launchShortcut(this, item.packageName, item.shortcutId)
-        }
+        openEntry(item.asEntry(), alternate)
+    }
+
+    private fun LauncherEntry.Launchable.asEntry(): LauncherEntry = when (this) {
+        is LauncherEntry.App -> this
+        is LauncherEntry.Shortcut -> this
     }
 
     private fun pinApp(app: AppInfo) {
@@ -1024,46 +1244,45 @@ class MainActivity : ComponentActivity(), ShellHost {
 
     // --- WebView -------------------------------------------------------------
 
-    private fun createWebView() {
-        val view = ShellWebView(this)
-        view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        configureShellWebView(view)
-        view.webViewClient = ShellWebViewClient(this, this)
-        view.webChromeClient = ShellChromeClient(this)
-        view.setDownloadListener(ShellDownloads(this, this))
-        bridge = ShellBridge(this, view, { router }, ::onWebMessage)
-        webView = view
-    }
-
-    private fun destroyWebView(view: WebView) {
-        (view.parent as? ViewGroup)?.removeView(view)
-        view.stopLoading()
-        view.destroy()
-    }
-
-    private fun onWebMessage(message: WebMessage) {
+    /** A message from the page, to the window showing it (see [ShellPage]). */
+    internal fun onWebMessage(message: WebMessage) {
         when (message) {
             is WebMessage.VoiceActive -> WakeRuntime.setVoiceActive(message.active)
             WebMessage.OpenSettings -> openSettings()
-            is WebMessage.Speak, WebMessage.StopSpeaking, WebMessage.Voices -> speech.handle(message)
+            is WebMessage.Speak, WebMessage.StopSpeaking, WebMessage.Voices -> page.speech?.handle(message)
         }
+    }
+
+    /**
+     * The other window took the page: what the page asked of this window is
+     * answered now, as it would never be otherwise. A sign-in dialog is
+     * cancelled (the page offers a retry there), a file chooser comes back
+     * empty (the page takes no new one while one is open), a microphone
+     * request is denied (the page may ask again).
+     */
+    internal fun onPageLeft() {
+        authPrompt?.cancel()
+        pendingFileCallback?.onReceiveValue(null)
+        pendingFileCallback = null
+        pendingAudioRequest?.deny()
+        pendingAudioRequest = null
     }
 
     // --- ShellHost -----------------------------------------------------------
 
     override fun onPageStarted(url: String?) {
-        pageReady = false
-        pageLoading = true
+        page.pageReady = false
+        page.pageLoading = true
         // A new document has no microphone open: never stay paused for a page that left.
         WakeRuntime.setVoiceActive(false)
-        speech.reset()
+        page.speech?.reset()
         bridge.onPageStarted(url)
         updatePage { onPageStarted(url) }
     }
 
     override fun onPageFinished(url: String?) {
-        pageReady = router.isConfiguredOrigin(url)
-        pageLoading = false
+        page.pageReady = router.isConfiguredOrigin(url)
+        page.pageLoading = false
         bridge.onPageFinished(url)
         updatePage { onPageFinished(url) }
         // A wake waiting for this page goes out now.
@@ -1138,11 +1357,10 @@ class MainActivity : ComponentActivity(), ShellHost {
     }
 
     override fun onRenderProcessGone() {
-        webView?.let { destroyWebView(it) }
-        createWebView()
+        page.replaceWebView()
         bridge.install()
-        pageReady = false
-        pageLoading = false
+        page.pageReady = false
+        page.pageLoading = false
         settings.base?.let {
             val url = ShellUrls.startUrl(it)
             updatePage { onLoadRequested(url) }

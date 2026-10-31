@@ -2,6 +2,7 @@ package os.retinue.ara
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import org.junit.Test
@@ -124,5 +125,33 @@ class LauncherConfigTest {
         assertFalse(LauncherLinks.isValid("example.org"))
         assertFalse(LauncherLinks.isValid(":x"))
         assertFalse(LauncherLinks.isValid("a b:c"))
+    }
+
+    @Test
+    fun oneEntryTravelsToTheSplitWindowAndBack() {
+        val entries = listOf(
+            LauncherEntry.App("a", "Signal", "org.thoughtcrime.securesms", "org.thoughtcrime.securesms.RoutingActivity"),
+            LauncherEntry.Shortcut("s", "Retinue", "com.android.chrome", "webapk-1"),
+            LauncherEntry.Link("l", "Phone", "tel:"),
+            LauncherEntry.WebPage("w", "Threads", "/threads"),
+        )
+        for (entry in entries) {
+            assertEquals(entry, LauncherCodec.decodeEntry(LauncherCodec.encodeEntry(entry)))
+        }
+    }
+
+    @Test
+    fun unreadableEntriesAreNull() {
+        assertNull(LauncherCodec.decodeEntry(null))
+        assertNull(LauncherCodec.decodeEntry(""))
+        assertNull(LauncherCodec.decodeEntry("{"))
+        assertNull(LauncherCodec.decodeEntry("{\"type\":\"nonsense\",\"id\":\"x\"}"))
+    }
+
+    @Test
+    fun aHandedOverFolderIsNormalizedLikeAStoredOne() {
+        val raw = """{"type":"folder","id":"f","label":"","icon":"../x.png","apps":[]}"""
+        val folder = LauncherCodec.decodeEntry(raw) as LauncherEntry.Folder
+        assertNull(folder.icon)
     }
 }

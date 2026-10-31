@@ -213,6 +213,9 @@ fun FolderIcon(folder: LauncherEntry.Folder, size: Dp = 34.dp) {
 fun FolderSheet(
     folder: LauncherEntry.Folder,
     onLaunch: (LauncherEntry.Launchable) -> Unit,
+    /** The long-press item for the other way of opening an app (see [AlternateOpenItem]); null for none. */
+    alternateOpen: Int?,
+    onLaunchAlternate: (LauncherEntry.Launchable) -> Unit,
     onMove: (LauncherEntry.Launchable, Int) -> Unit,
     onRemove: (LauncherEntry.Launchable) -> Unit,
     /** Open the editor; true to start at the apps to add. */
@@ -261,6 +264,12 @@ fun FolderSheet(
                                 onLongClick = { menu = true },
                             )
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                if (alternateOpen != null) {
+                                    AlternateOpenItem(alternateOpen) {
+                                        menu = false
+                                        onLaunchAlternate(app)
+                                    }
+                                }
                                 if (index > 0) {
                                     MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
                                         menu = false

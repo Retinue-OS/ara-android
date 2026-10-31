@@ -106,9 +106,10 @@ object WakeRuntime {
     val status: StateFlow<WakeStatus> = _status.asStateFlow()
 
     /**
-     * Set by MainActivity while it exists: takes a wake directly while the shell
-     * is visible. Otherwise a wake goes out as a wake intent with a one-time
-     * token, through [WakeAlert] (or a direct start while visible).
+     * Set by the shell (ShellPage) while a window of it exists: takes a wake
+     * directly while the shell is visible. Otherwise a wake goes out as a wake
+     * intent with a one-time token, through [WakeAlert] (or a direct start while
+     * visible).
      */
     var onWake: (() -> Unit)? = null
 
