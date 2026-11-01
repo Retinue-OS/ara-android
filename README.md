@@ -12,8 +12,9 @@ a specialized browser and home launcher around the
 - Ara can be the **default home app**, so the Home button lands on the web
   app's home.
 - It adds the few things a browser tab cannot do: an on-device **wake phrase**,
-  **native text-to-speech** where the WebView has none, and the **client
-  certificate** (mutual TLS) for the Retinue edge.
+  **native text-to-speech** where the WebView has none, the **client
+  certificate** (mutual TLS) for the Retinue edge, and **Health Connect sync**
+  (the phone's health data, as files, to the Retinue server).
 
 The old native voice loop (SpeechRecognizer, `/message` job polling, the answer
 screen) is gone: continuous conversation is now a per-thread mode of the web
@@ -79,7 +80,8 @@ Nothing environment-specific is baked into the APK.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/1 (Android)`.
+- The user agent ends in ` RetinueShell/2 (Android)` (2: the Health Connect
+  members of the bridge exist).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -117,7 +119,11 @@ Nothing environment-specific is baked into the APK.
 The web app detects the shell and talks to it through:
 
 - `window.RetinueShell` — installed at document start on the configured origin
-  only: `{platform: 'android', version, setVoiceActive(bool), openSettings()}`.
+  only: `{platform: 'android', version, setVoiceActive(bool), openSettings()}`
+  plus the Health Connect members (see [Health Connect sync](#health-connect-sync)):
+  `healthConnectAvailable()` → `"true"`/`"false"`, `healthSync()`,
+  `healthSyncStatus()` → a JSON string, `setHealthSyncInterval(minutes)`,
+  `setHealthAutoSync(bool)`.
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -138,6 +144,10 @@ The web app detects the shell and talks to it through:
   gateway page such as `/sends`), a wake loads `<base>/?wake=1` (the web app
   strips the flag with `history.replaceState` on load) and Home loads `<base>/`
   (Home on the start page leaves it alone).
+  Health sync sends `type` `health-sync` with a `state`: `started` (with
+  `trigger`), `done` (`count`), `error` (`error`) or `skipped` (`reason`:
+  `interval`, `no-permission`, `unavailable`, `no-backend-support`). Nobody
+  has to take these.
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -150,6 +160,122 @@ Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
 (`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
 origin). A WebView without `addWebMessageListener` gets no bridge: the page
 behaves as in a browser tab.
+
+---
+
+## Links into the app
+
+A page can send the phone from a browser into Ara with an intent link, e.g. the
+web app's `/sync-health` page:
+
+```
+intent://open?url=<percent-encoded full URL>#Intent;scheme=retinue-shell;package=os.retinue.ara;S.browser_fallback_url=<percent-encoded URL>;end
+```
+
+Chrome hands Ara `retinue-shell://open?url=…` (the opaque
+`retinue-shell:open?url=…` works too; the activity declares the scheme with
+`BROWSABLE`). Ara decodes the URL and compares its origin — scheme, host,
+port, default ports filled in — **exactly** with the configured one (http is
+never upgraded to https). A match loads the URL, fragment included, in the page
+(instead of the start page when the link started Ara). Anything else loads
+nothing and sets nothing up: Ara says "This link is for <origin>, which is not
+set up in this app."; a malformed link is ignored with a short message. A link
+is never replayed by a recreated activity or from Recents. There are no Android
+App Links: the origin is configured at runtime. Implementation:
+`shell/ShellLinks.kt`.
+
+---
+
+## Health Connect sync
+
+Ara reads the phone's Android **Health Connect** data and writes it, unchanged,
+as files into the Retinue server's letterbox, where the health chamber files
+it. It is a thin pipe: it sends what Health Connect's Changes API returns
+(upserts as full records, deletions as ids) and nothing else; no merging,
+correcting or dropping. No Google Play services are involved: the client
+library binds to Health Connect itself (built into Android 14+, the Health
+Connect app below that). Without Health Connect, `healthConnectAvailable()` is
+`"false"` and nothing happens.
+
+**Types** (read only): `HeartRateRecord`, `RestingHeartRateRecord`,
+`HeartRateVariabilityRmssdRecord`, `SleepSessionRecord`, `BloodPressureRecord`,
+`BloodGlucoseRecord`, `OxygenSaturationRecord`, `StepsRecord`; plus
+`READ_HEALTH_DATA_IN_BACKGROUND` where Health Connect offers it. Whatever
+subset the user grants is synced.
+
+**When.** When Ara comes to the front, at most every 5 minutes (adjustable,
+`setHealthSyncInterval`; counted from the last sync that ran; off with
+`setHealthAutoSync(false)`; both kept on the device). Such a sync on a phone
+without Health Connect, or where nothing was ever granted, does nothing at all;
+one that is not due yet reports `skipped`/`interval`. A **deliberate** sync
+(`healthSync()`, from the web app's Settings → Phone shell or the
+`/sync-health` page) always runs; asking again within 5 s, or while one runs, is
+the same request. It is the only one that asks for permissions, through Health
+Connect's own dialog: whenever nothing is granted, and once when only some
+types are. Its trigger is `link` on `<base>/sync-health`, `manual` elsewhere.
+One sync runs at a time; Health Connect and the network are used off the main
+thread.
+
+**What.** With a stored Changes token (kept per set of granted types): every
+change since (`kind: changes`). Without one (`initial`), or when it expired
+after about 30 days (`resync`): every record of the last 30 days as upserts,
+with a fresh token taken before reading, so nothing falls between the two.
+
+**Where.** Each part (at most 5000 changes) is one file, written with a plain
+`PUT` (with `Content-Length`) into the letterbox share
+`<origin>/inbox/hc-<sent_at as 20261101T171500Z>-<batch_id>-p<part>of<parts>.health-connect.json`,
+authenticated as the WebView is: the selected client certificate and the
+WebView's cookies for the origin. Any 2xx stored the part. A 404 or 405 means
+the server has no letterbox: `skipped`/`no-backend-support`. Anything else is an
+`error`. The token advances only when every part of the round was stored;
+otherwise the next sync sends the same changes again (an upsert twice is the
+same record).
+
+**The file** (`schema` `retinue-health-connect/1`):
+
+```json
+{"schema": "retinue-health-connect/1", "batch_id": "<uuid4 per file>",
+ "sync": {"kind": "changes|initial|resync", "trigger": "resume|manual|link",
+          "requested_types": ["HeartRateRecord", "…"],
+          "window_start": "<ISO, initial/resync only>", "part": 1, "parts": 3},
+ "client": {"app": "os.retinue.ara", "version": "<versionName>", "android_sdk": 35},
+ "sent_at": "<ISO>",
+ "changes": [{"op": "upsert", "type": "HeartRateRecord", "record": {…}},
+             {"op": "delete", "id": "<Health Connect id>"}]}
+```
+
+A record has `metadata` (`id`, `data_origin` (package), `last_modified_time`,
+`client_record_id` when set, `client_record_version`, `recording_method` +
+`recording_method_name`, and `device` {`manufacturer`, `model`, `type` +
+`type_name`} when present), instants as ISO-8601 UTC (`…Z`), zone offsets as
+`*_zone_offset_seconds` when known, `start_time`/`end_time` for interval
+records and `time` for instant ones. Units are in the key names: heart rate
+`samples: [{time, bpm}]`; resting heart rate `bpm`; HRV
+`heart_rate_variability_millis`; sleep `title`, `notes` (when set) and
+`stages: [{start_time, end_time, stage, stage_name}]`; blood pressure
+`systolic_mmhg`, `diastolic_mmhg`, `body_position`, `measurement_location`;
+glucose `level_mmol_per_l`, `specimen_source`, `meal_type`, `relation_to_meal`;
+SpO2 `percentage`; steps `count`. Every enumeration is Health Connect's int
+with its name beside it in `<key>_name` (`"unknown"` for a value Ara does not
+know yet).
+
+**Status** (`healthSyncStatus()`): `{"available", "permissions":
+"granted"|"partial"|"none", "last_sync_at": ISO|null (last success),
+"last_result": "ok"|"error"|"skipped"|null, "last_error", "last_count",
+"min_interval_minutes", "auto_on_resume"}`. An `interval` skip leaves the last
+result alone; for other skips `last_error` holds the reason. The bridge is
+asynchronous, so the page script answers from a copy: the status the shell put
+into the script when it was installed, updated by the shell on every change
+(before the event that goes with it). A setter's value shows at once.
+
+**Why.** Health Connect shows Ara's explanation (`HealthRationaleActivity`,
+reached through `androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE` and, on
+Android 14+, `VIEW_PERMISSION_USAGE` / `HEALTH_PERMISSIONS`): the data goes only
+to the configured Retinue server.
+
+Implementation: `health/HealthSyncLogic.kt` (when, what, where; framework-free
+and unit-tested), `health/HealthRecords.kt` (records → JSON, unit-tested),
+`health/HealthSyncRuntime.kt` (Health Connect, upload, state).
 
 ---
 
@@ -487,7 +613,9 @@ if it wakes too easily, lower it if it is hard to trigger.
 ```
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
            ShellMessages, FileNames,                  decisions, the bridge wire format, download
-           ContentDisposition                         file names, view or save (unit-tested)
+           ContentDisposition, ShellLinks             file names, view or save, retinue-shell: links (unit-tested)
+health/    HealthSyncLogic, HealthRecords           — pure: sync gating, file envelope and name, records → JSON (unit-tested)
+           HealthSyncRuntime                        — Health Connect reads, letterbox upload, sync state
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
            FolderKind                                 codec, edits, folder types (unit-tested)
            AppCatalog, FolderIcons                  — launchable apps and their icons, folder images
@@ -504,7 +632,7 @@ net/       AraHttp                                  — KeyChain client certific
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
            LauncherBar, AppDrawer, LauncherFolders,   drawer, folders (open folder, folder editor)
-           SettingsScreen
+           SettingsScreen, HealthRationaleActivity
 assets/    retinue-shell.js                         — page side of the bridge and the speech stand-in
 ```
 

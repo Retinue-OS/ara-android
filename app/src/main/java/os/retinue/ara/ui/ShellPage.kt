@@ -8,6 +8,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.health.HealthSyncEvent
+import os.retinue.ara.health.HealthSyncListener
+import os.retinue.ara.health.HealthSyncRuntime
+import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.UrlRouter
@@ -98,12 +102,24 @@ object ShellPage {
         state = tracker.state
     }
 
+    /** Health sync status and events go to the page, whichever window shows it. */
+    private val healthListener = object : HealthSyncListener {
+        override fun onHealthStatus(status: HealthSyncStatus) {
+            if (webView != null) bridge.healthStatusChanged(status)
+        }
+
+        override fun onHealthEvent(event: HealthSyncEvent) {
+            if (webView != null) bridge.healthEvent(event)
+        }
+    }
+
     /** [window] was created: the first one creates the page and shows it. */
     fun open(window: MainActivity) {
         windows += window
         if (speech == null) speech = NativeSpeech(window) { js -> bridge.run(js) }
         if (webView == null) create(window)
         WakeRuntime.onWake = onWake
+        HealthSyncRuntime.listener = healthListener
     }
 
     /**
@@ -116,6 +132,7 @@ object ShellPage {
         resumed -= window
         if (windows.isEmpty()) {
             if (WakeRuntime.onWake === onWake) WakeRuntime.onWake = null
+            if (HealthSyncRuntime.listener === healthListener) HealthSyncRuntime.listener = null
             speech?.shutdown()
             speech = null
             webView?.let(::destroy)
@@ -214,7 +231,9 @@ object ShellPage {
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         bind(view, window)
-        bridge = ShellBridge(window, view, { router }) { message -> owner?.onWebMessage(message) }
+        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }) { message ->
+            owner?.onWebMessage(message)
+        }
         owner = window
         webView = view
         window.pageContainer.addView(view)

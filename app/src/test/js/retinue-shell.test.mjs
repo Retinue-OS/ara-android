@@ -199,3 +199,46 @@ assert.ok(silent.posts.includes('tts.voices'));
 const working = await runIsolated([{ name: 'x', lang: 'en' }]);
 assert.deepEqual([working.replaced, working.native], [false, false]);
 console.log('take-over tests passed');
+
+// ---- Health Connect: synchronous answers from the baked and pushed status ----
+assert.equal(window.RetinueShell.healthConnectAvailable(), 'false'); // the bare asset: defaults
+assert.equal(JSON.parse(window.RetinueShell.healthSyncStatus()).min_interval_minutes, 5);
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, TypeError, console };
+  ctx.window = ctx;
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  const status = {
+    available: true, permissions: 'partial', last_sync_at: '2026-11-01T10:00:00Z', last_result: 'ok',
+    last_error: null, last_count: 12, min_interval_minutes: 5, auto_on_resume: true,
+  };
+  // As web/ShellBridge.kt substitutes it: the status JSON as a string literal.
+  const baked = src.replace('"__RETINUE_HEALTH_STATUS__"', JSON.stringify(JSON.stringify(status)));
+  vm.createContext(ctx);
+  vm.runInContext(baked, ctx);
+  const shell = ctx.RetinueShell;
+  assert.equal(shell.healthConnectAvailable(), 'true');
+  assert.deepEqual(JSON.parse(shell.healthSyncStatus()), status);
+  shell.healthSync();
+  shell.setHealthSyncInterval(15.7);
+  shell.setHealthSyncInterval(0); // ignored
+  shell.setHealthSyncInterval('x'); // ignored
+  shell.setHealthAutoSync(0);
+  assert.deepEqual(posts, [
+    { type: 'health.sync' },
+    { type: 'health.interval', minutes: 15 },
+    { type: 'health.auto', on: false },
+  ]);
+  // Answered at once, before the shell confirms.
+  assert.equal(JSON.parse(shell.healthSyncStatus()).min_interval_minutes, 15);
+  assert.equal(JSON.parse(shell.healthSyncStatus()).auto_on_resume, false);
+  // The shell pushes the new status (ShellMessages.healthStatus); unknown keys are ignored.
+  ctx.__retinueShellReceive({ type: 'health.status', status: { ...status, available: false, last_count: 3, extra: 1 } });
+  const after = JSON.parse(shell.healthSyncStatus());
+  assert.equal(shell.healthConnectAvailable(), 'false');
+  assert.equal(after.last_count, 3);
+  assert.equal('extra' in after, false);
+}
+console.log('health bridge tests passed');

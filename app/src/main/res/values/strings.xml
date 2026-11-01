@@ -6,6 +6,17 @@
     <string name="no_app_for_link">No app on this device can open that.</string>
     <string name="msg_base_url_needed">Set the Retinue base URL to show the web app.</string>
 
+    <!-- retinue-shell: links (shell/ShellLinks). -->
+    <string name="link_other_origin">This link is for %1$s, which is not set up in this app.</string>
+    <string name="link_malformed">This link could not be opened.</string>
+
+    <!-- Health Connect: why Ara asks (HealthRationaleActivity). -->
+    <string name="health_rationale_title">Health data in Ara</string>
+    <string name="health_rationale_text">Ara reads the health data you allow in Health Connect (heart rate, resting heart rate, heart rate variability, sleep, blood pressure, blood glucose, oxygen saturation, steps) and sends it only to the Retinue server set up in this app, where it is kept in your health records. Nothing goes to anyone else, and Ara never writes to Health Connect.</string>
+    <string name="health_rationale_server">Retinue server: %1$s</string>
+    <string name="health_rationale_no_server">No Retinue server is set up yet, so nothing is sent.</string>
+    <string name="health_rationale_ok">OK</string>
+
     <!-- Launcher bar. -->
     <string name="launcher_all_apps">All apps</string>
     <string name="launcher_edit">Edit</string>

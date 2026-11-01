@@ -116,6 +116,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.webkit)
     implementation(libs.onnxruntime.android)
+    implementation(libs.health.connect.client)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)

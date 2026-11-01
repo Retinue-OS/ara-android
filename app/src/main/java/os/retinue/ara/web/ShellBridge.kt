@@ -7,7 +7,10 @@ import android.webkit.WebView
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import kotlinx.serialization.json.JsonPrimitive
 import os.retinue.ara.BuildConfig
+import os.retinue.ara.health.HealthSyncEvent
+import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
@@ -26,15 +29,24 @@ import os.retinue.ara.shell.WebMessage
  * The web app then behaves as in a browser tab. Without
  * `addDocumentStartJavaScript` alone, the script is injected into the main
  * frame when a page starts and again when it finishes loading (it is idempotent).
+ *
+ * The page's `healthConnectAvailable()` and `healthSyncStatus()` answer at once,
+ * so the script carries the sync status as it was when it was installed
+ * ([healthStatus] supplies it), and every change is pushed to the page too.
  */
 class ShellBridge(
     context: Context,
     private val webView: WebView,
     private val router: () -> UrlRouter,
+    private val healthStatus: () -> HealthSyncStatus,
     private val onMessage: (WebMessage) -> Unit,
 ) {
-    private val script: String = context.assets.open(ASSET).bufferedReader().use { it.readText() }
+    private val template: String = context.assets.open(ASSET).bufferedReader().use { it.readText() }
         .replace("__RETINUE_SHELL_VERSION__", BuildConfig.VERSION_NAME)
+
+    /** The page script, with the current health sync status (a JSON string literal in place of the placeholder). */
+    private val script: String
+        get() = template.replace(HEALTH_PLACEHOLDER, JsonPrimitive(healthStatus().toJson().toString()).toString())
 
     private val listenerSupported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
     private val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -71,6 +83,11 @@ class ShellBridge(
             Log.w(TAG, "WebView lacks WEB_MESSAGE_LISTENER: no shell bridge")
         }
 
+        installScript(origin)
+    }
+
+    @SuppressLint("RequiresFeature")
+    private fun installScript(origin: String?) {
         if (documentStartSupported && listenerInstalled) {
             scriptHandler?.remove()
             scriptHandler = null
@@ -107,6 +124,20 @@ class ShellBridge(
         }
     }
 
+    /**
+     * The health sync status changed: pages loaded from now on start with it,
+     * and the page on screen is told.
+     */
+    fun healthStatusChanged(status: HealthSyncStatus) {
+        if (scriptHandler != null) installScript(router().origin?.toString())
+        run(ShellMessages.healthStatus(status))
+    }
+
+    /** Shell → web: a `retinue-shell` event of type `health-sync` (nobody needs to take it). */
+    fun healthEvent(event: HealthSyncEvent) {
+        run(ShellMessages.eventScript(ShellMessages.HEALTH_SYNC_EVENT, event.detail()))
+    }
+
     /** Run [js] in the page — only while the main frame is on the configured origin. */
     fun run(js: String) {
         if (router().isConfiguredOrigin(webView.url)) webView.evaluateJavascript(js, null)
@@ -116,5 +147,8 @@ class ShellBridge(
         const val TAG = "ShellBridge"
         const val ASSET = "retinue-shell.js"
         const val NATIVE = "RetinueShellNative"
+
+        /** Where the script takes the health sync status (a quoted string, so the bare asset still parses). */
+        const val HEALTH_PLACEHOLDER = "\"__RETINUE_HEALTH_STATUS__\""
     }
 }

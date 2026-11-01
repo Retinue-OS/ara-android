@@ -26,6 +26,19 @@
          second permission Android 12+ updates it without asking each time. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Health Connect sync (see health/HealthSyncRuntime): read-only, the user
+         grants each type in Health Connect's own dialog; the data goes only to
+         the configured Retinue origin. Background read where Health Connect
+         offers it. -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE_VARIABILITY" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <uses-permission android:name="android.permission.health.READ_BLOOD_PRESSURE" />
+    <uses-permission android:name="android.permission.health.READ_BLOOD_GLUCOSE" />
+    <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <uses-feature
         android:name="android.hardware.microphone"
@@ -65,6 +78,8 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- Health Connect as an app (Android 13 and lower; built in from 14). -->
+        <package android:name="com.google.android.apps.healthdata" />
     </queries>
 
     <application
@@ -98,7 +113,43 @@
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- "Open this dashboard URL in the app" links (shell/ShellLinks):
+                 retinue-shell://open?url=… from Chrome's intent:// links, and
+                 the opaque retinue-shell:open?url=…. The URL loads only on the
+                 configured origin. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="retinue-shell" />
+            </intent-filter>
         </activity>
+
+        <!-- Health Connect shows this when the user asks why Ara wants health
+             data: Android 13 and lower through the Health Connect app's action,
+             Android 14+ through the alias below. Health Connect refuses to ask
+             for permissions for an app without it. -->
+        <activity
+            android:name=".ui.HealthRationaleActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ara.Translucent"
+            android:label="@string/health_rationale_title">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <activity-alias
+            android:name=".ui.HealthPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".ui.HealthRationaleActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- The shell's split-screen window (see SplitShellActivity): the home
              activity is always full screen, so a second activity in a task of its
