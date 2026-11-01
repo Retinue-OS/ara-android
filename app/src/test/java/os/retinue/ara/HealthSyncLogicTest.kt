@@ -3,6 +3,7 @@ package os.retinue.ara
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -179,10 +180,10 @@ class HealthSyncLogicTest {
     fun bridgeMessagesAndEvents() {
         assertEquals(WebMessage.HealthSync, ShellMessages.parse("""{"type":"health.sync"}"""))
         assertEquals(WebMessage.HealthSyncInterval(15), ShellMessages.parse("""{"type":"health.interval","minutes":15}"""))
-        assertEquals(null, ShellMessages.parse("""{"type":"health.interval","minutes":0}"""))
-        assertEquals(null, ShellMessages.parse("""{"type":"health.interval"}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.interval","minutes":0}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.interval"}"""))
         assertEquals(WebMessage.HealthAutoSync(false), ShellMessages.parse("""{"type":"health.auto","on":false}"""))
-        assertEquals(null, ShellMessages.parse("""{"type":"health.auto"}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.auto"}"""))
 
         val done = ShellMessages.eventScript(ShellMessages.HEALTH_SYNC_EVENT, HealthSyncEvent.Done(42).detail())
         assertTrue(done.contains("{detail:{\"type\":\"health-sync\",\"state\":\"done\",\"count\":42},cancelable:true}"), done)

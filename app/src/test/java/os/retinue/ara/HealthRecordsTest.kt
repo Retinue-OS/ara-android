@@ -139,6 +139,6 @@ class HealthRecordsTest {
 
     @Test
     fun deletionsCarryOnlyTheId() {
-        assertEquals(json("""{"op":"delete","id":"hc-9"}"""), HealthRecords.change(DeletionChange("hc-9")))
+        assertEquals<Any?>(json("""{"op":"delete","id":"hc-9"}"""), HealthRecords.change(DeletionChange("hc-9")))
     }
 }
