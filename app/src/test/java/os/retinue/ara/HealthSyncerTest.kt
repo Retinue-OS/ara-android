@@ -190,7 +190,7 @@ class HealthSyncerTest {
         assertTrue(batches[4] != pending.batchId)
         assertEquals(
             listOf("p1of3", "p1of3", "p2of3", "p3of3", "p1of1"),
-            letterbox.puts.map { it.first.substringAfterLast('-').substringBefore('.') },
+            letterbox.puts.map { Regex("p\\d+of\\d+").find(it.first)!!.value },
         )
         assertNull(rounds.pending())
         assertEquals(SyncOutcome.Done(10_002, "token-2", (outcome as SyncOutcome.Done).types, originA), outcome)
