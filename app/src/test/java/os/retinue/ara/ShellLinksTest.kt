@@ -28,9 +28,9 @@ class ShellLinksTest {
             LinkTarget.Open("https://agents.example.com/#threads"),
             ShellLinks.target("RETINUE-SHELL://open/?url=https%3A%2F%2Fagents.example.com%2F%23threads&x=1", base),
         )
-        // Default port spelled out is the same origin; the base's path does not matter.
+        // Default port spelled out is the same origin (and dropped from what loads); the base's path does not matter.
         assertEquals(
-            LinkTarget.Open("https://agents.example.com:443/a"),
+            LinkTarget.Open("https://agents.example.com/a"),
             ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fagents.example.com%3A443%2Fa", "$base/retinue"),
         )
     }
