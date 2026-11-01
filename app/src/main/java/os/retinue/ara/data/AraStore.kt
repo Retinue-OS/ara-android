@@ -121,6 +121,7 @@ class AraStore(context: Context) {
             if (count == null) it.remove(K.healthLastCount) else it[K.healthLastCount] = count
             it.putOrRemove(K.healthToken, s.token)
             it.putOrRemove(K.healthTokenTypes, s.tokenTypes)
+            it.putOrRemove(K.healthTokenOrigin, s.tokenOrigin)
             it[K.healthPermissionsAsked] = s.permissionsAsked
             it[K.healthFailures] = s.failures
             it[K.healthBackoffUntil] = s.backoffUntil
@@ -138,6 +139,7 @@ class AraStore(context: Context) {
         lastCount = p[K.healthLastCount],
         token = p[K.healthToken],
         tokenTypes = p[K.healthTokenTypes],
+        tokenOrigin = p[K.healthTokenOrigin],
         permissionsAsked = p[K.healthPermissionsAsked] ?: false,
         failures = p[K.healthFailures] ?: 0,
         backoffUntil = p[K.healthBackoffUntil] ?: 0L,
@@ -173,6 +175,7 @@ class AraStore(context: Context) {
         val healthLastCount = intPreferencesKey("health_last_count")
         val healthToken = stringPreferencesKey("health_changes_token")
         val healthTokenTypes = stringPreferencesKey("health_changes_token_types")
+        val healthTokenOrigin = stringPreferencesKey("health_changes_token_origin")
         val healthPermissionsAsked = booleanPreferencesKey("health_permissions_asked")
         val healthFailures = intPreferencesKey("health_failures")
         val healthBackoffUntil = longPreferencesKey("health_backoff_until")

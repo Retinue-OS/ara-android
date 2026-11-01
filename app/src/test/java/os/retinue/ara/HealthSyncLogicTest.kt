@@ -17,6 +17,8 @@ import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.health.HealthTrigger
+import os.retinue.ara.health.PendingAction
+import os.retinue.ara.health.ProbeResult
 import os.retinue.ara.health.PermissionState
 import os.retinue.ara.health.SkipReason
 import os.retinue.ara.health.SyncDecision
@@ -137,7 +139,7 @@ class HealthSyncLogicTest {
     @Test
     fun roundsAreKeptUntilEveryPartIsStored() {
         val round = HealthRound(
-            batchId = "b-1", sentAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(), kind = "initial",
+            batchId = "b-1", origin = "https://agents.example.com", sentAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(), kind = "initial",
             typeKey = "HeartRateRecord,StepsRecord", parts = 3, partsSent = 1, count = 10_001, nextToken = "tok",
         )
         assertFalse(round.complete)
@@ -150,6 +152,14 @@ class HealthSyncLogicTest {
         assertNull(HealthRound.decode("{\"batchId\":\"x\"}"))
         assertNull(HealthRound.decode(round.copy(partsSent = 4).encode()))
         assertNull(HealthRound.decode(round.copy(parts = 0, partsSent = 0).encode()))
+        // A round of an older build, without the origin, cannot be placed and is dropped.
+        assertNull(HealthRound.decode(round.encode().replace("\"origin\":\"https://agents.example.com\",", "")))
+
+        // A pending round is resumed only for the origin it was read for.
+        assertEquals(PendingAction.None, HealthSyncLogic.pendingAction(null, "https://agents.example.com"))
+        assertEquals(PendingAction.Resume, HealthSyncLogic.pendingAction(round, "https://agents.example.com"))
+        assertEquals(PendingAction.Discard, HealthSyncLogic.pendingAction(round, "https://other.example"))
+        assertEquals(PendingAction.Discard, HealthSyncLogic.pendingAction(round, null))
     }
 
     @Test
@@ -201,8 +211,6 @@ class HealthSyncLogicTest {
     fun readsTheLetterboxAnswer() {
         assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(201))
         assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(204))
-        // The probe's PROPFIND answer.
-        assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(207, "Multi-Status"))
         assertEquals("https://agents.example.com/inbox/", HealthSyncLogic.inboxUrl("https://agents.example.com"))
         assertTrue(HealthSyncLogic.PROBE_BODY.contains("<D:propfind xmlns:D=\"DAV:\">"))
         assertEquals(UploadResult.NoBackend, HealthSyncLogic.parseResponse(404))
@@ -210,6 +218,22 @@ class HealthSyncLogicTest {
         assertEquals(UploadResult.Failed("HTTP 302 (redirected; signed out?)"), HealthSyncLogic.parseResponse(302))
         assertEquals(UploadResult.Failed("HTTP 507 Insufficient Storage"), HealthSyncLogic.parseResponse(507, "Insufficient Storage"))
         assertEquals(UploadResult.Failed("HTTP 401"), HealthSyncLogic.parseResponse(401, ""))
+    }
+
+    @Test
+    fun readsTheProbeAnswer() {
+        assertEquals(ProbeResult.Present, HealthSyncLogic.parseProbe(207, "Multi-Status"))
+        assertEquals(ProbeResult.Present, HealthSyncLogic.parseProbe(200))
+        // Only a 404 means there is no letterbox.
+        assertEquals(ProbeResult.Absent, HealthSyncLogic.parseProbe(404))
+        // A server that takes a plain PUT need not speak PROPFIND: on to the PUT.
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(405, "Method Not Allowed"))
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(501))
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(400))
+        assertEquals(ProbeResult.Failed("HTTP 401 Unauthorized"), HealthSyncLogic.parseProbe(401, "Unauthorized"))
+        assertEquals(ProbeResult.Failed("HTTP 403"), HealthSyncLogic.parseProbe(403))
+        assertEquals(ProbeResult.Failed("HTTP 302 (redirected; signed out?)"), HealthSyncLogic.parseProbe(302))
+        assertEquals(ProbeResult.Failed("HTTP 500"), HealthSyncLogic.parseProbe(500))
     }
 
     @Test

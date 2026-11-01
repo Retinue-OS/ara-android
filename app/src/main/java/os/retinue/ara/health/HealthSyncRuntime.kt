@@ -1,7 +1,6 @@
 package os.retinue.ara.health
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.health.connect.client.HealthConnectClient
@@ -13,7 +12,6 @@ import androidx.health.connect.client.time.TimeRangeFilter
 import java.io.File
 import java.time.Duration
 import java.time.Instant
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.reflect.KClass
 import kotlinx.coroutines.CancellationException
@@ -25,7 +23,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -33,6 +33,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.net.AraHttp
@@ -124,6 +125,13 @@ object HealthSyncRuntime {
             loaded.complete(Unit)
             refresh()
         }
+        // A round on the device is for one origin: when the base URL is changed
+        // or cleared, a round for the old one goes at once, not at the next sync.
+        scope.launch {
+            store.settings.map { UrlRouter(it.base).origin?.toString() }.distinctUntilChanged().collect { origin ->
+                withContext(Dispatchers.IO) { rounds.discardUnless(origin) }
+            }
+        }
     }
 
     /**
@@ -164,7 +172,7 @@ object HealthSyncRuntime {
 
     private fun client(): HealthConnectClient = HealthConnectClient.getOrCreate(app)
 
-    private fun sdkAvailable(): Boolean =
+    internal fun sdkAvailable(): Boolean =
         HealthConnectClient.getSdkStatus(app) == HealthConnectClient.SDK_AVAILABLE
 
     private suspend fun refresh() {
@@ -239,12 +247,6 @@ object HealthSyncRuntime {
         job = scope.launch { run(trigger, requester) }
     }
 
-    private sealed class Outcome {
-        class Done(val count: Int, val token: String, val types: String) : Outcome()
-        class Skipped(val reason: SkipReason) : Outcome()
-        class Failed(val message: String) : Outcome()
-    }
-
     private suspend fun run(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
         emit(HealthSyncEvent.Started(trigger))
         save { it.copy(lastAttemptAt = System.currentTimeMillis()) }
@@ -254,10 +256,10 @@ object HealthSyncRuntime {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "health sync failed", e)
-            Outcome.Failed(e.message ?: e.javaClass.simpleName)
+            SyncOutcome.Failed(e.message ?: e.javaClass.simpleName)
         }
         when (outcome) {
-            is Outcome.Done -> {
+            is SyncOutcome.Done -> {
                 save {
                     it.copy(
                         lastSyncAt = System.currentTimeMillis(),
@@ -266,20 +268,21 @@ object HealthSyncRuntime {
                         lastCount = outcome.count,
                         token = outcome.token,
                         tokenTypes = outcome.types,
+                        tokenOrigin = outcome.origin,
                         failures = 0,
                         backoffUntil = 0L,
                     )
                 }
                 emit(HealthSyncEvent.Done(outcome.count))
             }
-            is Outcome.Skipped -> {
+            is SyncOutcome.Skipped -> {
                 save {
                     val s = it.copy(lastResult = SyncResult.Skipped, lastError = outcome.reason.key, lastCount = null)
                     if (outcome.reason == SkipReason.NoBackendSupport) s.backedOff() else s
                 }
                 emit(HealthSyncEvent.Skipped(outcome.reason))
             }
-            is Outcome.Failed -> {
+            is SyncOutcome.Failed -> {
                 save { it.copy(lastResult = SyncResult.Error, lastError = outcome.message, lastCount = null).backedOff() }
                 emit(HealthSyncEvent.Error(outcome.message))
             }
@@ -292,180 +295,149 @@ object HealthSyncRuntime {
         return copy(failures = n, backoffUntil = System.currentTimeMillis() + HealthSyncLogic.backoffMs(n, intervalMinutes))
     }
 
-    private suspend fun sync(trigger: HealthTrigger, requester: HealthPermissionRequester?): Outcome {
-        available = sdkAvailable()
-        if (!available) {
-            publish()
-            return Outcome.Skipped(SkipReason.Unavailable)
-        }
+    /** One sync (see [HealthSyncer]) against Health Connect and the configured origin's letterbox. */
+    private suspend fun sync(trigger: HealthTrigger, requester: HealthPermissionRequester?): SyncOutcome {
         val settings = store.settingsNow()
-        val origin = UrlRouter(settings.base).origin?.toString() ?: return Outcome.Failed("No Retinue base URL is set")
-        val client = client()
-        val wanted = HealthRecords.READ_PERMISSIONS
-        var granted = client.permissionController.getGrantedPermissions()
-        permissions = HealthSyncLogic.permissionState(granted, wanted)
-        if (requester != null && HealthSyncLogic.shouldRequestPermissions(trigger.deliberate, permissions, state.permissionsAsked)) {
-            save { it.copy(permissionsAsked = true) }
-            requester.request(wanted + backgroundPermission(client))
-            granted = client.permissionController.getGrantedPermissions()
-            permissions = HealthSyncLogic.permissionState(granted, wanted)
-        }
-        publish()
-        val types = HealthRecords.grantedTypes(granted)
-        if (types.isEmpty()) return Outcome.Skipped(SkipReason.NoPermission)
-
-        // Is there a letterbox at all? Asked before Health Connect is read, so
-        // a server without one costs one small request, not a 30-day read.
-        val http = withContext(Dispatchers.IO) { httpClient(settings.certificateAlias) }
-        val inbox = HealthSyncLogic.inboxUrl(origin)
-        when (val probe = withContext(Dispatchers.IO) { probe(http, inbox, cookies(inbox)) }) {
-            UploadResult.Stored -> Unit
-            UploadResult.NoBackend -> return Outcome.Skipped(SkipReason.NoBackendSupport)
-            is UploadResult.Failed -> return Outcome.Failed("Letterbox: ${probe.message}")
-        }
-
-        // A round an earlier sync left half-uploaded goes first, as it was,
-        // under its own batch id; its token is then the one to continue from.
-        var count = 0
-        withContext(Dispatchers.IO) { rounds.pending() }?.let { pending ->
-            upload(http, origin, pending)?.let { return it }
-            count += pending.count
-            save { it.copy(token = pending.nextToken, tokenTypes = pending.typeKey) }
-        }
-
-        val typeKey = HealthSyncLogic.typeKey(types)
-        val storedToken = state.token?.takeIf { state.tokenTypes == typeKey }
-        val collected = withContext(Dispatchers.IO) { collect(client, types, storedToken) }
-        // Nothing new: the token still moves on.
-        if (collected.changes.isEmpty()) return Outcome.Done(count, collected.token, typeKey)
-        val round = withContext(Dispatchers.IO) { begin(collected, trigger, types, typeKey) }
-        upload(http, origin, round)?.let { return it }
-        return Outcome.Done(count + round.count, round.nextToken, typeKey)
-    }
-
-    /**
-     * Write the round [collected] makes to the device, one part at a time
-     * (a part's file is built and written, then forgotten, before the next),
-     * ready to upload. IO thread.
-     */
-    private fun begin(collected: Collected, trigger: HealthTrigger, types: List<HealthType>, typeKey: String): HealthRound {
-        val parts = HealthSyncLogic.partCount(collected.changes.size)
-        val sentAt = Instant.now()
-        val round = HealthRound(
-            batchId = UUID.randomUUID().toString(),
-            sentAt = sentAt.toEpochMilli(),
-            kind = collected.kind.key,
-            typeKey = typeKey,
-            parts = parts,
-            partsSent = 0,
-            count = collected.changes.size,
-            nextToken = collected.token,
+        val origin = UrlRouter(settings.base).origin?.toString()
+        val syncer = HealthSyncer(
+            source = HealthConnectSource(client()),
+            letterbox = OkHttpLetterbox(settings.certificateAlias),
+            rounds = rounds,
+            client = ClientInfo(app.packageName, BuildConfig.VERSION_NAME),
         )
-        return rounds.begin(round) { part ->
-            HealthSyncLogic.envelope(
-                batchId = round.batchId,
-                kind = collected.kind,
-                trigger = trigger,
-                requestedTypes = types.map { it.name },
-                windowStart = collected.windowStart,
-                part = part,
-                parts = parts,
-                app = app.packageName,
-                version = BuildConfig.VERSION_NAME,
-                androidSdk = Build.VERSION.SDK_INT,
-                sentAt = sentAt,
-                changes = HealthSyncLogic.part(collected.changes, part),
-            ).toString().toByteArray(Charsets.UTF_8)
+        return syncer.sync(
+            trigger = trigger,
+            requester = requester,
+            origin = origin,
+            state = { state },
+            update = { change -> save(change) },
+            onGates = { a, p ->
+                available = a
+                permissions = p
+                publish()
+            },
+        )
+    }
+
+    /** Health Connect through the Jetpack client. Reads on the IO dispatcher. */
+    private class HealthConnectSource(private val client: HealthConnectClient) : HealthSource {
+
+        override fun available(): Boolean = sdkAvailable()
+
+        override suspend fun grantedPermissions(): Set<String> = client.permissionController.getGrantedPermissions()
+
+        /** Asked for with the read permissions where Health Connect supports reading in the background. */
+        override suspend fun backgroundPermission(): Set<String> {
+            val supported = try {
+                client.features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) ==
+                    HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+            } catch (e: Exception) {
+                false
+            }
+            return if (supported) setOf(HealthRecords.BACKGROUND_PERMISSION) else emptySet()
+        }
+
+        /**
+         * What to send: the changes since [storedToken], or the whole window
+         * without a usable one. A token Health Connect no longer knows (it was
+         * reset or reinstalled; an invalid-argument error) counts as expired:
+         * the window is read again, rather than every sync failing on it.
+         */
+        override suspend fun collect(types: List<HealthType>, storedToken: String?): Collected {
+            if (storedToken == null) return readWindow(types, SyncKind.Initial)
+            val changes = mutableListOf<JsonObject>()
+            var token: String = storedToken
+            while (true) {
+                val response = try {
+                    client.getChanges(token)
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "Health Connect rejected the changes token; reading the window again", e)
+                    return readWindow(types, SyncKind.Resync)
+                }
+                if (response.changesTokenExpired) return readWindow(types, SyncKind.Resync)
+                response.changes.mapNotNullTo(changes) { HealthRecords.change(it) }
+                token = response.nextChangesToken
+                if (!response.hasMore) break
+            }
+            return Collected(SyncKind.Changes, changes, token, null)
+        }
+
+        /**
+         * Every record of [types] in the window, as upserts, and a fresh token.
+         * The token is taken first: what changes while the window is read comes
+         * again with the next sync, rather than falling between the two.
+         */
+        private suspend fun readWindow(types: List<HealthType>, kind: SyncKind): Collected {
+            val token = client.getChangesToken(ChangesTokenRequest(types.map { it.recordClass }.toSet()))
+            val windowStart = Instant.now().minus(Duration.ofDays(HealthSyncLogic.WINDOW_DAYS))
+            val changes = mutableListOf<JsonObject>()
+            for (type in types) {
+                @Suppress("UNCHECKED_CAST")
+                val recordClass = type.recordClass as KClass<Record>
+                var pageToken: String? = null
+                do {
+                    val response = client.readRecords(
+                        ReadRecordsRequest(recordClass, TimeRangeFilter.after(windowStart), emptySet(), true, PAGE_SIZE, pageToken),
+                    )
+                    response.records.mapNotNullTo(changes) { HealthRecords.upsert(it) }
+                    pageToken = response.pageToken
+                } while (pageToken != null)
+            }
+            return Collected(kind, changes, token, windowStart)
         }
     }
 
     /**
-     * PUT the unsent parts of [round], first to last, each marked as sent once
-     * the server has it. Null when all are stored (the round is gone from the
-     * device); otherwise the outcome that ends the sync, with the round kept
-     * for the next one.
+     * The letterbox over OkHttp, as the WebView reaches the origin: the
+     * selected client certificate ([alias]) and the WebView's cookies, read
+     * on the main thread per request (the session may be renewed meanwhile).
+     * Network and the KeyChain on the IO dispatcher.
      */
-    private suspend fun upload(http: OkHttpClient, origin: String, round: HealthRound): Outcome? {
-        var current = round
-        while (!current.complete) {
-            val part = current.partsSent + 1
-            val url = HealthSyncLogic.uploadUrl(origin, current.fileName(part))
-            // Read per part, on the main thread: the session may be renewed meanwhile.
+    private class OkHttpLetterbox(private val alias: String?) : Letterbox {
+
+        private var http: OkHttpClient? = null
+
+        private suspend fun client(): OkHttpClient =
+            http ?: withContext(Dispatchers.IO) { httpClient(alias) }.also { http = it }
+
+        /** Is there a letterbox? A `PROPFIND` of depth 0 on it (see [HealthSyncLogic.PROBE_BODY]). */
+        override suspend fun probe(origin: String): ProbeResult {
+            val inbox = HealthSyncLogic.inboxUrl(origin)
+            val cookies = cookies(inbox)
+            val client = client()
+            return withContext(Dispatchers.IO) {
+                send(client, inbox, cookies) {
+                    method("PROPFIND", HealthSyncLogic.PROBE_BODY.toByteArray(Charsets.UTF_8).toRequestBody("application/xml".toMediaType()))
+                        .header("Depth", "0")
+                }.use { resp -> HealthSyncLogic.parseProbe(resp.code, resp.message) }
+            }
+        }
+
+        /**
+         * One part as a file. The body is a byte array of known length, so it
+         * goes with a Content-Length (WebDAV servers refuse chunked uploads).
+         */
+        override suspend fun put(url: String, body: ByteArray): UploadResult {
             val cookies = cookies(url)
-            val result = withContext(Dispatchers.IO) { put(http, url, rounds.partFile(part).readBytes(), cookies) }
-            when (result) {
-                UploadResult.Stored -> current = withContext(Dispatchers.IO) { rounds.sent(current, part) }
-                UploadResult.NoBackend -> return Outcome.Skipped(SkipReason.NoBackendSupport)
-                is UploadResult.Failed -> return Outcome.Failed("Part $part of ${current.parts}: ${result.message}")
+            val client = client()
+            return withContext(Dispatchers.IO) {
+                send(client, url, cookies) { put(body.toRequestBody("application/json".toMediaType())) }
+                    .use { resp -> HealthSyncLogic.parseResponse(resp.code, resp.message) }
             }
         }
-        withContext(Dispatchers.IO) { rounds.clear() }
-        return null
-    }
 
-    /** The WebView's cookies for [url]. Main thread (CookieManager is not for the IO dispatcher). */
-    private fun cookies(url: String): String? = CookieManager.getInstance().getCookie(url)
+        /** The WebView's cookies for [url]. Main thread (CookieManager is not for the IO dispatcher). */
+        private fun cookies(url: String): String? = CookieManager.getInstance().getCookie(url)
 
-    /** Asked for with the read permissions where Health Connect supports reading in the background. */
-    private fun backgroundPermission(client: HealthConnectClient): Set<String> {
-        val supported = try {
-            client.features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) ==
-                HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
-        } catch (e: Exception) {
-            false
+        private fun send(client: OkHttpClient, url: String, cookies: String?, configure: Request.Builder.() -> Request.Builder): Response {
+            val request = Request.Builder()
+                .url(url)
+                .configure()
+                .header("User-Agent", "Ara/${BuildConfig.VERSION_NAME} (Android)")
+                .apply { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }
+                .build()
+            return client.newCall(request).execute()
         }
-        return if (supported) setOf(HealthRecords.BACKGROUND_PERMISSION) else emptySet()
-    }
-
-    private class Collected(val kind: SyncKind, val changes: List<JsonObject>, val token: String, val windowStart: Instant?)
-
-    /**
-     * What to send: the changes since [storedToken], or the whole window
-     * without a usable one. A token Health Connect no longer knows (it was
-     * reset or reinstalled; an invalid-argument error) counts as expired:
-     * the window is read again, rather than every sync failing on it.
-     */
-    private suspend fun collect(client: HealthConnectClient, types: List<HealthType>, storedToken: String?): Collected {
-        if (storedToken == null) return readWindow(client, types, SyncKind.Initial)
-        val changes = mutableListOf<JsonObject>()
-        var token: String = storedToken
-        while (true) {
-            val response = try {
-                client.getChanges(token)
-            } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "Health Connect rejected the changes token; reading the window again", e)
-                return readWindow(client, types, SyncKind.Resync)
-            }
-            if (response.changesTokenExpired) return readWindow(client, types, SyncKind.Resync)
-            response.changes.mapNotNullTo(changes) { HealthRecords.change(it) }
-            token = response.nextChangesToken
-            if (!response.hasMore) break
-        }
-        return Collected(SyncKind.Changes, changes, token, null)
-    }
-
-    /**
-     * Every record of [types] in the window, as upserts, and a fresh token.
-     * The token is taken first: what changes while the window is read comes
-     * again with the next sync, rather than falling between the two.
-     */
-    private suspend fun readWindow(client: HealthConnectClient, types: List<HealthType>, kind: SyncKind): Collected {
-        val token = client.getChangesToken(ChangesTokenRequest(types.map { it.recordClass }.toSet()))
-        val windowStart = Instant.now().minus(Duration.ofDays(HealthSyncLogic.WINDOW_DAYS))
-        val changes = mutableListOf<JsonObject>()
-        for (type in types) {
-            @Suppress("UNCHECKED_CAST")
-            val recordClass = type.recordClass as KClass<Record>
-            var pageToken: String? = null
-            do {
-                val response = client.readRecords(
-                    ReadRecordsRequest(recordClass, TimeRangeFilter.after(windowStart), emptySet(), true, PAGE_SIZE, pageToken),
-                )
-                response.records.mapNotNullTo(changes) { HealthRecords.upsert(it) }
-                pageToken = response.pageToken
-            } while (pageToken != null)
-        }
-        return Collected(kind, changes, token, windowStart)
     }
 
     /** The client certificate as the WebView presents it; none when none is selected. No redirects either way. */
@@ -476,31 +448,5 @@ object HealthSyncRuntime {
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
-    }
-
-    /**
-     * One part as a file. The body is a byte array of known length, so it
-     * goes with a Content-Length (WebDAV servers refuse chunked uploads).
-     */
-    private fun put(http: OkHttpClient, url: String, body: ByteArray, cookies: String?): UploadResult =
-        send(http, url, cookies) { put(body.toRequestBody("application/json".toMediaType())) }
-
-    /** Is there a letterbox? A `PROPFIND` of depth 0 on it (see [HealthSyncLogic.PROBE_BODY]). */
-    private fun probe(http: OkHttpClient, inbox: String, cookies: String?): UploadResult =
-        send(http, inbox, cookies) {
-            method("PROPFIND", HealthSyncLogic.PROBE_BODY.toByteArray(Charsets.UTF_8).toRequestBody("application/xml".toMediaType()))
-                .header("Depth", "0")
-        }
-
-    private fun send(http: OkHttpClient, url: String, cookies: String?, configure: Request.Builder.() -> Request.Builder): UploadResult {
-        val request = Request.Builder()
-            .url(url)
-            .configure()
-            .header("User-Agent", "Ara/${BuildConfig.VERSION_NAME} (Android)")
-            .apply { if (!cookies.isNullOrBlank()) header("Cookie", cookies) }
-            .build()
-        return http.newCall(request).execute().use { resp ->
-            HealthSyncLogic.parseResponse(resp.code, resp.message)
-        }
     }
 }

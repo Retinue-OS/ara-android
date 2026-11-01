@@ -226,8 +226,10 @@ after about 30 days (`resync`): every record of the last 30 days as upserts,
 with a fresh token taken before reading, so nothing falls between the two.
 
 **Where.** Before Health Connect is read, Ara probes the letterbox share
-`<origin>/inbox/` (a `PROPFIND` of depth 0): a 404 or 405 means the server has
-no letterbox, `skipped`/`no-backend-support`, and nothing is read. Each part
+`<origin>/inbox/` (a `PROPFIND` of depth 0): a 404 means the server has no
+letterbox, `skipped`/`no-backend-support`, and nothing is read; a server that
+does not speak `PROPFIND` (405, 501) may still take the `PUT`, so the sync
+goes on; 401/403 is an `error`. Each part
 (at most 5000 changes) is then one file, written with a plain `PUT` (with
 `Content-Length`) as
 `<origin>/inbox/hc-<sent_at as 20261101T171500Z>-<batch_id>-p<part>of<parts>.health-connect.json`,
@@ -238,12 +240,16 @@ WebView's cookies for the origin. One round has one `batch_id` and one
 
 A round's parts are written to the device first (one at a time, in Ara's own
 files) and uploaded one by one, each file deleted once the server has it. The
-token advances only when every part of the round was stored. A round that
-failed halfway stays on the device, and the next sync resumes it first, from
-the first unsent part, under the same `batch_id` and `sent_at` — the server
-sees one batch and no orphans — before anything new is read from Health
-Connect. A token Health Connect no longer accepts (after a reset or reinstall)
-is treated like an expired one: the window is read again.
+token advances only when every part of the round was stored; it is kept per
+set of granted types and per origin (another server starts with the whole
+window). A round that failed halfway stays on the device, and the next sync
+resumes it first — before Health Connect is even asked, so a permission
+revoked meanwhile cannot strand data already read — from the first unsent
+part, under the same `batch_id` and `sent_at`: the server sees one batch and
+no orphans. The round records its origin; one for another server (the base
+URL was changed or cleared) is discarded, at once when the setting changes
+and again at the next sync. A token Health Connect no longer accepts (after a
+reset or reinstall) is treated like an expired one: the window is read again.
 
 After a sync that stored nothing — no letterbox, or an upload error —
 automatic syncs back off: the interval, doubled with each failure in a row,
@@ -296,7 +302,9 @@ to the configured Retinue server.
 
 Implementation: `health/HealthSyncLogic.kt` (when, what, where; framework-free
 and unit-tested), `health/HealthRecords.kt` (records → JSON, unit-tested),
-`health/HealthSyncRuntime.kt` (Health Connect, probe, upload, state) and
+`health/HealthSyncer.kt` (the order of one sync, against interfaces for Health
+Connect and the letterbox; unit-tested with fakes), `health/HealthSyncRuntime.kt`
+(the real Health Connect and OkHttp behind them, state) and
 `health/HealthRoundStore.kt` (the round on the device).
 
 ---
@@ -636,8 +644,8 @@ if it wakes too easily, lower it if it is hard to trigger.
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
            ShellMessages, FileNames,                  decisions, the bridge wire format, download
            ContentDisposition, ShellLinks             file names, view or save, retinue-shell: links (unit-tested)
-health/    HealthSyncLogic, HealthRecords           — pure: sync gating and back-off, file envelope and name,
-                                                      rounds, records → JSON (unit-tested)
+health/    HealthSyncLogic, HealthRecords,          — pure: sync gating and back-off, file envelope and name,
+           HealthSyncer                               rounds, records → JSON, the order of one sync (unit-tested)
            HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
                                                       sync state, the round kept on the device
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON

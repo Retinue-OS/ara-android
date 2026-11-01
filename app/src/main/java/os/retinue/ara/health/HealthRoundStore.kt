@@ -63,6 +63,19 @@ class HealthRoundStore(private val dir: File) {
         return next
     }
 
+    /**
+     * Drop a round that is not for [origin] (null: none configured): its parts
+     * were read for another server and must not go to this one (see
+     * [HealthSyncLogic.pendingAction]).
+     */
+    fun discardUnless(origin: String?) {
+        val round = HealthRound.decode(runCatching { meta.readText() }.getOrNull()) ?: return
+        if (HealthSyncLogic.pendingAction(round, origin) == PendingAction.Discard) {
+            Log.w(TAG, "round ${round.batchId} for ${round.origin} discarded; configured: $origin")
+            clear()
+        }
+    }
+
     /** The round is complete (or given up): nothing stays on the device. */
     fun clear() {
         dir.deleteRecursively()

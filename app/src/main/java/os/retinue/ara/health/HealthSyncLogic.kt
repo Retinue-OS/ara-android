@@ -103,7 +103,7 @@ sealed class HealthSyncEvent(val state: String) {
     }
 }
 
-/** The answer to the `PUT` of one part into the letterbox (`<origin>/inbox/`), or to the probe of the letterbox itself. */
+/** The answer to the `PUT` of one part into the letterbox (`<origin>/inbox/`). */
 sealed class UploadResult {
     data object Stored : UploadResult()
 
@@ -111,6 +111,27 @@ sealed class UploadResult {
     data object NoBackend : UploadResult()
     data class Failed(val message: String) : UploadResult()
 }
+
+/** What the probe of the letterbox found (see [HealthSyncLogic.parseProbe]). */
+sealed class ProbeResult {
+    /** A WebDAV share answered. */
+    data object Present : ProbeResult()
+
+    /** 404: nothing at `/inbox/`. */
+    data object Absent : ProbeResult()
+
+    /** The server does not speak PROPFIND (405, 501, …); a plain PUT may still work, so the sync goes on. */
+    data object Unknown : ProbeResult()
+
+    /** Not signed in (401, 403), redirected, or a server error: nothing can be sent. */
+    data class Failed(val message: String) : ProbeResult()
+}
+
+/** What the syncer does with the round an earlier sync left on the device (see [HealthSyncLogic.pendingAction]). */
+enum class PendingAction { None, Resume, Discard }
+
+/** What one read of Health Connect produced: the changes to send and the token to store once they are. */
+data class Collected(val kind: SyncKind, val changes: List<JsonObject>, val token: String, val windowStart: Instant?)
 
 /**
  * One round of parts on their way to the letterbox, kept on the device until
@@ -122,6 +143,8 @@ sealed class UploadResult {
 @Serializable
 data class HealthRound(
     val batchId: String,
+    /** The origin the parts were read for and go to (`https://host[:port]`); for another one they are discarded. */
+    val origin: String,
     /** The envelope's `sent_at`, epoch ms. */
     val sentAt: Long,
     val kind: String,
@@ -336,10 +359,39 @@ object HealthSyncLogic {
 
     /**
      * The body of the probe: a `PROPFIND` with depth 0 for one property, which
-     * any WebDAV share answers with 207 and a server without the share with
-     * 404 or 405. Cheaper than a sync and asked before Health Connect is read.
+     * a WebDAV share answers with 207 and a server without the share with 404.
+     * Cheaper than a sync and asked before Health Connect is read.
      */
     const val PROBE_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>"
+
+    /**
+     * Read the answer to the probe (a `PROPFIND`). Only a 404 means there is
+     * no letterbox: a server that takes a plain `PUT` into `/inbox/` need not
+     * speak WebDAV at all (405, 501, or any other refusal of the method), so
+     * those are unknown and the sync goes on to the `PUT`. Not being signed
+     * in (401, 403), a redirect or a server error fails the sync.
+     */
+    fun parseProbe(code: Int, message: String? = null): ProbeResult = when {
+        code in 200..299 -> ProbeResult.Present
+        code == 404 -> ProbeResult.Absent
+        code == 401 || code == 403 -> ProbeResult.Failed(status(code, message))
+        code in 300..399 -> ProbeResult.Failed("HTTP $code (redirected; signed out?)")
+        code == 501 || code in 400..499 -> ProbeResult.Unknown
+        else -> ProbeResult.Failed(status(code, message))
+    }
+
+    /**
+     * The round an earlier sync left: resumed when it is for the configured
+     * [origin], discarded when it is for another one (what was read for one
+     * server is not the next one's) or none is configured.
+     */
+    fun pendingAction(round: HealthRound?, origin: String?): PendingAction = when {
+        round == null -> PendingAction.None
+        origin != null && round.origin == origin -> PendingAction.Resume
+        else -> PendingAction.Discard
+    }
+
+    private fun status(code: Int, message: String?) = if (!message.isNullOrBlank()) "HTTP $code $message" else "HTTP $code"
 
     /**
      * Read the answer to one part's `PUT`: any 2xx (201 created, 204 replaced)
@@ -347,11 +399,10 @@ object HealthSyncLogic {
      * failed, with a short reason from [message] (the status line).
      */
     fun parseResponse(code: Int, message: String? = null): UploadResult = when {
-        // 207 Multi-Status is the probe's success.
         code in 200..299 -> UploadResult.Stored
         code == 404 || code == 405 -> UploadResult.NoBackend
         code in 300..399 -> UploadResult.Failed("HTTP $code (redirected; signed out?)")
-        else -> UploadResult.Failed(if (!message.isNullOrBlank()) "HTTP $code $message" else "HTTP $code")
+        else -> UploadResult.Failed(status(code, message))
     }
 
     /** The page whose `healthSync()` counts as [HealthTrigger.Link]: `<base>/sync-health`. */
@@ -379,6 +430,8 @@ data class HealthSyncState(
     val token: String? = null,
     /** The types [token] was made for ([HealthSyncLogic.typeKey]); another set starts afresh. */
     val tokenTypes: String? = null,
+    /** The origin [token]'s changes were delivered to; another server starts afresh with the whole window. */
+    val tokenOrigin: String? = null,
     /** The shell has asked Health Connect for permissions before. */
     val permissionsAsked: Boolean = false,
     /** Syncs in a row that stored nothing for want of a letterbox or an upload error; 0 after a success. */
