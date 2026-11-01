@@ -358,18 +358,33 @@ object HealthSyncLogic {
     fun uploadUrl(origin: String, fileName: String): String = inboxUrl(origin) + fileName
 
     /**
-     * The body of the probe: a `PROPFIND` with depth 0 for one property, which
-     * a WebDAV share answers with 207 and a server without the share with 404.
-     * Cheaper than a sync and asked before Health Connect is read.
+     * The body of the probe's `PROPFIND`: depth 0, one property, which a
+     * WebDAV share answers with 207. Cheaper than a sync and asked before
+     * Health Connect is read.
      */
     const val PROBE_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>"
 
     /**
-     * Read the answer to the probe (a `PROPFIND`). Only a 404 means there is
-     * no letterbox: a server that takes a plain `PUT` into `/inbox/` need not
-     * speak WebDAV at all (405, 501, or any other refusal of the method), so
-     * those are unknown and the sync goes on to the `PUT`. Not being signed
-     * in (401, 403), a redirect or a server error fails the sync.
+     * The probe as a whole, each request answered by [send] (the method, to
+     * `/inbox/`, to its status code and message): a `PROPFIND`, and when that
+     * is a 404 an `OPTIONS` — a backend with only `PUT /inbox/<name>` routed
+     * knows nothing of the collection itself, so the `PUT` has the last word.
+     */
+    fun probe(send: (method: String) -> Pair<Int, String?>): ProbeResult {
+        val (code, message) = send("PROPFIND")
+        val found = parseProbe(code, message)
+        if (found != ProbeResult.Absent) return found
+        val (optionsCode, optionsMessage) = send("OPTIONS")
+        return parseOptions(optionsCode, optionsMessage)
+    }
+
+    /**
+     * Read the answer to the first step of the probe (a `PROPFIND`). Only a
+     * 404 means there may be no letterbox (the `OPTIONS` then decides): a
+     * server that takes a plain `PUT` into `/inbox/` need not speak WebDAV at
+     * all (405, 501, or any other refusal of the method), so those are
+     * unknown and the sync goes on to the `PUT`. Not being signed in (401,
+     * 403), a redirect or a server error fails the sync.
      */
     fun parseProbe(code: Int, message: String? = null): ProbeResult = when {
         code in 200..299 -> ProbeResult.Present
@@ -377,6 +392,22 @@ object HealthSyncLogic {
         code == 401 || code == 403 -> ProbeResult.Failed(status(code, message))
         code in 300..399 -> ProbeResult.Failed("HTTP $code (redirected; signed out?)")
         code == 501 || code in 400..499 -> ProbeResult.Unknown
+        else -> ProbeResult.Failed(status(code, message))
+    }
+
+    /**
+     * Read the answer to the probe's second step (an `OPTIONS` on `/inbox/`,
+     * after a 404 to the `PROPFIND`). A 404 again: no letterbox. Anything
+     * else that is not a sign-in problem, a redirect or a server error —
+     * a 2xx with or without `Allow`/`DAV` headers, 405, 501 — leaves it
+     * unknown, and the `PUT` itself decides (its 404/405 is
+     * `no-backend-support`; the back-off bounds the cost).
+     */
+    fun parseOptions(code: Int, message: String? = null): ProbeResult = when {
+        code == 404 -> ProbeResult.Absent
+        code == 401 || code == 403 -> ProbeResult.Failed(status(code, message))
+        code in 300..399 -> ProbeResult.Failed("HTTP $code (redirected; signed out?)")
+        code == 501 || code < 500 -> ProbeResult.Unknown
         else -> ProbeResult.Failed(status(code, message))
     }
 

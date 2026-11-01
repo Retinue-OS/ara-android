@@ -18,6 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import os.retinue.ara.health.ClientInfo
 import os.retinue.ara.health.Collected
+import os.retinue.ara.health.HealthConnectSource
 import os.retinue.ara.health.HealthRecords
 import os.retinue.ara.health.HealthRound
 import os.retinue.ara.health.HealthRoundStore
@@ -142,6 +143,27 @@ class HealthSyncerTest {
         assertEquals(1, letterbox.puts.size)
         assertNull(rounds.pending())
         assertEquals(SyncOutcome.Skipped(SkipReason.Unavailable), outcome)
+    }
+
+    @Test
+    fun theRealSourceMakesNoClientBeforeTheAvailabilityGate() = runBlocking {
+        // HealthConnectClient.getOrCreate throws on a device without Health
+        // Connect: the real composition must not touch it before available().
+        var created = 0
+        val source = HealthConnectSource(
+            available = { false },
+            create = { created++; throw IllegalStateException("no Health Connect on this device") },
+        )
+        assertFalse(source.available())
+        assertEquals(0, created)
+        leaveRound(originA, parts = 1, sent = 0)
+        val letterbox = FakeLetterbox()
+        val outcome = sync(source, letterbox)
+        // The pending round still went out, and the sync ended as unavailable, not as an error.
+        assertEquals(1, letterbox.puts.size)
+        assertNull(rounds.pending())
+        assertEquals(SyncOutcome.Skipped(SkipReason.Unavailable), outcome)
+        assertEquals(0, created)
     }
 
     @Test

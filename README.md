@@ -226,10 +226,14 @@ after about 30 days (`resync`): every record of the last 30 days as upserts,
 with a fresh token taken before reading, so nothing falls between the two.
 
 **Where.** Before Health Connect is read, Ara probes the letterbox share
-`<origin>/inbox/` (a `PROPFIND` of depth 0): a 404 means the server has no
+`<origin>/inbox/`: a `PROPFIND` of depth 0, and when that is a 404 an
+`OPTIONS` on the same path (a backend with only `PUT /inbox/<name>` routed
+knows nothing of the collection). A 404 to both means the server has no
 letterbox, `skipped`/`no-backend-support`, and nothing is read; a server that
-does not speak `PROPFIND` (405, 501) may still take the `PUT`, so the sync
-goes on; 401/403 is an `error`. Each part
+does not speak `PROPFIND` (405, 501), or answers the `OPTIONS` with anything
+but a 404, may still take the `PUT`, so the sync goes on and the `PUT`'s own
+404/405 decides; 401/403, a redirect or a server error is an `error` at
+either step. Each part
 (at most 5000 changes) is then one file, written with a plain `PUT` (with
 `Content-Length`) as
 `<origin>/inbox/hc-<sent_at as 20261101T171500Z>-<batch_id>-p<part>of<parts>.health-connect.json`,

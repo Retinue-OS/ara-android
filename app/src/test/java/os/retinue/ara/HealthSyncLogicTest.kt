@@ -237,6 +237,33 @@ class HealthSyncLogicTest {
     }
 
     @Test
+    fun theProbeAsksOptionsAfterAPropfind404() {
+        fun probe(vararg answers: Int): Pair<ProbeResult, List<String>> {
+            val asked = mutableListOf<String>()
+            val queue = answers.toMutableList()
+            val result = HealthSyncLogic.probe { method ->
+                asked += method
+                queue.removeAt(0) to null
+            }
+            return result to asked
+        }
+        // A backend with only PUT /inbox/<name> routed: 404 to the PROPFIND, 200 to the OPTIONS — on to the PUT.
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 200))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 405))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 501))
+        // Nothing there at all.
+        assertEquals(ProbeResult.Absent to listOf("PROPFIND", "OPTIONS"), probe(404, 404))
+        // Sign-in and server trouble fail at either step.
+        assertEquals(ProbeResult.Failed("HTTP 401") to listOf("PROPFIND", "OPTIONS"), probe(404, 401))
+        assertEquals(ProbeResult.Failed("HTTP 302 (redirected; signed out?)") to listOf("PROPFIND", "OPTIONS"), probe(404, 302))
+        assertEquals(ProbeResult.Failed("HTTP 500") to listOf("PROPFIND", "OPTIONS"), probe(404, 500))
+        assertEquals(ProbeResult.Failed("HTTP 403") to listOf("PROPFIND"), probe(403))
+        // A share, or a server without PROPFIND, needs no second request.
+        assertEquals(ProbeResult.Present to listOf("PROPFIND"), probe(207))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND"), probe(405))
+    }
+
+    @Test
     fun linkTriggerFromTheSyncPage() {
         val base = "https://agents.example.com"
         assertEquals(HealthTrigger.Link, HealthSyncLogic.triggerFor("$base/sync-health#sync", base))
