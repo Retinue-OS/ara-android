@@ -51,7 +51,7 @@ interface ShellHost {
 }
 
 /** The user agent suffix of the contract (plan §4). */
-const val SHELL_UA_SUFFIX = " RetinueShell/1 (Android)"
+const val SHELL_UA_SUFFIX = " RetinueShell/2 (Android)"
 
 /** WebView configuration for the shell (plan §1). */
 @SuppressLint("SetJavaScriptEnabled")

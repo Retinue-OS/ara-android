@@ -13,6 +13,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import os.retinue.ara.health.HealthSyncStatus
 
 /**
  * A message the page's `window.RetinueShell` (see assets/retinue-shell.js) posts
@@ -41,6 +42,15 @@ sealed class WebMessage {
 
     /** The stand-in wants the voice list. */
     data object Voices : WebMessage()
+
+    /** `healthSync()`: a deliberate Health Connect sync, now. */
+    data object HealthSync : WebMessage()
+
+    /** `setHealthSyncInterval(minutes)`: automatic syncs at most this often (≥ 1). */
+    data class HealthSyncInterval(val minutes: Int) : WebMessage()
+
+    /** `setHealthAutoSync(bool)`: sync when Ara comes to the front. */
+    data class HealthAutoSync(val on: Boolean) : WebMessage()
 }
 
 /** A voice the stand-in exposes as a `SpeechSynthesisVoice`. */
@@ -82,18 +92,27 @@ object ShellMessages {
             }
             "tts.cancel", "tts.pause" -> WebMessage.StopSpeaking
             "tts.voices" -> WebMessage.Voices
+            "health.sync" -> WebMessage.HealthSync
+            "health.interval" -> {
+                val minutes = obj.long("minutes")?.takeIf { it in 1..Int.MAX_VALUE } ?: return null
+                WebMessage.HealthSyncInterval(minutes.toInt())
+            }
+            "health.auto" -> WebMessage.HealthAutoSync(obj.bool("on") ?: return null)
             else -> null
         }
     }
 
     /**
-     * `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type}}))`.
+     * `window.dispatchEvent(new CustomEvent('retinue-shell', {detail: {type, …extra}}))`.
      * The script evaluates to whether the page handled the event: it called
      * `preventDefault()` on it, or one of its `retinue-shell` listeners ran for
      * this very event (tracked by assets/retinue-shell.js). See [eventHandled].
      */
-    fun eventScript(type: String): String {
-        val detail = buildJsonObject { put("type", type) }
+    fun eventScript(type: String, extra: JsonObject? = null): String {
+        val detail = buildJsonObject {
+            put("type", type)
+            extra?.forEach { (k, v) -> if (k != "type") put(k, v) }
+        }
         return "(function(){var e=new CustomEvent('$EVENT',{detail:$detail,cancelable:true});" +
             "window.dispatchEvent(e);" +
             "return e.defaultPrevented||!!(window.__retinueShellTaken&&window.__retinueShellTaken(e));})();"
@@ -116,6 +135,17 @@ object ShellMessages {
 
     fun speechBoundary(id: Long, charIndex: Int) = receiveScript(
         buildJsonObject { put("type", "tts.boundary"); put("id", id); put("charIndex", charIndex) },
+    )
+
+    /** The type of the `retinue-shell` events about Health Connect sync. */
+    const val HEALTH_SYNC_EVENT = "health-sync"
+
+    /** The sync status the page's `healthSyncStatus()` and `healthConnectAvailable()` answer from. */
+    fun healthStatus(status: HealthSyncStatus): String = receiveScript(
+        buildJsonObject {
+            put("type", "health.status")
+            put("status", status.toJson())
+        },
     )
 
     fun voices(list: List<ShellVoice>): String = receiveScript(

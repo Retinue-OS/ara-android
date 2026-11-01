@@ -73,23 +73,30 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.health.HealthPermissionRequester
+import os.retinue.ara.health.HealthSyncLogic
+import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.ShellDecisions
+import os.retinue.ara.shell.ShellLinks
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
@@ -184,8 +191,15 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingAudioRequest: PermissionRequest? = null
 
-    /** The page waits for a file chooser or the microphone permission started from this window. */
-    internal val awaitsResult: Boolean get() = pendingFileCallback != null || pendingAudioRequest != null
+    /** Health Connect's permission dialog, started from this window for a sync, is up. */
+    private var pendingHealthPermissions: CompletableDeferred<Unit>? = null
+
+    /** The page waits for a file chooser, the microphone or Health Connect permissions started from this window. */
+    internal val awaitsResult: Boolean
+        get() = pendingFileCallback != null || pendingAudioRequest != null || pendingHealthPermissions != null
+
+    /** A `retinue-shell:` link waiting for the settings, to be checked against the configured origin. */
+    private var pendingLink: String? = null
 
     /** Asked for after the mic permission (two requests at once lose the second). */
     private var askNotificationsAfterMic = false
@@ -260,6 +274,29 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             notificationsAllowed = WakeAlert.notificationsAllowed(this)
         }
+
+    // Health Connect's own dialog; the sync reads what was granted itself.
+    private val healthPermissions =
+        registerForActivityResult(PermissionController.createRequestPermissionResultContract()) {
+            pendingHealthPermissions?.complete(Unit)
+            pendingHealthPermissions = null
+        }
+
+    /** Asks for Health Connect permissions when the page's sync needs them (see HealthSyncRuntime). */
+    private val healthPermissionRequester = HealthPermissionRequester { permissions ->
+        pendingHealthPermissions?.complete(Unit)
+        val done = CompletableDeferred<Unit>()
+        pendingHealthPermissions = done
+        try {
+            healthPermissions.launch(permissions)
+        } catch (e: Exception) {
+            // No Health Connect to ask (ActivityNotFoundException): the sync finds nothing granted.
+            Log.w(TAG, "Health Connect permission request failed", e)
+            pendingHealthPermissions = null
+            done.complete(Unit)
+        }
+        done.await()
+    }
 
     private val homeRole = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         refreshHomeRole()
@@ -742,6 +779,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         if (!parking) page.take(this)
         resumed = true
         UpdateRuntime.onShellResumed()
+        HealthSyncRuntime.onShellResumed()
         tryDeliverWake()
         openPendingEntry()
         keepSplitWindowInRecents()
@@ -782,6 +820,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     override fun onDestroy() {
         window.decorView.removeCallbacks(wakeExpiry)
         window.decorView.removeCallbacks(splitCheck)
+        // A sync waiting for the permission dialog goes on with what is granted.
+        pendingHealthPermissions?.complete(Unit)
+        pendingHealthPermissions = null
         // The page goes to the other window, or with the last one.
         page.close(this)
         super.onDestroy()
@@ -803,6 +844,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         alreadyInFront: Boolean = false,
         restored: Boolean = false,
     ) {
+        if (handleShellLink(intent, restored)) return
         val wakeAction = intent?.action == ACTION_WAKE
         val fromHistory = intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
         // The activity is exported: a wake counts only with the detector's fresh
@@ -831,6 +873,51 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         }
     }
 
+    /**
+     * A `retinue-shell:` link (see [ShellLinks]): its URL loads in the page
+     * once the settings are known, and only on the configured origin. Never
+     * replayed by a recreated activity or one brought back from Recents.
+     */
+    private fun handleShellLink(intent: Intent?, restored: Boolean): Boolean {
+        if (intent?.action != Intent.ACTION_VIEW || !ShellLinks.isShellLink(intent.dataString)) return false
+        val link = intent.dataString
+        val fromHistory = (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).setData(null))
+        if (ShellDecisions.isReplayedIntent(restored, fromHistory)) return true
+        pendingLink = link
+        if (settingsLoaded) openPendingLink()
+        return true
+    }
+
+    /** Load the pending link's URL in the page, if it may load (see [takeLinkUrl]). */
+    private fun openPendingLink() {
+        val url = takeLinkUrl() ?: return
+        closeOverlays()
+        page.take(this)
+        page.pageReady = false
+        webView?.loadUrl(url)
+    }
+
+    /**
+     * The pending link's URL when it is on the configured origin. Otherwise
+     * nothing is loaded and nothing is set up: the user is told, and null.
+     */
+    private fun takeLinkUrl(): String? {
+        val link = pendingLink ?: return null
+        pendingLink = null
+        return when (val target = ShellLinks.target(link, settings.base)) {
+            is LinkTarget.Open -> target.url
+            is LinkTarget.OtherOrigin -> {
+                Toast.makeText(this, getString(R.string.link_other_origin, target.origin), Toast.LENGTH_LONG).show()
+                null
+            }
+            LinkTarget.Malformed -> {
+                Toast.makeText(this, R.string.link_malformed, Toast.LENGTH_SHORT).show()
+                null
+            }
+        }
+    }
+
     // --- Settings → web ------------------------------------------------------
 
     /**
@@ -849,6 +936,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             page.loadedBase = null
             showSettings = true
             webView?.loadUrl("about:blank")
+            // A link cannot be for an origin that is not set up.
+            openPendingLink()
             tryDeliverWake()
             return
         }
@@ -858,8 +947,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
             if (pendingWakeAt != 0L) wakeLoadIssued = true
-            webView?.loadUrl(ShellUrls.startUrl(base))
+            // A link that brought the shell up loads instead of the start page.
+            webView?.loadUrl(takeLinkUrl() ?: ShellUrls.startUrl(base))
         } else {
+            openPendingLink()
             tryDeliverWake()
         }
     }
@@ -1250,6 +1341,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             is WebMessage.VoiceActive -> WakeRuntime.setVoiceActive(message.active)
             WebMessage.OpenSettings -> openSettings()
             is WebMessage.Speak, WebMessage.StopSpeaking, WebMessage.Voices -> page.speech?.handle(message)
+            WebMessage.HealthSync -> HealthSyncRuntime.syncNow(
+                HealthSyncLogic.triggerFor(webView?.url, settings.base),
+                healthPermissionRequester,
+            )
+            is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
+            is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
         }
     }
 

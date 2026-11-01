@@ -11,6 +11,9 @@ coroutines = "1.9.0"
 serialization = "1.7.3"
 webkit = "1.12.1"
 onnxruntime = "1.20.0"
+# 1.1.0-beta01 is the newest release that builds with compileSdk 35 and AGP 8.7;
+# 1.1.0 itself needs compileSdk 36 and AGP 8.9.1.
+healthConnect = "1.1.0-beta01"
 junit = "4.13.2"
 kotlinTest = "2.0.21"
 
@@ -33,6 +36,7 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
+health-connect-client = { group = "androidx.health.connect", name = "connect-client", version.ref = "healthConnect" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlinTest" }
 

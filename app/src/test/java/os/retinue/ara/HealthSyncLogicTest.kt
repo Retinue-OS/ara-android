@@ -1,0 +1,314 @@
+package os.retinue.ara
+
+import java.time.Instant
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import org.junit.Test
+import os.retinue.ara.health.HealthRecords
+import os.retinue.ara.health.HealthRound
+import os.retinue.ara.health.HealthSyncEvent
+import os.retinue.ara.health.HealthSyncLogic
+import os.retinue.ara.health.HealthSyncStatus
+import os.retinue.ara.health.HealthTrigger
+import os.retinue.ara.health.PendingAction
+import os.retinue.ara.health.ProbeResult
+import os.retinue.ara.health.PermissionState
+import os.retinue.ara.health.SkipReason
+import os.retinue.ara.health.SyncDecision
+import os.retinue.ara.health.SyncKind
+import os.retinue.ara.health.SyncResult
+import os.retinue.ara.health.UploadResult
+import os.retinue.ara.shell.ShellMessages
+import os.retinue.ara.shell.WebMessage
+
+class HealthSyncLogicTest {
+
+    private val minute = 60_000L
+    private val t0 = 1_800_000_000_000L
+
+    private fun decide(
+        trigger: HealthTrigger,
+        now: Long = t0,
+        running: Boolean = false,
+        lastAttemptAt: Long = 0L,
+        lastDeliberateAt: Long = 0L,
+        interval: Int = 5,
+        auto: Boolean = true,
+        backoffUntil: Long = 0L,
+        backoffReason: SkipReason = SkipReason.Interval,
+    ) = HealthSyncLogic.decide(trigger, now, running, lastAttemptAt, lastDeliberateAt, interval, auto, backoffUntil, backoffReason)
+
+    @Test
+    fun automaticSyncsWaitForTheInterval() {
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume))
+        assertEquals(SyncDecision.Skip(SkipReason.Interval), decide(HealthTrigger.Resume, lastAttemptAt = t0 - 4 * minute))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 5 * minute))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 11 * minute, interval = 10))
+        assertEquals(SyncDecision.Skip(SkipReason.Interval), decide(HealthTrigger.Resume, lastAttemptAt = t0 - 9 * minute, interval = 10))
+        // A clock set back does not block syncing.
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 + 60 * minute))
+        assertEquals(SyncDecision.Ignore, decide(HealthTrigger.Resume, auto = false))
+        assertEquals(SyncDecision.Ignore, decide(HealthTrigger.Resume, running = true))
+    }
+
+    @Test
+    fun deliberateSyncsBypassTheIntervalAndCollapse() {
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Manual, lastAttemptAt = t0 - minute))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Link, lastAttemptAt = t0 - minute, auto = false))
+        assertEquals(SyncDecision.Ignore, decide(HealthTrigger.Manual, lastDeliberateAt = t0 - 4_999))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Manual, lastDeliberateAt = t0 - 5_000))
+        assertEquals(SyncDecision.Ignore, decide(HealthTrigger.Link, running = true))
+        assertTrue(HealthTrigger.Manual.deliberate)
+        assertFalse(HealthTrigger.Resume.deliberate)
+    }
+
+    @Test
+    fun permissions() {
+        val wanted = setOf("a", "b")
+        assertEquals(PermissionState.Granted, HealthSyncLogic.permissionState(setOf("a", "b", "x"), wanted))
+        assertEquals(PermissionState.Partial, HealthSyncLogic.permissionState(setOf("b"), wanted))
+        assertEquals(PermissionState.None, HealthSyncLogic.permissionState(setOf("x"), wanted))
+        assertTrue(HealthSyncLogic.shouldRequestPermissions(true, PermissionState.None, askedBefore = true))
+        assertTrue(HealthSyncLogic.shouldRequestPermissions(true, PermissionState.Partial, askedBefore = false))
+        assertFalse(HealthSyncLogic.shouldRequestPermissions(true, PermissionState.Partial, askedBefore = true))
+        assertFalse(HealthSyncLogic.shouldRequestPermissions(true, PermissionState.Granted, askedBefore = false))
+        assertFalse(HealthSyncLogic.shouldRequestPermissions(false, PermissionState.None, askedBefore = false))
+    }
+
+    @Test
+    fun typesAndTokenKey() {
+        assertEquals(8, HealthRecords.TYPES.size)
+        val granted = HealthRecords.grantedTypes(setOf(HealthRecords.TYPES[3].readPermission, HealthRecords.TYPES[0].readPermission))
+        assertEquals(listOf("HeartRateRecord", "SleepSessionRecord"), granted.map { it.name })
+        assertEquals("HeartRateRecord,SleepSessionRecord", HealthSyncLogic.typeKey(granted.reversed()))
+        assertTrue(HealthRecords.READ_PERMISSIONS.all { it.startsWith("android.permission.health.READ_") })
+    }
+
+    @Test
+    fun automaticSyncsBackOffAfterFailures() {
+        // The interval, doubled per failure in a row, capped at six hours.
+        assertEquals(0L, HealthSyncLogic.backoffMs(0, 5))
+        assertEquals(5 * minute, HealthSyncLogic.backoffMs(1, 5))
+        assertEquals(10 * minute, HealthSyncLogic.backoffMs(2, 5))
+        assertEquals(20 * minute, HealthSyncLogic.backoffMs(3, 5))
+        assertEquals(320 * minute, HealthSyncLogic.backoffMs(7, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(8, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(100, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(2, 300))
+
+        // While backing off, an automatic sync is skipped for the reason of the last failure.
+        assertEquals(
+            SyncDecision.Skip(SkipReason.NoBackendSupport),
+            decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + minute, backoffReason = SkipReason.NoBackendSupport),
+        )
+        assertEquals(SyncDecision.Skip(SkipReason.Interval), decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + minute))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0))
+        // A clock set back after the back-off was set does not hold the sync off for days.
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + 7 * 60 * minute))
+        // A deliberate sync never waits.
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Manual, backoffUntil = t0 + 60 * minute, backoffReason = SkipReason.NoBackendSupport))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Link, backoffUntil = t0 + 60 * minute))
+
+        assertEquals(SkipReason.NoBackendSupport, HealthSyncLogic.backoffReason(SyncResult.Skipped, "no-backend-support"))
+        assertEquals(SkipReason.Interval, HealthSyncLogic.backoffReason(SyncResult.Error, "HTTP 500"))
+        assertEquals(SkipReason.Interval, HealthSyncLogic.backoffReason(SyncResult.Skipped, "no-permission"))
+    }
+
+    @Test
+    fun partsHoldAtMost5000Changes() {
+        assertEquals(0, HealthSyncLogic.partCount(0))
+        assertEquals(1, HealthSyncLogic.partCount(1))
+        assertEquals(1, HealthSyncLogic.partCount(5000))
+        assertEquals(3, HealthSyncLogic.partCount(10_001))
+        val changes = List(10_001) { it }
+        assertEquals(5000, HealthSyncLogic.part(changes, 1).size)
+        assertEquals(0, HealthSyncLogic.part(changes, 1).first())
+        assertEquals(5000, HealthSyncLogic.part(changes, 2).size)
+        assertEquals(5000, HealthSyncLogic.part(changes, 2).first())
+        assertEquals(listOf(10_000), HealthSyncLogic.part(changes, 3))
+        assertEquals(emptyList(), HealthSyncLogic.part(changes, 4))
+    }
+
+    @Test
+    fun roundsAreKeptUntilEveryPartIsStored() {
+        val round = HealthRound(
+            batchId = "b-1", origin = "https://agents.example.com", sentAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(), kind = "initial",
+            typeKey = "HeartRateRecord,StepsRecord", parts = 3, partsSent = 1, count = 10_001, nextToken = "tok",
+        )
+        assertFalse(round.complete)
+        assertTrue(round.copy(partsSent = 3).complete)
+        // The resumed part keeps the round's batch id and sent_at in its name.
+        assertEquals("hc-20261101T171500Z-b-1-p2of3.health-connect.json", round.fileName(2))
+        assertEquals(round, HealthRound.decode(round.encode()))
+        assertNull(HealthRound.decode(null))
+        assertNull(HealthRound.decode(""))
+        assertNull(HealthRound.decode("{\"batchId\":\"x\"}"))
+        assertNull(HealthRound.decode(round.copy(partsSent = 4).encode()))
+        assertNull(HealthRound.decode(round.copy(parts = 0, partsSent = 0).encode()))
+        // A round of an older build, without the origin, cannot be placed and is dropped.
+        assertNull(HealthRound.decode(round.encode().replace("\"origin\":\"https://agents.example.com\",", "")))
+
+        // A pending round is resumed only for the origin it was read for.
+        assertEquals(PendingAction.None, HealthSyncLogic.pendingAction(null, "https://agents.example.com"))
+        assertEquals(PendingAction.Resume, HealthSyncLogic.pendingAction(round, "https://agents.example.com"))
+        assertEquals(PendingAction.Discard, HealthSyncLogic.pendingAction(round, "https://other.example"))
+        assertEquals(PendingAction.Discard, HealthSyncLogic.pendingAction(round, null))
+    }
+
+    @Test
+    fun envelopeMatchesTheContract() {
+        val change = buildJsonObject { put("op", "delete"); put("id", "x1") }
+        val body = HealthSyncLogic.envelope(
+            batchId = "b-1",
+            kind = SyncKind.Initial,
+            trigger = HealthTrigger.Link,
+            requestedTypes = listOf("HeartRateRecord", "StepsRecord"),
+            windowStart = Instant.parse("2026-10-02T17:15:00Z"),
+            part = 1,
+            parts = 3,
+            app = "os.retinue.ara",
+            version = "2.0+abc1234",
+            androidSdk = 35,
+            sentAt = Instant.parse("2026-11-01T17:15:00Z"),
+            changes = listOf(change),
+        )
+        assertEquals(
+            Json.parseToJsonElement(
+                """{"schema":"retinue-health-connect/1","batch_id":"b-1",
+                "sync":{"kind":"initial","trigger":"link","requested_types":["HeartRateRecord","StepsRecord"],
+                "window_start":"2026-10-02T17:15:00Z","part":1,"parts":3},
+                "client":{"app":"os.retinue.ara","version":"2.0+abc1234","android_sdk":35},
+                "sent_at":"2026-11-01T17:15:00Z","changes":[{"op":"delete","id":"x1"}]}""",
+            ),
+            body,
+        )
+        // A changes sync has no window.
+        val changes = HealthSyncLogic.envelope(
+            "b-2", SyncKind.Changes, HealthTrigger.Resume, emptyList(), Instant.EPOCH, 1, 1,
+            "os.retinue.ara", "2.0", 35, Instant.EPOCH, emptyList(),
+        )
+        assertFalse("window_start" in changes["sync"]!!.jsonObject)
+    }
+
+    @Test
+    fun letterboxFileNames() {
+        val name = HealthSyncLogic.fileName(Instant.parse("2026-11-01T17:15:00.123Z"), "0f1e", 2, 3)
+        assertEquals("hc-20261101T171500Z-0f1e-p2of3.health-connect.json", name)
+        assertEquals(
+            "https://agents.example.com/inbox/$name",
+            HealthSyncLogic.uploadUrl("https://agents.example.com", name),
+        )
+    }
+
+    @Test
+    fun readsTheLetterboxAnswer() {
+        assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(201))
+        assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(204))
+        assertEquals("https://agents.example.com/inbox/", HealthSyncLogic.inboxUrl("https://agents.example.com"))
+        assertTrue(HealthSyncLogic.PROBE_BODY.contains("<D:propfind xmlns:D=\"DAV:\">"))
+        assertEquals(UploadResult.NoBackend, HealthSyncLogic.parseResponse(404))
+        assertEquals(UploadResult.NoBackend, HealthSyncLogic.parseResponse(405))
+        assertEquals(UploadResult.Failed("HTTP 302 (redirected; signed out?)"), HealthSyncLogic.parseResponse(302))
+        assertEquals(UploadResult.Failed("HTTP 507 Insufficient Storage"), HealthSyncLogic.parseResponse(507, "Insufficient Storage"))
+        assertEquals(UploadResult.Failed("HTTP 401"), HealthSyncLogic.parseResponse(401, ""))
+    }
+
+    @Test
+    fun readsTheProbeAnswer() {
+        assertEquals(ProbeResult.Present, HealthSyncLogic.parseProbe(207, "Multi-Status"))
+        assertEquals(ProbeResult.Present, HealthSyncLogic.parseProbe(200))
+        // Only a 404 means there is no letterbox.
+        assertEquals(ProbeResult.Absent, HealthSyncLogic.parseProbe(404))
+        // A server that takes a plain PUT need not speak PROPFIND: on to the PUT.
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(405, "Method Not Allowed"))
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(501))
+        assertEquals(ProbeResult.Unknown, HealthSyncLogic.parseProbe(400))
+        assertEquals(ProbeResult.Failed("HTTP 401 Unauthorized"), HealthSyncLogic.parseProbe(401, "Unauthorized"))
+        assertEquals(ProbeResult.Failed("HTTP 403"), HealthSyncLogic.parseProbe(403))
+        assertEquals(ProbeResult.Failed("HTTP 302 (redirected; signed out?)"), HealthSyncLogic.parseProbe(302))
+        assertEquals(ProbeResult.Failed("HTTP 500"), HealthSyncLogic.parseProbe(500))
+    }
+
+    @Test
+    fun theProbeAsksOptionsAfterAPropfind404() {
+        fun probe(vararg answers: Int): Pair<ProbeResult, List<String>> {
+            val asked = mutableListOf<String>()
+            val queue = answers.toMutableList()
+            val result = HealthSyncLogic.probe { method ->
+                asked += method
+                queue.removeAt(0) to null
+            }
+            return result to asked
+        }
+        // A backend with only PUT /inbox/<name> routed: 404 to the PROPFIND, 200 to the OPTIONS — on to the PUT.
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 200))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 405))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND", "OPTIONS"), probe(404, 501))
+        // Nothing there at all.
+        assertEquals(ProbeResult.Absent to listOf("PROPFIND", "OPTIONS"), probe(404, 404))
+        // Sign-in and server trouble fail at either step.
+        assertEquals(ProbeResult.Failed("HTTP 401") to listOf("PROPFIND", "OPTIONS"), probe(404, 401))
+        assertEquals(ProbeResult.Failed("HTTP 302 (redirected; signed out?)") to listOf("PROPFIND", "OPTIONS"), probe(404, 302))
+        assertEquals(ProbeResult.Failed("HTTP 500") to listOf("PROPFIND", "OPTIONS"), probe(404, 500))
+        assertEquals(ProbeResult.Failed("HTTP 403") to listOf("PROPFIND"), probe(403))
+        // A share, or a server without PROPFIND, needs no second request.
+        assertEquals(ProbeResult.Present to listOf("PROPFIND"), probe(207))
+        assertEquals(ProbeResult.Unknown to listOf("PROPFIND"), probe(405))
+    }
+
+    @Test
+    fun linkTriggerFromTheSyncPage() {
+        val base = "https://agents.example.com"
+        assertEquals(HealthTrigger.Link, HealthSyncLogic.triggerFor("$base/sync-health#sync", base))
+        assertEquals(HealthTrigger.Link, HealthSyncLogic.triggerFor("$base/sync-health/?x=1", base))
+        assertEquals(HealthTrigger.Manual, HealthSyncLogic.triggerFor("$base/#settings", base))
+        assertEquals(HealthTrigger.Manual, HealthSyncLogic.triggerFor(null, base))
+    }
+
+    @Test
+    fun statusJson() {
+        assertEquals(
+            Json.parseToJsonElement(
+                """{"available":false,"permissions":"none","last_sync_at":null,"last_result":null,
+                "last_error":null,"last_count":null,"min_interval_minutes":5,"auto_on_resume":true}""",
+            ),
+            HealthSyncStatus().toJson(),
+        )
+        val s = HealthSyncStatus(
+            available = true, permissions = PermissionState.Partial, lastSyncAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(),
+            lastResult = SyncResult.Ok, lastCount = 12, minIntervalMinutes = 10, autoOnResume = false,
+        ).toJson()
+        assertEquals("\"2026-11-01T17:15:00Z\"", s["last_sync_at"].toString())
+        assertEquals("\"partial\"", s["permissions"].toString())
+        assertEquals("12", s["last_count"].toString())
+    }
+
+    @Test
+    fun bridgeMessagesAndEvents() {
+        assertEquals(WebMessage.HealthSync, ShellMessages.parse("""{"type":"health.sync"}"""))
+        assertEquals(WebMessage.HealthSyncInterval(15), ShellMessages.parse("""{"type":"health.interval","minutes":15}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.interval","minutes":0}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.interval"}"""))
+        assertEquals(WebMessage.HealthAutoSync(false), ShellMessages.parse("""{"type":"health.auto","on":false}"""))
+        assertNull(ShellMessages.parse("""{"type":"health.auto"}"""))
+
+        val done = ShellMessages.eventScript(ShellMessages.HEALTH_SYNC_EVENT, HealthSyncEvent.Done(42).detail())
+        assertTrue(done.contains("{detail:{\"type\":\"health-sync\",\"state\":\"done\",\"count\":42},cancelable:true}"), done)
+        val skipped = HealthSyncEvent.Skipped(SkipReason.NoBackendSupport).detail()
+        assertEquals("""{"state":"skipped","reason":"no-backend-support"}""", skipped.toString())
+        assertEquals("""{"state":"error","error":"HTTP 500"}""", HealthSyncEvent.Error("HTTP 500").detail().toString())
+        assertEquals("""{"state":"started","trigger":"manual"}""", HealthSyncEvent.Started(HealthTrigger.Manual).detail().toString())
+        val status = ShellMessages.healthStatus(HealthSyncStatus())
+        assertTrue(status.startsWith("window.__retinueShellReceive&&window.__retinueShellReceive({\"type\":\"health.status\",\"status\":{"))
+        // An extra "type" never overrides the event's.
+        val sneaky: JsonObject = buildJsonObject { put("type", "wake") }
+        assertTrue(ShellMessages.eventScript("health-sync", sneaky).contains("{\"type\":\"health-sync\"}"))
+    }
+}

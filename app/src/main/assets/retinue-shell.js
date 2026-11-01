@@ -2,7 +2,9 @@
 // only (see web/ShellBridge.kt). Two things live here:
 //
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
-//     {platform, version, setVoiceActive(bool), openSettings()}. Shell -> web
+//     {platform, version, setVoiceActive(bool), openSettings()} and Health
+//     Connect sync: healthConnectAvailable(), healthSync(), healthSyncStatus(),
+//     setHealthSyncInterval(minutes), setHealthAutoSync(bool). Shell -> web
 //     events arrive as `retinue-shell` CustomEvents dispatched on window; the
 //     shell checks whether a page listener ran for them (see below).
 //
@@ -27,6 +29,25 @@
     try { nativeBridge.postMessage(JSON.stringify(msg)); } catch (_) { /* shell gone */ }
   }
 
+  // ---- Health Connect sync status ------------------------------------------
+  //
+  // The bridge is asynchronous, but healthConnectAvailable() and
+  // healthSyncStatus() answer at once: from the status the shell put into this
+  // script when it installed it, kept current by the `health.status` messages
+  // it sends on every change (before any `health-sync` event, so a listener
+  // reads the new status).
+  var health = {
+    available: false, permissions: 'none', last_sync_at: null, last_result: null,
+    last_error: null, last_count: null, min_interval_minutes: 5, auto_on_resume: true,
+  };
+  function takeHealth(s) {
+    if (!s || typeof s !== 'object') return;
+    for (var k in health) {
+      if (Object.prototype.hasOwnProperty.call(s, k)) health[k] = s[k];
+    }
+  }
+  try { takeHealth(JSON.parse("__RETINUE_HEALTH_STATUS__")); } catch (_) { /* the bare asset: defaults */ }
+
   var shell = {
     platform: 'android',
     version: '__RETINUE_SHELL_VERSION__',
@@ -35,6 +56,21 @@
     setVoiceActive: function (active) { post({ type: 'voiceActive', active: !!active }); },
     openSettings: function () { post({ type: 'openSettings' }); },
     nativeSpeech: false,
+    healthConnectAvailable: function () { return health.available ? 'true' : 'false'; },
+    // A sync now (asks for Health Connect permissions first if needed);
+    // returns at once, the outcome comes as `health-sync` events.
+    healthSync: function () { post({ type: 'health.sync' }); },
+    healthSyncStatus: function () { return JSON.stringify(health); },
+    setHealthSyncInterval: function (minutes) {
+      var n = Math.floor(Number(minutes));
+      if (!(n >= 1)) return;
+      health.min_interval_minutes = n;
+      post({ type: 'health.interval', minutes: n });
+    },
+    setHealthAutoSync: function (on) {
+      health.auto_on_resume = !!on;
+      post({ type: 'health.auto', on: !!on });
+    },
   };
   try {
     Object.defineProperty(window, 'RetinueShell', { value: shell, configurable: true, enumerable: true, writable: false });
@@ -112,6 +148,10 @@
     configurable: false,
     enumerable: false,
     writable: false,
+  });
+
+  receivers.push(function (msg) {
+    if (msg && msg.type === 'health.status') takeHealth(msg.status);
   });
 
   // ---- speechSynthesis stand-in -------------------------------------------
