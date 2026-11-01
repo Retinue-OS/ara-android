@@ -179,16 +179,19 @@ class HealthSyncerTest {
         assertEquals(originA, pending.origin)
         val first = Json.parseToJsonElement(letterbox.puts.single().second).jsonObject
         assertEquals(pending.batchId, first["batch_id"]!!.jsonPrimitive.content)
-        // Next time: the same batch, parts 1 to 3, then the new changes as a round of their own.
+        // Next time: the same batch, parts 1 to 3 (the failed PUT of part 1 is
+        // the first entry of the log), then the new changes as a round of their own.
         letterbox.put = UploadResult.Stored
         source.changes = 1
         val outcome = sync(source, letterbox, state = state)
-        assertEquals(4, letterbox.puts.size)
+        assertEquals(5, letterbox.puts.size)
         val batches = letterbox.puts.map { Json.parseToJsonElement(it.second).jsonObject["batch_id"]!!.jsonPrimitive.content }
-        assertEquals(pending.batchId, batches[1])
-        assertEquals(pending.batchId, batches[2])
-        assertTrue(batches[3] != pending.batchId)
-        assertEquals(listOf("p1of3", "p2of3", "p3of3", "p1of1"), letterbox.puts.map { it.first.substringAfterLast('-').substringBefore('.') })
+        assertEquals(List(4) { pending.batchId }, batches.take(4))
+        assertTrue(batches[4] != pending.batchId)
+        assertEquals(
+            listOf("p1of3", "p1of3", "p2of3", "p3of3", "p1of1"),
+            letterbox.puts.map { it.first.substringAfterLast('-').substringBefore('.') },
+        )
         assertNull(rounds.pending())
         assertEquals(SyncOutcome.Done(10_002, "token-2", (outcome as SyncOutcome.Done).types, originA), outcome)
     }
