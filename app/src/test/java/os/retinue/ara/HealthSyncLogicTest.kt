@@ -12,6 +12,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Test
 import os.retinue.ara.health.HealthRecords
+import os.retinue.ara.health.HealthRound
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncStatus
@@ -38,7 +39,9 @@ class HealthSyncLogicTest {
         lastDeliberateAt: Long = 0L,
         interval: Int = 5,
         auto: Boolean = true,
-    ) = HealthSyncLogic.decide(trigger, now, running, lastAttemptAt, lastDeliberateAt, interval, auto)
+        backoffUntil: Long = 0L,
+        backoffReason: SkipReason = SkipReason.Interval,
+    ) = HealthSyncLogic.decide(trigger, now, running, lastAttemptAt, lastDeliberateAt, interval, auto, backoffUntil, backoffReason)
 
     @Test
     fun automaticSyncsWaitForTheInterval() {
@@ -87,10 +90,66 @@ class HealthSyncLogicTest {
     }
 
     @Test
+    fun automaticSyncsBackOffAfterFailures() {
+        // The interval, doubled per failure in a row, capped at six hours.
+        assertEquals(0L, HealthSyncLogic.backoffMs(0, 5))
+        assertEquals(5 * minute, HealthSyncLogic.backoffMs(1, 5))
+        assertEquals(10 * minute, HealthSyncLogic.backoffMs(2, 5))
+        assertEquals(20 * minute, HealthSyncLogic.backoffMs(3, 5))
+        assertEquals(320 * minute, HealthSyncLogic.backoffMs(7, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(8, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(100, 5))
+        assertEquals(360 * minute, HealthSyncLogic.backoffMs(2, 300))
+
+        // While backing off, an automatic sync is skipped for the reason of the last failure.
+        assertEquals(
+            SyncDecision.Skip(SkipReason.NoBackendSupport),
+            decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + minute, backoffReason = SkipReason.NoBackendSupport),
+        )
+        assertEquals(SyncDecision.Skip(SkipReason.Interval), decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + minute))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0))
+        // A clock set back after the back-off was set does not hold the sync off for days.
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Resume, lastAttemptAt = t0 - 60 * minute, backoffUntil = t0 + 7 * 60 * minute))
+        // A deliberate sync never waits.
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Manual, backoffUntil = t0 + 60 * minute, backoffReason = SkipReason.NoBackendSupport))
+        assertEquals(SyncDecision.Run, decide(HealthTrigger.Link, backoffUntil = t0 + 60 * minute))
+
+        assertEquals(SkipReason.NoBackendSupport, HealthSyncLogic.backoffReason(SyncResult.Skipped, "no-backend-support"))
+        assertEquals(SkipReason.Interval, HealthSyncLogic.backoffReason(SyncResult.Error, "HTTP 500"))
+        assertEquals(SkipReason.Interval, HealthSyncLogic.backoffReason(SyncResult.Skipped, "no-permission"))
+    }
+
+    @Test
     fun partsHoldAtMost5000Changes() {
-        assertEquals(emptyList(), HealthSyncLogic.parts(emptyList<Int>()))
-        assertEquals(listOf(5000), HealthSyncLogic.parts(List(5000) { it }).map { it.size })
-        assertEquals(listOf(5000, 5000, 1), HealthSyncLogic.parts(List(10_001) { it }).map { it.size })
+        assertEquals(0, HealthSyncLogic.partCount(0))
+        assertEquals(1, HealthSyncLogic.partCount(1))
+        assertEquals(1, HealthSyncLogic.partCount(5000))
+        assertEquals(3, HealthSyncLogic.partCount(10_001))
+        val changes = List(10_001) { it }
+        assertEquals(5000, HealthSyncLogic.part(changes, 1).size)
+        assertEquals(0, HealthSyncLogic.part(changes, 1).first())
+        assertEquals(5000, HealthSyncLogic.part(changes, 2).size)
+        assertEquals(5000, HealthSyncLogic.part(changes, 2).first())
+        assertEquals(listOf(10_000), HealthSyncLogic.part(changes, 3))
+        assertEquals(emptyList(), HealthSyncLogic.part(changes, 4))
+    }
+
+    @Test
+    fun roundsAreKeptUntilEveryPartIsStored() {
+        val round = HealthRound(
+            batchId = "b-1", sentAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(), kind = "initial",
+            typeKey = "HeartRateRecord,StepsRecord", parts = 3, partsSent = 1, count = 10_001, nextToken = "tok",
+        )
+        assertFalse(round.complete)
+        assertTrue(round.copy(partsSent = 3).complete)
+        // The resumed part keeps the round's batch id and sent_at in its name.
+        assertEquals("hc-20261101T171500Z-b-1-p2of3.health-connect.json", round.fileName(2))
+        assertEquals(round, HealthRound.decode(round.encode()))
+        assertNull(HealthRound.decode(null))
+        assertNull(HealthRound.decode(""))
+        assertNull(HealthRound.decode("{\"batchId\":\"x\"}"))
+        assertNull(HealthRound.decode(round.copy(partsSent = 4).encode()))
+        assertNull(HealthRound.decode(round.copy(parts = 0, partsSent = 0).encode()))
     }
 
     @Test
@@ -142,6 +201,10 @@ class HealthSyncLogicTest {
     fun readsTheLetterboxAnswer() {
         assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(201))
         assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(204))
+        // The probe's PROPFIND answer.
+        assertEquals(UploadResult.Stored, HealthSyncLogic.parseResponse(207, "Multi-Status"))
+        assertEquals("https://agents.example.com/inbox/", HealthSyncLogic.inboxUrl("https://agents.example.com"))
+        assertTrue(HealthSyncLogic.PROBE_BODY.contains("<D:propfind xmlns:D=\"DAV:\">"))
         assertEquals(UploadResult.NoBackend, HealthSyncLogic.parseResponse(404))
         assertEquals(UploadResult.NoBackend, HealthSyncLogic.parseResponse(405))
         assertEquals(UploadResult.Failed("HTTP 302 (redirected; signed out?)"), HealthSyncLogic.parseResponse(302))

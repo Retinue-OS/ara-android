@@ -122,6 +122,8 @@ class AraStore(context: Context) {
             it.putOrRemove(K.healthToken, s.token)
             it.putOrRemove(K.healthTokenTypes, s.tokenTypes)
             it[K.healthPermissionsAsked] = s.permissionsAsked
+            it[K.healthFailures] = s.failures
+            it[K.healthBackoffUntil] = s.backoffUntil
         }
         return after
     }
@@ -137,6 +139,8 @@ class AraStore(context: Context) {
         token = p[K.healthToken],
         tokenTypes = p[K.healthTokenTypes],
         permissionsAsked = p[K.healthPermissionsAsked] ?: false,
+        failures = p[K.healthFailures] ?: 0,
+        backoffUntil = p[K.healthBackoffUntil] ?: 0L,
     )
 
     private fun MutablePreferences.putOrRemove(key: Preferences.Key<String>, value: String?) {
@@ -170,5 +174,7 @@ class AraStore(context: Context) {
         val healthToken = stringPreferencesKey("health_changes_token")
         val healthTokenTypes = stringPreferencesKey("health_changes_token_types")
         val healthPermissionsAsked = booleanPreferencesKey("health_permissions_asked")
+        val healthFailures = intPreferencesKey("health_failures")
+        val healthBackoffUntil = longPreferencesKey("health_backoff_until")
     }
 }

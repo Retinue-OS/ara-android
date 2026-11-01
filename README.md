@@ -177,7 +177,11 @@ Chrome hands Ara `retinue-shell://open?url=…` (the opaque
 `BROWSABLE`). Ara decodes the URL and compares its origin — scheme, host,
 port, default ports filled in — **exactly** with the configured one (http is
 never upgraded to https). A match loads the URL, fragment included, in the page
-(instead of the start page when the link started Ara). Anything else loads
+(instead of the start page when the link started Ara) — in the canonical form
+the check saw, not the link's own spelling: the WebView would canonicalise a
+host such as `straße.example` (IDNA 2008) differently from the check (IDNA
+2003), so the spelling could pass as one host and load another. A URL the
+parser does not take as a whole is refused. Anything else loads
 nothing and sets nothing up: Ara says "This link is for <origin>, which is not
 set up in this app."; a malformed link is ignored with a short message. A link
 is never replayed by a recreated activity or from Recents. There are no Android
@@ -221,20 +225,37 @@ change since (`kind: changes`). Without one (`initial`), or when it expired
 after about 30 days (`resync`): every record of the last 30 days as upserts,
 with a fresh token taken before reading, so nothing falls between the two.
 
-**Where.** Each part (at most 5000 changes) is one file, written with a plain
-`PUT` (with `Content-Length`) into the letterbox share
+**Where.** Before Health Connect is read, Ara probes the letterbox share
+`<origin>/inbox/` (a `PROPFIND` of depth 0): a 404 or 405 means the server has
+no letterbox, `skipped`/`no-backend-support`, and nothing is read. Each part
+(at most 5000 changes) is then one file, written with a plain `PUT` (with
+`Content-Length`) as
 `<origin>/inbox/hc-<sent_at as 20261101T171500Z>-<batch_id>-p<part>of<parts>.health-connect.json`,
 authenticated as the WebView is: the selected client certificate and the
-WebView's cookies for the origin. Any 2xx stored the part. A 404 or 405 means
-the server has no letterbox: `skipped`/`no-backend-support`. Anything else is an
-`error`. The token advances only when every part of the round was stored;
-otherwise the next sync sends the same changes again (an upsert twice is the
-same record).
+WebView's cookies for the origin. One round has one `batch_id` and one
+`sent_at`, the same in every part. Any 2xx stored the part; anything else
+(apart from the 404/405 above) is an `error`.
+
+A round's parts are written to the device first (one at a time, in Ara's own
+files) and uploaded one by one, each file deleted once the server has it. The
+token advances only when every part of the round was stored. A round that
+failed halfway stays on the device, and the next sync resumes it first, from
+the first unsent part, under the same `batch_id` and `sent_at` — the server
+sees one batch and no orphans — before anything new is read from Health
+Connect. A token Health Connect no longer accepts (after a reset or reinstall)
+is treated like an expired one: the window is read again.
+
+After a sync that stored nothing — no letterbox, or an upload error —
+automatic syncs back off: the interval, doubled with each failure in a row,
+capped at six hours (5 → 10 → 20 min …); a resume in that time reports
+`skipped` with the reason of the last failure (`no-backend-support`, or
+`interval`). A success resets it. A deliberate sync never waits and always
+probes again.
 
 **The file** (`schema` `retinue-health-connect/1`):
 
 ```json
-{"schema": "retinue-health-connect/1", "batch_id": "<uuid4 per file>",
+{"schema": "retinue-health-connect/1", "batch_id": "<uuid4 per round>",
  "sync": {"kind": "changes|initial|resync", "trigger": "resume|manual|link",
           "requested_types": ["HeartRateRecord", "…"],
           "window_start": "<ISO, initial/resync only>", "part": 1, "parts": 3},
@@ -275,7 +296,8 @@ to the configured Retinue server.
 
 Implementation: `health/HealthSyncLogic.kt` (when, what, where; framework-free
 and unit-tested), `health/HealthRecords.kt` (records → JSON, unit-tested),
-`health/HealthSyncRuntime.kt` (Health Connect, upload, state).
+`health/HealthSyncRuntime.kt` (Health Connect, probe, upload, state) and
+`health/HealthRoundStore.kt` (the round on the device).
 
 ---
 
@@ -614,8 +636,10 @@ if it wakes too easily, lower it if it is hard to trigger.
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
            ShellMessages, FileNames,                  decisions, the bridge wire format, download
            ContentDisposition, ShellLinks             file names, view or save, retinue-shell: links (unit-tested)
-health/    HealthSyncLogic, HealthRecords           — pure: sync gating, file envelope and name, records → JSON (unit-tested)
-           HealthSyncRuntime                        — Health Connect reads, letterbox upload, sync state
+health/    HealthSyncLogic, HealthRecords           — pure: sync gating and back-off, file envelope and name,
+                                                      rounds, records → JSON (unit-tested)
+           HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
+                                                      sync state, the round kept on the device
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
            FolderKind                                 codec, edits, folder types (unit-tested)
            AppCatalog, FolderIcons                  — launchable apps and their icons, folder images

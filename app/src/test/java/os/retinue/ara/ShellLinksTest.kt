@@ -36,6 +36,29 @@ class ShellLinksTest {
     }
 
     @Test
+    fun loadsTheCanonicalUrlNotTheLinksSpelling() {
+        // Chromium canonicalises `straße.example` by IDNA 2008 (to xn--strae-oqa.example),
+        // the parser of the origin check by IDNA 2003 (to strasse.example): the link's
+        // own spelling could pass the check for one host and load another. What loads
+        // is the parser's form, which is the host that was checked.
+        val configured = "https://strasse.example"
+        assertEquals(
+            LinkTarget.Open("https://strasse.example/sync-health#sync"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fstra%C3%9Fe.example%2Fsync-health%23sync", configured),
+        )
+        // Double-encoded: pure ASCII in the link, `stra%C3%9Fe` once decoded.
+        assertEquals(
+            LinkTarget.Open("https://strasse.example/sync-health#sync"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fstra%25C3%259Fe.example%2Fsync-health%23sync", configured),
+        )
+        // A host spelled in capitals loads lowercased; path, query and fragment are kept.
+        assertEquals(
+            LinkTarget.Open("https://agents.example.com/a?b=1#c"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2FAgents.Example.com%2Fa%3Fb%3D1%23c", base),
+        )
+    }
+
+    @Test
     fun otherOriginsAreOnlyNamed() {
         assertEquals(
             LinkTarget.OtherOrigin("https://other.example"),

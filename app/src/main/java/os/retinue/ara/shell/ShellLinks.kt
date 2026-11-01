@@ -3,10 +3,15 @@ package os.retinue.ara.shell
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /** What a `retinue-shell:` link asks of the shell. */
 sealed class LinkTarget {
-    /** Load [url] (fragment included) in the WebView: it is on the configured origin. */
+    /**
+     * Load [url] in the WebView: it is on the configured origin. The URL is
+     * the canonical form of what the link carried (fragment included), with
+     * the host as the origin check saw it (see [ShellLinks.target]).
+     */
     data class Open(val url: String) : LinkTarget()
 
     /**
@@ -28,6 +33,13 @@ sealed class LinkTarget {
  * loaded only when its origin is exactly the configured one (scheme, host and
  * port, default ports filled in; http is never upgraded to https). There are
  * no App Links: the origin is configured at runtime, so the check is ours.
+ *
+ * What loads is the URL as the parser that made the check writes it, never
+ * the link's own spelling: the WebView would canonicalise a host of its own
+ * (`straße.example`, or the same percent-encoded) by other rules than the
+ * parser (IDNA 2008 against IDNA 2003), so the spelling could pass the check
+ * as one host and load as another. A URL the parser does not take as a whole
+ * is refused (no authority-only fallback here, unlike [ShellUrls.origin]).
  * Framework-free, so it is unit-tested.
  */
 object ShellLinks {
@@ -40,8 +52,13 @@ object ShellLinks {
     /** Decide what the link [raw] does for the configured [base] URL (null: none configured). */
     fun target(raw: String?, base: String?): LinkTarget {
         val url = targetUrl(raw) ?: return LinkTarget.Malformed
-        val origin = ShellUrls.origin(url) ?: return LinkTarget.Malformed
-        return if (UrlRouter(base).origin == origin) LinkTarget.Open(url) else LinkTarget.OtherOrigin(origin.toString())
+        val parsed = url.toHttpUrlOrNull() ?: return LinkTarget.Malformed
+        val origin = Origin(parsed.scheme, parsed.host.lowercase(), parsed.port)
+        return if (UrlRouter(base).origin == origin) {
+            LinkTarget.Open(parsed.toString())
+        } else {
+            LinkTarget.OtherOrigin(origin.toString())
+        }
     }
 
     /**

@@ -3,6 +3,8 @@ package os.retinue.ara.health
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -101,13 +103,53 @@ sealed class HealthSyncEvent(val state: String) {
     }
 }
 
-/** The answer to the `PUT` of one part into the letterbox (`<origin>/inbox/`). */
+/** The answer to the `PUT` of one part into the letterbox (`<origin>/inbox/`), or to the probe of the letterbox itself. */
 sealed class UploadResult {
     data object Stored : UploadResult()
 
     /** 404/405: the backend has no letterbox share. */
     data object NoBackend : UploadResult()
     data class Failed(val message: String) : UploadResult()
+}
+
+/**
+ * One round of parts on their way to the letterbox, kept on the device until
+ * every part is stored (see HealthRoundStore): a sync that fails halfway
+ * resumes it under the same `batch_id` and `sent_at`, from the first unsent
+ * part, so the server sees one batch and no orphans. [nextToken] is stored as
+ * the Changes token once the round is complete.
+ */
+@Serializable
+data class HealthRound(
+    val batchId: String,
+    /** The envelope's `sent_at`, epoch ms. */
+    val sentAt: Long,
+    val kind: String,
+    val typeKey: String,
+    val parts: Int,
+    /** Parts stored so far: the next one to send is `partsSent + 1`. */
+    val partsSent: Int,
+    /** Changes in the round, for the `done` count. */
+    val count: Int,
+    val nextToken: String,
+) {
+    val complete: Boolean get() = partsSent >= parts
+
+    fun fileName(part: Int): String = HealthSyncLogic.fileName(Instant.ofEpochMilli(sentAt), batchId, part, parts)
+
+    fun encode(): String = HealthSyncLogic.json.encodeToString(serializer(), this)
+
+    companion object {
+        /** Null for anything that is not a round (an older build's file, a torn write). */
+        fun decode(raw: String?): HealthRound? {
+            if (raw.isNullOrBlank()) return null
+            return try {
+                HealthSyncLogic.json.decodeFromString(serializer(), raw).takeIf { it.parts > 0 && it.partsSent in 0..it.parts }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
 }
 
 /** Whether a sync runs now (see [HealthSyncLogic.decide]). */
@@ -143,15 +185,23 @@ object HealthSyncLogic {
     /** An initial or resync read goes this far back (as far as Changes tokens live). */
     const val WINDOW_DAYS = 30L
 
-    /** At most this many changes go in one POST. */
+    /** At most this many changes go in one file. */
     const val MAX_PART = 5_000
+
+    /** Automatic syncs back off no further than this after repeated failures. */
+    const val MAX_BACKOFF_MINUTES = 6 * 60
+
+    internal val json = Json { ignoreUnknownKeys = true }
 
     /**
      * Run a sync for [trigger] now? Automatic ones ([HealthTrigger.Resume])
-     * only with auto-sync on and at most every [intervalMinutes] since the
-     * last attempt ([lastAttemptAt], epoch ms; a clock set back runs it).
-     * Deliberate ones always run, unless one is running ([running]) or one
-     * was asked for less than [COLLAPSE_MS] ago ([lastDeliberateAt]).
+     * only with auto-sync on, at most every [intervalMinutes] since the
+     * last attempt ([lastAttemptAt], epoch ms; a clock set back runs it),
+     * and not while they back off after a failure ([backoffUntil], epoch ms,
+     * 0 for none; see [backoffMs]): until then they are skipped for
+     * [backoffReason]. Deliberate ones always run, unless one is running
+     * ([running]) or one was asked for less than [COLLAPSE_MS] ago
+     * ([lastDeliberateAt]).
      */
     fun decide(
         trigger: HealthTrigger,
@@ -161,6 +211,8 @@ object HealthSyncLogic {
         lastDeliberateAt: Long,
         intervalMinutes: Int,
         autoOnResume: Boolean,
+        backoffUntil: Long = 0L,
+        backoffReason: SkipReason = SkipReason.Interval,
     ): SyncDecision {
         if (running) return SyncDecision.Ignore
         if (trigger.deliberate) {
@@ -168,9 +220,40 @@ object HealthSyncLogic {
             return if (lastDeliberateAt > 0 && since in 0 until COLLAPSE_MS) SyncDecision.Ignore else SyncDecision.Run
         }
         if (!autoOnResume) return SyncDecision.Ignore
+        // A clock set forward and back again cannot hold the sync off for longer than the longest back-off.
+        val backoffLeft = backoffUntil - now
+        if (backoffLeft > 0 && backoffLeft <= MAX_BACKOFF_MINUTES * 60_000L) return SyncDecision.Skip(backoffReason)
         val since = now - lastAttemptAt
         val interval = intervalMinutes.coerceAtLeast(1) * 60_000L
         return if (lastAttemptAt > 0 && since in 0 until interval) SyncDecision.Skip(SkipReason.Interval) else SyncDecision.Run
+    }
+
+    /**
+     * How long automatic syncs wait after the [failures]th failure in a row
+     * (a letterbox that is missing, or an upload that failed): the interval,
+     * doubled with each failure, capped at [MAX_BACKOFF_MINUTES]. A success
+     * resets the count. Deliberate syncs never wait.
+     */
+    fun backoffMs(failures: Int, intervalMinutes: Int): Long {
+        if (failures <= 0) return 0L
+        val base = intervalMinutes.coerceAtLeast(1).toLong()
+        val doublings = (failures - 1).coerceAtMost(20)
+        val minutes = (base shl doublings).coerceAtMost(MAX_BACKOFF_MINUTES.toLong())
+        return minutes * 60_000L
+    }
+
+    /** The skip reason an automatic sync reports while it backs off: why the last sync did not store anything. */
+    fun backoffReason(lastResult: SyncResult?, lastError: String?): SkipReason =
+        if (lastResult == SyncResult.Skipped && lastError == SkipReason.NoBackendSupport.key) SkipReason.NoBackendSupport else SkipReason.Interval
+
+    /** How many parts [changes] changes make. */
+    fun partCount(changes: Int, max: Int = MAX_PART): Int = if (changes <= 0) 0 else (changes + max - 1) / max.coerceAtLeast(1)
+
+    /** The changes of part [part] (1-based) of [changes], as a view. */
+    fun <T> part(changes: List<T>, part: Int, max: Int = MAX_PART): List<T> {
+        val size = max.coerceAtLeast(1)
+        val from = (part - 1) * size
+        return changes.subList(from.coerceIn(0, changes.size), (from + size).coerceIn(0, changes.size))
     }
 
     /** How many of the [wanted] read permissions are among [granted]. */
@@ -195,9 +278,6 @@ object HealthSyncLogic {
 
     /** The key a stored Changes token belongs to: the sorted names of the types it was made for. */
     fun typeKey(types: Collection<HealthType>): String = types.map { it.name }.sorted().joinToString(",")
-
-    /** The parts of one sync: at most [max] changes each; none when there is nothing to send. */
-    fun <T> parts(changes: List<T>, max: Int = MAX_PART): List<List<T>> = changes.chunked(max.coerceAtLeast(1))
 
     /** The body of one POST (contract §3). */
     fun envelope(
@@ -248,8 +328,18 @@ object HealthSyncLogic {
     fun fileName(sentAt: Instant, batchId: String, part: Int, parts: Int): String =
         "hc-${compactUtc.format(sentAt)}-$batchId-p${part}of$parts$FILE_SUFFIX"
 
-    /** Where one part is PUT: the letterbox of [origin] (`https://host[:port]`). */
-    fun uploadUrl(origin: String, fileName: String): String = origin.trimEnd('/') + INBOX_PATH + fileName
+    /** The letterbox of [origin] (`https://host[:port]`): what the probe asks about. */
+    fun inboxUrl(origin: String): String = origin.trimEnd('/') + INBOX_PATH
+
+    /** Where one part is PUT: the letterbox of [origin]. */
+    fun uploadUrl(origin: String, fileName: String): String = inboxUrl(origin) + fileName
+
+    /**
+     * The body of the probe: a `PROPFIND` with depth 0 for one property, which
+     * any WebDAV share answers with 207 and a server without the share with
+     * 404 or 405. Cheaper than a sync and asked before Health Connect is read.
+     */
+    const val PROBE_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:propfind xmlns:D=\"DAV:\"><D:prop><D:resourcetype/></D:prop></D:propfind>"
 
     /**
      * Read the answer to one part's `PUT`: any 2xx (201 created, 204 replaced)
@@ -257,6 +347,7 @@ object HealthSyncLogic {
      * failed, with a short reason from [message] (the status line).
      */
     fun parseResponse(code: Int, message: String? = null): UploadResult = when {
+        // 207 Multi-Status is the probe's success.
         code in 200..299 -> UploadResult.Stored
         code == 404 || code == 405 -> UploadResult.NoBackend
         code in 300..399 -> UploadResult.Failed("HTTP $code (redirected; signed out?)")
@@ -290,4 +381,8 @@ data class HealthSyncState(
     val tokenTypes: String? = null,
     /** The shell has asked Health Connect for permissions before. */
     val permissionsAsked: Boolean = false,
+    /** Syncs in a row that stored nothing for want of a letterbox or an upload error; 0 after a success. */
+    val failures: Int = 0,
+    /** No automatic sync before this (epoch ms; 0 for none), after such a failure (see [HealthSyncLogic.backoffMs]). */
+    val backoffUntil: Long = 0L,
 )
