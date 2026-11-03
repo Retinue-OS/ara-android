@@ -90,6 +90,8 @@ data class SettingsState(
     val update: UpdateState,
     /** Android lets Ara install apps ("Install unknown apps"). */
     val installAllowed: Boolean,
+    /** The user has given Ara usage access, so the tray also counts apps opened elsewhere. */
+    val usageAccess: Boolean,
 )
 
 /** What the settings screen can ask for. */
@@ -114,6 +116,9 @@ interface SettingsActions {
     fun removeEntry(entry: LauncherEntry)
     fun moveEntry(entry: LauncherEntry, delta: Int)
     fun resetLauncher()
+
+    /** Open the system page where the user gives (or takes back) Ara's usage access. */
+    fun openUsageAccess()
     fun setWakeMode(mode: WakeMode)
     fun setWakeThreshold(value: Float)
     fun downloadFeatureModels()
@@ -324,6 +329,14 @@ private fun LauncherSection(state: SettingsState, actions: SettingsActions) {
         OutlinedButton(onClick = actions::addFolder) { Text(stringResource(R.string.folder_add)) }
     }
     OutlinedButton(onClick = actions::resetLauncher) { Text(stringResource(R.string.launcher_reset)) }
+    Text(stringResource(R.string.settings_tray_hint), style = MaterialTheme.typography.bodySmall)
+    Text(
+        stringResource(if (state.usageAccess) R.string.settings_usage_access_on else R.string.settings_usage_access_off),
+        style = MaterialTheme.typography.bodySmall,
+    )
+    OutlinedButton(onClick = actions::openUsageAccess) {
+        Text(stringResource(if (state.usageAccess) R.string.settings_usage_access_settings else R.string.settings_usage_access_allow))
+    }
 }
 
 @Composable

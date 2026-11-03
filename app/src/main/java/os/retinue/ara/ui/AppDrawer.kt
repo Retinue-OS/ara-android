@@ -192,9 +192,7 @@ fun AppDrawer(
 }
 
 /**
- * An app or web app in All apps. Long-press: open it the other way
- * ([alternateOpen]), pin it to the bar, add it to a folder or a new one and,
- * given [onRemove] (web apps), remove it from the phone (unpin it).
+ * An app or web app in All apps; long-press for its menu ([DrawerItemMenu]).
  */
 @Composable
 private fun DrawerTile(
@@ -217,44 +215,79 @@ private fun DrawerTile(
             onClick = onLaunch,
             onLongClick = { menu = true },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            if (alternateOpen != null) {
-                AlternateOpenItem(alternateOpen) {
-                    menu = false
-                    onLaunchAlternate()
-                }
+        DrawerItemMenu(
+            expanded = menu,
+            onDismiss = { menu = false },
+            item = item,
+            folders = folders,
+            pinned = pinned,
+            alternateOpen = alternateOpen,
+            onLaunchAlternate = onLaunchAlternate,
+            onPin = onPin,
+            onAddToFolder = onAddToFolder,
+            onNewFolder = onNewFolder,
+            onRemove = onRemove,
+        )
+    }
+}
+
+/**
+ * The long-press menu of an app or web app, in All apps and in the tray:
+ * open it the other way ([alternateOpen]: beside Ara or full screen), pin
+ * it to the bar, add it to a folder or a new one and, given [onRemove] (web
+ * apps), remove it from the phone (unpin it). Every choice closes the menu.
+ */
+@Composable
+internal fun DrawerItemMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    item: DrawerItem,
+    folders: List<LauncherEntry.Folder>,
+    pinned: Boolean,
+    alternateOpen: Int?,
+    onLaunchAlternate: () -> Unit,
+    onPin: () -> Unit,
+    onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
+    onNewFolder: (LauncherEntry.Launchable) -> Unit,
+    onRemove: (() -> Unit)?,
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        if (alternateOpen != null) {
+            AlternateOpenItem(alternateOpen) {
+                onDismiss()
+                onLaunchAlternate()
             }
+        }
+        MenuItem(
+            text = stringResource(if (pinned) R.string.drawer_pinned_already else R.string.drawer_pin),
+            icon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
+            enabled = !pinned,
+        ) {
+            onDismiss()
+            onPin()
+        }
+        folders.forEach { folder ->
+            val inFolder = folder.containsKey(item.key)
             MenuItem(
-                text = stringResource(if (pinned) R.string.drawer_pinned_already else R.string.drawer_pin),
-                icon = { Icon(Icons.Filled.PushPin, contentDescription = null) },
-                enabled = !pinned,
+                text = stringResource(
+                    if (inFolder) R.string.drawer_in_folder else R.string.drawer_add_to_folder,
+                    folderName(folder),
+                ),
+                icon = { FolderIcon(folder, size = 24.dp) },
+                enabled = !inFolder,
             ) {
-                menu = false
-                onPin()
+                onDismiss()
+                onAddToFolder(item.toEntry(), folder)
             }
-            folders.forEach { folder ->
-                val inFolder = folder.containsKey(item.key)
-                MenuItem(
-                    text = stringResource(
-                        if (inFolder) R.string.drawer_in_folder else R.string.drawer_add_to_folder,
-                        folderName(folder),
-                    ),
-                    icon = { FolderIcon(folder, size = 24.dp) },
-                    enabled = !inFolder,
-                ) {
-                    menu = false
-                    onAddToFolder(item.toEntry(), folder)
-                }
-            }
-            MenuItem(R.string.drawer_new_folder, Icons.Filled.CreateNewFolder) {
-                menu = false
-                onNewFolder(item.toEntry())
-            }
-            if (onRemove != null) {
-                MenuItem(R.string.drawer_remove_shortcut, Icons.Filled.Delete) {
-                    menu = false
-                    onRemove()
-                }
+        }
+        MenuItem(R.string.drawer_new_folder, Icons.Filled.CreateNewFolder) {
+            onDismiss()
+            onNewFolder(item.toEntry())
+        }
+        if (onRemove != null) {
+            MenuItem(R.string.drawer_remove_shortcut, Icons.Filled.Delete) {
+                onDismiss()
+                onRemove()
             }
         }
     }

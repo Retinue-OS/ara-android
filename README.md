@@ -67,7 +67,7 @@ from the web app's Settings page (it calls `RetinueShell.openSettings()`).
 | **Client certificate** | The installed certificate Ara presents to that origin (mTLS). |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Split screen** | Open apps beside Ara, and keep Ara in recent apps (both off by default; see [Split screen](#split-screen)). |
-| **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults. |
+| **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults; usage access for the tray's order (see [The tray](#the-tray)). |
 | **Wake phrase** | Mode, sensitivity, and the models (see below). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 
@@ -356,6 +356,38 @@ that no app can open it.
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.
 
+### The tray
+
+**Pull the bar up** for more lines of apps: every installed app and web app
+that is not on the bar itself (apps inside folders too, but no folders), the
+**most recently used first**, then the never-used ones by name. The lines look
+like the bar and are as tall; let go and the tray settles on a whole line, a
+quick flick takes it all the way up or down. It goes up as far as the web
+app's top menu (its navigation row `retinue-nav`, or a page's own `header`),
+which stays in view: the shell asks the page for the menu's bottom edge each
+time the tray comes up, and leaves 48 dp when the page has none. With more
+apps than fit, the lines scroll once the tray is all the way up; dragging them
+down scrolls back to the top first, then takes the tray down.
+
+The tray **goes down again** on a tap anywhere above it (on the dimmed page or
+its menu; the tap does nothing else), when anything is opened from the bar,
+the tray or elsewhere, on Back, on Home, when the keyboard comes up and when
+Ara leaves the screen. Tap an app in the tray to open it; **long-press** it for
+the same menu as in All apps: open it the other way (beside Ara in split
+screen, or full screen), pin it to the bar, add it to a folder or a new one,
+and for a web app remove it from the phone. A screen reader gets an action on
+the bar's handle to bring the tray up or down.
+
+**Recent use** comes from two places: every app and web app Ara opens (from
+the bar, a folder, All apps or the tray) is recorded with the time, on the
+device (the 300 most recent); and, once the user grants Ara **usage access**
+(Settings → Launcher bar → *Allow usage access*, which opens the system page;
+`PACKAGE_USAGE_STATS`), Android's own record of when each app was last on
+screen, so apps opened from a notification, from Recents or from another app
+count too. An item's last use is the later of the two; a web app counts only
+its own launches (its package is the browser that installed it). Without
+usage access nothing is asked for and only Ara's launches count.
+
 ### Folders
 
 A folder holds apps: installed apps and installed web apps (pinned shortcuts,
@@ -382,8 +414,9 @@ folder is dropped when it is read.
   or deleted. An icon that is replaced, or whose folder is removed, is deleted.
 - **Apps:** the editor lists the folder's apps (reorder, remove) and the
   installed apps and web apps to add (searchable). Both also go in from All
-  apps (long-press → *Add to …*) and from the bar (long-press one on the bar →
-  *Move to …*). An app may be in several folders and on the bar as well.
+  apps and the tray (long-press → *Add to …*) and from the bar (long-press one
+  on the bar → *Move to …*). An app may be in several folders and on the bar
+  as well.
 - **Use:** tap the folder to open it over the bar; tap an app to start it,
   long-press one to move it or take it out; **+** adds apps and the pencil
   edits the folder. Long-press the folder on the bar to edit, move or remove
@@ -653,8 +686,10 @@ health/    HealthSyncLogic, HealthRecords,          — pure: sync gating and ba
            HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
                                                       sync state, the round kept on the device
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
-           FolderKind                                 codec, edits, folder types (unit-tested)
-           AppCatalog, FolderIcons                  — launchable apps and their icons, folder images
+           FolderKind, AppRecency (TrayLogic)         codec, edits, folder types, the tray's order and
+                                                      height (unit-tested)
+           AppCatalog, AppUsage, FolderIcons        — launchable apps and their icons, Android's usage
+                                                      stats, folder images
 wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic gate (unit-tested)
            WakeGate), WakeFeatures                  — pure: openWakeWord's streaming buffers (unit-tested)
            OnnxWakeModels                           — the three ONNX models (ORT Java API)
@@ -663,12 +698,13 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
 web/       ShellWebView, ShellWebClients,           — the WebView, its setup and callbacks,
            ShellBridge, NativeSpeech,                 the bridge, TextToSpeech,
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
-data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
+data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
-           LauncherBar, AppDrawer, LauncherFolders,   drawer, folders (open folder, folder editor)
-           SettingsScreen, HealthRationaleActivity
+           LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor)
+           LauncherFolders, SettingsScreen,
+           HealthRationaleActivity
 assets/    retinue-shell.js                         — page side of the bridge and the speech stand-in
 ```
 

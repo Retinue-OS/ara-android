@@ -32,6 +32,8 @@
     <string name="launcher_options">Options</string>
     <string name="launcher_open_beside">Open beside Ara</string>
     <string name="launcher_open_full">Open full screen</string>
+    <string name="tray_more_apps">Show more apps</string>
+    <string name="tray_fewer_apps">Show fewer apps</string>
     <string name="split_page_elsewhere">Ara\'s page is open in its other window. Tap to show it here.</string>
     <string name="split_page_show_here">Show the page here</string>
     <string name="launcher_move_to_folder">Move to %1$s</string>
@@ -162,6 +164,11 @@
     <string name="settings_section_launcher">Launcher bar</string>
     <string name="settings_launcher_hint">Add links, web-app pages and folders here; pin installed apps from All apps (long-press). Long-press an entry in the bar to edit it, or an app to move it into a folder.</string>
     <string name="settings_launcher_empty">The bar is empty; only All apps is shown.</string>
+    <string name="settings_tray_hint">Pull the bar up for more apps, the most recently used first (those on the bar are on the bar). It goes up as far as the web app\'s menu; a tap above it, or opening an app, puts it down again. Long-press an app there to open it the other way, pin it or put it in a folder.</string>
+    <string name="settings_usage_access_off">The order counts the apps you open from Ara. With usage access it also counts those opened from a notification, from Recents or from another app.</string>
+    <string name="settings_usage_access_on">Ara has usage access: the order counts apps however they were opened.</string>
+    <string name="settings_usage_access_allow">Allow usage access</string>
+    <string name="settings_usage_access_settings">Usage access settings</string>
 
     <!-- Wake phrase. -->
     <string name="settings_section_wake">Wake phrase</string>
