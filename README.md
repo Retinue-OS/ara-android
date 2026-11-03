@@ -80,8 +80,8 @@ Nothing environment-specific is baked into the APK.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/2 (Android)` (2: the Health Connect
-  members of the bridge exist).
+- The user agent ends in ` RetinueShell/3 (Android)` (2: the Health Connect
+  members of the bridge exist; 3: `placeCall`).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -123,7 +123,8 @@ The web app detects the shell and talks to it through:
   plus the Health Connect members (see [Health Connect sync](#health-connect-sync)):
   `healthConnectAvailable()` → `"true"`/`"false"`, `healthSync()`,
   `healthSyncStatus()` → a JSON string, `setHealthSyncInterval(minutes)`,
-  `setHealthAutoSync(bool)`.
+  `setHealthAutoSync(bool)`, and `placeCall(number)` (see
+  [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -148,6 +149,10 @@ The web app detects the shell and talks to it through:
   `trigger`), `done` (`count`), `error` (`error`) or `skipped` (`reason`:
   `interval`, `no-permission`, `unavailable`, `no-backend-support`). Nobody
   has to take these.
+  A `placeCall` is answered with `type` `call`: `state` `placed` (with
+  `number`), `dialer` (`reason`: `emergency`, `disabled`, `no-permission`;
+  with `number`) or `refused` (`reason`: `invalid-number`, `not-in-voice`,
+  `no-telephony`, `failed`).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -160,6 +165,34 @@ Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
 (`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
 origin). A WebView without `addWebMessageListener` gets no bridge: the page
 behaves as in a browser tab.
+
+### Phone calls
+
+`RetinueShell.placeCall(number)` is how a call the user asked for by voice
+gets made without a hand on the phone (the web app sends it for Ara's
+`[[call: …]]` in a spoken conversation). It returns at once; the outcome comes
+as the `call` event above. The shell decides (`shell/CallLogic.kt`), in this
+order:
+
+1. The number is normalized — spaces, dashes, dots, parentheses, slashes and a
+   leading `tel:` dropped — and must then be an optional `+` followed by
+   digits, `*` and `#` with 3 to 20 digits (no `,` pauses or `;` extensions).
+   Otherwise: refused, `invalid-number`. A phone without telephony: refused,
+   `no-telephony`.
+2. **Only inside a spoken conversation**: the page must hold
+   `setVoiceActive(true)`, as the web app does for a whole continuous
+   conversation. Otherwise nothing starts, not even the dialer: refused,
+   `not-in-voice`.
+3. **Emergency numbers always open the dialer** (`reason` `emergency`;
+   `TelephonyManager.isEmergencyNumber`, a failed check counts as one).
+   Android lets no third-party app call them directly. Hands-free, use
+   "Hey Google" or the phone's Emergency SOS for those.
+4. Settings → Phone calls → **Call directly by voice** (off by default) off:
+   the dialer opens with the number (`disabled`). On without Android's
+   `CALL_PHONE` permission, which turning it on asks for: the dialer
+   (`no-permission`), and the settings say so.
+5. Otherwise `ACTION_CALL`: the call starts. An intent that fails to start is
+   reported as refused, `failed`.
 
 ---
 

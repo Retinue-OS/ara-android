@@ -29,6 +29,11 @@ data class ShellSettings(
     val splitLaunch: Boolean = false,
     /** The home screen keeps the split-screen window among the recent apps, ready to pair. */
     val keepSplitInRecents: Boolean = false,
+    /**
+     * A call the page asks for in a spoken conversation (`RetinueShell.placeCall`)
+     * is placed at once, without a tap. Off: the dialer opens with the number.
+     */
+    val directCalls: Boolean = false,
 ) {
     /** The normalized base URL, or null when it is not configured (or invalid). */
     val base: String? get() = ShellUrls.normalizeBase(baseUrl)

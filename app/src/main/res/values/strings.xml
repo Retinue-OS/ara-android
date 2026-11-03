@@ -157,6 +157,10 @@
     <string name="settings_split_launch">Open apps beside Ara</string>
     <string name="settings_split_launch_hint">Apps, web apps and links from the home screen open in split screen, next to Ara. Long-press one to open it full screen instead. Android decides which half each gets; its divider swaps them.</string>
     <string name="settings_split_recents">Keep Ara in recent apps</string>
+    <string name="settings_section_calls">Phone calls</string>
+    <string name="settings_direct_calls">Call directly by voice</string>
+    <string name="settings_direct_calls_hint">A call you ask Ara for in a voice conversation is placed at once, without a tap. Off, the dialer opens with the number. Emergency numbers always open the dialer — Android lets no app call them directly; without your hands, use \"Hey Google\" or Emergency SOS for those.</string>
+    <string name="settings_direct_calls_no_permission">Android has not allowed Ara to make calls, so calls open the dialer. Turn the switch off and on to be asked again, or allow \"Phone\" in Ara\'s app settings.</string>
     <string name="settings_split_recents_hint">When the split-screen Ara is not among the recent apps (swiped away, or never opened), the home screen puts it back there, ready to pair with an app.</string>
 
     <string name="settings_section_launcher">Launcher bar</string>
