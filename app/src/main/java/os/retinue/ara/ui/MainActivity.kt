@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
+import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.ViewGroup
@@ -1391,7 +1392,15 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         var failed = false
         if (action != null) {
             try {
-                startActivity(Intent(action.first, Uri.fromParts("tel", action.second, null)))
+                startActivity(
+                    Intent(action.first, Uri.fromParts("tel", action.second, null)).apply {
+                        // The user asked by voice and may not be holding the phone: the call starts on
+                        // speaker. Telecom reads the extra from ACTION_CALL; the dialer ignores it.
+                        if (action.first == Intent.ACTION_CALL) {
+                            putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+                        }
+                    },
+                )
             } catch (e: Exception) {
                 // No dialer, a SecurityException for a permission revoked meanwhile …: never crash the shell.
                 Log.w(TAG, "could not start ${action.first}", e)

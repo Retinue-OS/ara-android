@@ -191,8 +191,17 @@ order:
    the dialer opens with the number (`disabled`). On without Android's
    `CALL_PHONE` permission, which turning it on asks for: the dialer
    (`no-permission`), and the settings say so.
-5. Otherwise `ACTION_CALL`: the call starts. An intent that fails to start is
+5. Otherwise `ACTION_CALL`: the call starts, **on speakerphone**
+   (`TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE`) — the user asked by
+   voice and may not be holding the phone. An intent that fails to start is
    reported as refused, `failed`.
+
+The web app gives the user 5 s before it sends `placeCall`, with the mic open:
+speech cancels the call (unless Ara marked a second attempt `no-voice-cancel`,
+for a loud room). It closes its mic before it sends, so the call has it.
+Once the call is dialling the shell cannot hear the user any more, nor tell
+when the other side answers (only the default phone app can), so there is no
+voice cancel after that.
 
 ---
 
