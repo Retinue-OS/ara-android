@@ -17,6 +17,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
@@ -90,6 +92,8 @@ import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.shell.CallLogic
+import os.retinue.ara.shell.CallOutcome
 import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
@@ -97,6 +101,7 @@ import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellLinks
+import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
@@ -181,6 +186,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private var isDefaultHome by mutableStateOf(false)
     private var pinShortcutsSupported by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
+    private var callsGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
     private var notificationsAllowed by mutableStateOf(true)
@@ -270,6 +276,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         }
     }
 
+    // Direct calls: asked for when the user turns them on; without it calls open the dialer.
+    private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        callsGranted = granted
+    }
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -314,6 +325,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         page.open(this)
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
 
         onBackPressedDispatcher.addCallback(this, backCallback)
 
@@ -590,6 +602,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                     modelMessage = message,
                     wakeStatus = wakeStatus,
                     micGranted = micGranted,
+                    callsGranted = callsGranted,
                     fullScreenIntentAllowed = fullScreenIntentAllowed,
                     overlayAllowed = overlayAllowed,
                     notificationsAllowed = notificationsAllowed,
@@ -712,6 +725,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             viewModel.setKeepSplitInRecents(on)
         }
 
+        override fun setDirectCalls(on: Boolean) {
+            viewModel.setDirectCalls(on)
+            if (on && !hasCallPermission()) callPermission.launch(Manifest.permission.CALL_PHONE)
+        }
+
         override fun checkForUpdates() = UpdateRuntime.checkNow()
 
         override fun installUpdate() = UpdateRuntime.installNow()
@@ -769,6 +787,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         super.onResume()
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
         overlayAllowed = WakeAlert.canDrawOverlays(this)
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -1347,7 +1366,56 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             )
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
+            is WebMessage.PlaceCall -> placeCall(message.number)
         }
+    }
+
+    /**
+     * The page's `placeCall`: [CallLogic] decides, this starts the call or the
+     * dialer and tells the page what came of it (a `call` event).
+     */
+    private fun placeCall(raw: String) {
+        val number = CallLogic.normalize(raw)
+        val outcome = CallLogic.decide(
+            number = number,
+            voiceEngaged = WakeRuntime.voiceActive.value,
+            enabled = settings.directCalls,
+            permissionGranted = hasCallPermission(),
+            isEmergency = number != null && isEmergencyNumber(number),
+            hasTelephony = packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY),
+        )
+        val action = when (outcome) {
+            is CallOutcome.Call -> Intent.ACTION_CALL to outcome.number
+            is CallOutcome.Dial -> Intent.ACTION_DIAL to outcome.number
+            is CallOutcome.Refused -> null
+        }
+        var failed = false
+        if (action != null) {
+            try {
+                startActivity(
+                    Intent(action.first, Uri.fromParts("tel", action.second, null)).apply {
+                        // The user asked by voice and may not be holding the phone: the call starts on
+                        // speaker. Telecom reads the extra from ACTION_CALL; the dialer ignores it.
+                        if (action.first == Intent.ACTION_CALL) {
+                            putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                // No dialer, a SecurityException for a permission revoked meanwhile …: never crash the shell.
+                Log.w(TAG, "could not start ${action.first}", e)
+                failed = true
+            }
+        }
+        bridge.run(ShellMessages.callEvent(outcome, failed))
+    }
+
+    private fun isEmergencyNumber(number: String): Boolean = try {
+        getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number) == true
+    } catch (e: Exception) {
+        // No telephony service, or it refused to answer: the number counts as one, so it is only dialled.
+        Log.w(TAG, "emergency number check failed", e)
+        true
     }
 
     /**
@@ -1464,6 +1532,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             webView?.loadUrl(url)
         }
     }
+
+    private fun hasCallPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 
     private fun hasMic() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

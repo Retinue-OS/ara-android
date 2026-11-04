@@ -79,6 +79,8 @@ data class SettingsState(
     val modelMessage: String?,
     val wakeStatus: WakeStatus,
     val micGranted: Boolean,
+    /** Android lets Ara place calls (`CALL_PHONE`), for direct calls. */
+    val callsGranted: Boolean,
     /** Android 14+: the wake alert may open the shell full-screen (see WakeAlert). */
     val fullScreenIntentAllowed: Boolean,
     val overlayAllowed: Boolean,
@@ -108,6 +110,9 @@ interface SettingsActions {
 
     /** The home screen keeps the split-screen window among the recent apps. */
     fun setKeepSplitInRecents(on: Boolean)
+
+    /** Calls asked for by voice are placed without a tap (asks for the permission when turned on). */
+    fun setDirectCalls(on: Boolean)
     fun addEntry(template: LauncherEntry)
     fun addFolder()
     fun editEntry(entry: LauncherEntry)
@@ -173,6 +178,8 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
             HomeSection(state, actions)
             HorizontalDivider()
             SplitSection(state, actions)
+            HorizontalDivider()
+            CallsSection(state, actions)
             HorizontalDivider()
             LauncherSection(state, actions)
             HorizontalDivider()
@@ -261,6 +268,20 @@ private fun SplitSection(state: SettingsState, actions: SettingsActions) {
     Text(stringResource(R.string.settings_split_launch_hint), style = MaterialTheme.typography.bodySmall)
     SettingSwitch(R.string.settings_split_recents, state.settings.keepSplitInRecents, actions::setKeepSplitInRecents)
     Text(stringResource(R.string.settings_split_recents_hint), style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun CallsSection(state: SettingsState, actions: SettingsActions) {
+    SectionTitle(R.string.settings_section_calls)
+    SettingSwitch(R.string.settings_direct_calls, state.settings.directCalls, actions::setDirectCalls)
+    Text(stringResource(R.string.settings_direct_calls_hint), style = MaterialTheme.typography.bodySmall)
+    if (state.settings.directCalls && !state.callsGranted) {
+        Text(
+            stringResource(R.string.settings_direct_calls_no_permission),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
 }
 
 /** A setting that is on or off: the whole row toggles it. */

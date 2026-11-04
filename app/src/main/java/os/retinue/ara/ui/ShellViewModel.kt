@@ -81,6 +81,7 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
     fun setKeepSplitInRecents(on: Boolean) = viewModelScope.launch { store.setKeepSplitInRecents(on) }
+    fun setDirectCalls(on: Boolean) = viewModelScope.launch { store.setDirectCalls(on) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
         viewModelScope.launch { editLauncher(change = change) }

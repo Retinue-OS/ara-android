@@ -39,9 +39,18 @@
     <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
     <uses-permission android:name="android.permission.health.READ_STEPS" />
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
+    <!-- Direct calls (Settings → Phone calls): a call the user asked for in a
+         voice conversation starts without a tap (see shell/CallLogic). Asked
+         for at runtime when the setting is turned on; emergency numbers only
+         ever open the dialer. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <uses-feature
         android:name="android.hardware.microphone"
+        android:required="false" />
+    <!-- CALL_PHONE would otherwise make telephony a requirement. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
         android:required="false" />
 
     <!-- Package visibility (Android 11+): the app drawer lists launchable apps,

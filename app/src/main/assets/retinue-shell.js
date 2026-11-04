@@ -4,7 +4,8 @@
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
 //     {platform, version, setVoiceActive(bool), openSettings()} and Health
 //     Connect sync: healthConnectAvailable(), healthSync(), healthSyncStatus(),
-//     setHealthSyncInterval(minutes), setHealthAutoSync(bool). Shell -> web
+//     setHealthSyncInterval(minutes), setHealthAutoSync(bool) — and
+//     placeCall(number), whose outcome comes as a `call` event. Shell -> web
 //     events arrive as `retinue-shell` CustomEvents dispatched on window; the
 //     shell checks whether a page listener ran for them (see below).
 //
@@ -70,6 +71,14 @@
     setHealthAutoSync: function (on) {
       health.auto_on_resume = !!on;
       post({ type: 'health.auto', on: !!on });
+    },
+    // A call the user asked for in a spoken conversation: placed at once when
+    // direct calls are on, else the dialer opens (always for emergency
+    // numbers); refused outside a voice conversation. Returns at once, the
+    // outcome comes as a `call` event.
+    placeCall: function (number) {
+      if (number === undefined || number === null) return;
+      post({ type: 'call.place', number: String(number) });
     },
   };
   try {
