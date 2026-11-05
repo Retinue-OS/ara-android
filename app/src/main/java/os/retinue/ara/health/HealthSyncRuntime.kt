@@ -33,7 +33,6 @@ import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
 import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.shell.Origin
-import os.retinue.ara.shell.UrlRouter
 
 /**
  * Asks Health Connect for read permissions on the runtime's behalf: the window
@@ -52,8 +51,9 @@ interface HealthSyncListener {
 
 /**
  * Process-wide owner of Health Connect sync (contract §3). A sync reads what
- * changed since the stored Changes token (or, without a usable token, the
- * last [HealthSyncLogic.WINDOW_DAYS] days) and writes it, in parts of at most
+ * changed since the current endpoint's server's own Changes token (each server
+ * has one, [HealthSyncState.tokens]; without a usable one, the last
+ * [HealthSyncLogic.WINDOW_DAYS] days) and writes it, in parts of at most
  * [HealthSyncLogic.MAX_PART] changes, as files into the current endpoint's
  * letterbox (`<origin>/inbox/`, a WebDAV share: one plain `PUT` per part),
  * authenticated as the WebView is (the endpoint's client certificate and
@@ -64,10 +64,11 @@ interface HealthSyncListener {
  * probed: a server without one costs one small request, and automatic syncs
  * then back off (doubling from the interval up to six hours; so after any
  * upload error) until a sync succeeds. A round's parts are written to the
- * device first and uploaded one by one ([HealthRoundStore]); the token
- * advances only once every part was stored, and a round that failed halfway
- * is resumed by the next sync from the first unsent part, under the same
- * batch id, before anything new is read.
+ * device first and uploaded one by one ([HealthRounds], one round per
+ * server); the token advances only once every part was stored, and a round
+ * that failed halfway — or was left when another endpoint was shown — is
+ * resumed by the next sync to its server from the first unsent part, under
+ * the same batch id, before anything new is read.
  *
  * Syncs run when Ara comes to the front (auto-sync, at most every
  * [HealthSyncState.intervalMinutes]) and when the page asks
@@ -106,8 +107,8 @@ object HealthSyncRuntime {
     /** When a deliberate sync was last asked for (epoch ms), for collapsing repeats. */
     private var lastDeliberateAt = 0L
 
-    /** The round on its way to the letterbox, if any (see [HealthRoundStore]). */
-    private lateinit var rounds: HealthRoundStore
+    /** The rounds on their way to the letterboxes, one per server (see [HealthRounds]). */
+    private lateinit var rounds: HealthRounds
 
     private val _status = MutableStateFlow(HealthSyncStatus())
     val status: StateFlow<HealthSyncStatus> = _status.asStateFlow()
@@ -122,34 +123,62 @@ object HealthSyncRuntime {
     fun init(context: Context) {
         app = context.applicationContext
         store = AraStore(app)
-        rounds = HealthRoundStore(File(app.filesDir, ROUND_DIR))
+        rounds = HealthRounds(File(app.filesDir, ROUND_DIR))
         scope.launch {
             state = store.healthSync.first()
             loaded.complete(Unit)
             refresh()
         }
-        // The current endpoint: its origin and its health switch. A round on the
-        // device is for one origin: when the endpoint is switched or cleared, a
-        // round for the old one goes at once, not at the next sync. A sync still
-        // running for the old endpoint, or for this one with its switch just
-        // turned off, is stopped first: nothing more is read or sent for it, and
-        // the round is not discarded under its feet.
+        // The endpoints as health sync sees them. One sync runs at a time, for
+        // the current endpoint: one still running when another is shown, or
+        // when this one's switch is turned off, is stopped (its round, if any,
+        // stays on the device for its server; its token has not moved). Each
+        // server's round waits for it while another is shown, and goes only
+        // when its endpoint is removed or its switch turned off; each server's
+        // token is forgotten only when no endpoint points at it any more.
         scope.launch {
+            // An older build's one round moves into its server's folder before anything syncs.
+            withContext(Dispatchers.IO) { rounds.migrateLegacy() }
             store.settings
-                .map { s -> (UrlRouter(s.base).origin?.toString()) to (s.current?.healthUpload == true) }
+                .map { s -> HealthTargets.of(s.current, s.endpoints) }
                 .distinctUntilChanged()
-                .collect { (origin, enabled) ->
-                    val stale = origin != endpointOrigin || !enabled
-                    endpointOrigin = origin
-                    uploadEnabled = enabled
+                .collect { targets ->
+                    val stale = targets.current != endpointOrigin || !targets.enabled
+                    endpointOrigin = targets.current
+                    uploadEnabled = targets.enabled
                     val running = job?.takeIf { it.isActive }
                     if (stale && running != null) {
                         running.cancelAndJoin()
-                        if (!enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+                        if (!targets.enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
                     }
                     publish()
-                    withContext(Dispatchers.IO) { rounds.discardUnless(origin) }
+                    withContext(Dispatchers.IO) { rounds.retainOnly(targets.enabledOrigins) }
+                    loaded.await()
+                    if (state.tokens.keys.any { it !in targets.configuredOrigins }) {
+                        save { it.retainingTokens(targets.configuredOrigins) }
+                    }
                 }
+        }
+    }
+
+    /**
+     * What health sync needs to know of the endpoints: the current one's origin
+     * and switch, the origins whose switch is on (their rounds are kept), and
+     * every configured origin (their tokens are kept).
+     */
+    private data class HealthTargets(
+        val current: String?,
+        val enabled: Boolean,
+        val enabledOrigins: Set<String>,
+        val configuredOrigins: Set<String>,
+    ) {
+        companion object {
+            fun of(current: Endpoint?, endpoints: List<Endpoint>) = HealthTargets(
+                current = current?.origin?.toString(),
+                enabled = current?.healthUpload == true,
+                enabledOrigins = endpoints.filter { it.healthUpload }.mapNotNull { it.origin?.toString() }.toSet(),
+                configuredOrigins = endpoints.mapNotNull { it.origin?.toString() }.toSet(),
+            )
         }
     }
 
@@ -298,10 +327,7 @@ object HealthSyncRuntime {
                         lastResult = SyncResult.Ok,
                         lastError = null,
                         lastCount = outcome.count,
-                        token = outcome.token,
-                        tokenTypes = outcome.types,
-                        tokenOrigin = outcome.origin,
-                    ).let { s ->
+                    ).withToken(outcome.origin, outcome.token, outcome.types).let { s ->
                         // This server's back-off ends; another server's stays its own.
                         if (s.backoffOrigin == null || s.backoffOrigin == outcome.origin) {
                             s.copy(failures = 0, backoffUntil = 0L, backoffOrigin = null)

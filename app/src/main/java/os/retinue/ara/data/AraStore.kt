@@ -143,9 +143,11 @@ class AraStore(context: Context) {
             it.putOrRemove(K.healthLastError, s.lastError)
             val count = s.lastCount
             if (count == null) it.remove(K.healthLastCount) else it[K.healthLastCount] = count
-            it.putOrRemove(K.healthToken, s.token)
-            it.putOrRemove(K.healthTokenTypes, s.tokenTypes)
-            it.putOrRemove(K.healthTokenOrigin, s.tokenOrigin)
+            it[K.healthTokens] = HealthSyncLogic.encodeTokens(s.tokens)
+            // The one token of older builds now lives in the map.
+            it.remove(K.healthToken)
+            it.remove(K.healthTokenTypes)
+            it.remove(K.healthTokenOrigin)
             it[K.healthPermissionsAsked] = s.permissionsAsked
             it[K.healthFailures] = s.failures
             it[K.healthBackoffUntil] = s.backoffUntil
@@ -162,9 +164,8 @@ class AraStore(context: Context) {
         lastResult = SyncResult.fromKey(p[K.healthLastResult]),
         lastError = p[K.healthLastError],
         lastCount = p[K.healthLastCount],
-        token = p[K.healthToken],
-        tokenTypes = p[K.healthTokenTypes],
-        tokenOrigin = p[K.healthTokenOrigin],
+        tokens = HealthSyncLogic.decodeTokens(p[K.healthTokens])
+            ?: HealthSyncLogic.legacyTokens(p[K.healthToken], p[K.healthTokenTypes], p[K.healthTokenOrigin]),
         permissionsAsked = p[K.healthPermissionsAsked] ?: false,
         failures = p[K.healthFailures] ?: 0,
         backoffUntil = p[K.healthBackoffUntil] ?: 0L,
@@ -202,6 +203,10 @@ class AraStore(context: Context) {
         val healthLastResult = stringPreferencesKey("health_last_result")
         val healthLastError = stringPreferencesKey("health_last_error")
         val healthLastCount = intPreferencesKey("health_last_count")
+        /** Each server's Changes token (JSON, origin → token; see [HealthSyncState.tokens]). */
+        val healthTokens = stringPreferencesKey("health_changes_tokens_json")
+
+        /** The one Changes token of builds before per-server tokens, with its types and origin: read once, then removed. */
         val healthToken = stringPreferencesKey("health_changes_token")
         val healthTokenTypes = stringPreferencesKey("health_changes_token_types")
         val healthTokenOrigin = stringPreferencesKey("health_changes_token_origin")

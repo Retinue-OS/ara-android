@@ -16,12 +16,13 @@ import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import os.retinue.ara.health.ChangesToken
 import os.retinue.ara.health.ClientInfo
 import os.retinue.ara.health.Collected
 import os.retinue.ara.health.HealthConnectSource
 import os.retinue.ara.health.HealthRecords
 import os.retinue.ara.health.HealthRound
-import os.retinue.ara.health.HealthRoundStore
+import os.retinue.ara.health.HealthRounds
 import os.retinue.ara.health.HealthSource
 import os.retinue.ara.health.HealthSyncState
 import os.retinue.ara.health.HealthSyncer
@@ -41,7 +42,8 @@ class HealthSyncerTest {
     private val originA = "https://a.example"
     private val originB = "https://b.example"
     private lateinit var dir: File
-    private lateinit var rounds: HealthRoundStore
+    private lateinit var rounds: HealthRounds
+    private val types = HealthRecords.TYPES.map { it.name }.sorted().joinToString(",")
 
     /** A Health Connect that offers [granted] and returns [changes] for every read. */
     private class FakeSource(
@@ -50,11 +52,15 @@ class HealthSyncerTest {
         var changes: Int = 0,
     ) : HealthSource {
         var reads = 0
+
+        /** The stored token each read was given (null: none, a window read). */
+        val tokensGiven = mutableListOf<String?>()
         override fun available() = available
         override suspend fun grantedPermissions() = granted
         override suspend fun backgroundPermission() = emptySet<String>()
         override suspend fun collect(types: List<HealthType>, storedToken: String?): Collected {
             reads++
+            tokensGiven += storedToken
             val list = List(changes) { HealthRecords.delete("id-$it") }
             val kind = if (storedToken == null) SyncKind.Initial else SyncKind.Changes
             return Collected(kind, list, "token-${reads}", null)
@@ -94,15 +100,16 @@ class HealthSyncerTest {
     /** A round of [parts] parts for [origin] on the device, [sent] of them stored already. */
     private fun leaveRound(origin: String, parts: Int, sent: Int): HealthRound {
         val round = HealthRound("batch-1", origin, 1_700_000_000_000L, "initial", "StepsRecord", parts, 0, 7, "token-left")
-        var r = rounds.begin(round) { part -> "part $part".toByteArray() }
-        for (p in 1..sent) r = rounds.sent(r, p)
+        val store = rounds.of(origin)
+        var r = store.begin(round) { part -> "part $part".toByteArray() }
+        for (p in 1..sent) r = store.sent(r, p)
         return r
     }
 
     @Before
     fun setUp() {
         dir = createTempDirectory("health-round").toFile()
-        rounds = HealthRoundStore(dir)
+        rounds = HealthRounds(dir)
     }
 
     @After
@@ -115,7 +122,7 @@ class HealthSyncerTest {
         leaveRound(originA, parts = 3, sent = 1)
         val source = FakeSource(granted = emptySet())
         val letterbox = FakeLetterbox()
-        val state = State()
+        val state = State(HealthSyncState(tokens = mapOf(originB to ChangesToken("token-b", types))))
         val outcome = sync(source, letterbox, state = state)
         // Parts 2 and 3 went out under the round's own batch id and sent_at, part 1 not again.
         assertEquals(
@@ -125,11 +132,11 @@ class HealthSyncerTest {
             ),
             letterbox.puts,
         )
-        assertNull(rounds.pending())
-        assertFalse(dir.exists())
-        // Its token is stored for this origin; the sync itself then stops at the permission gate.
-        assertEquals("token-left", state.value.token)
-        assertEquals(originA, state.value.tokenOrigin)
+        assertNull(rounds.of(originA).pending())
+        assertFalse(rounds.of(originA).dir.exists())
+        // Its token is stored for this origin, B's is left as it was; the sync itself then stops at the permission gate.
+        assertEquals(ChangesToken("token-left", "StepsRecord"), state.value.tokens[originA])
+        assertEquals(ChangesToken("token-b", types), state.value.tokens[originB])
         assertEquals(SyncOutcome.Skipped(SkipReason.NoPermission), outcome)
         assertEquals(0, source.reads)
         assertEquals(1, letterbox.probes)
@@ -141,7 +148,7 @@ class HealthSyncerTest {
         val letterbox = FakeLetterbox()
         val outcome = sync(FakeSource(available = false), letterbox)
         assertEquals(1, letterbox.puts.size)
-        assertNull(rounds.pending())
+        assertNull(rounds.of(originA).pending())
         assertEquals(SyncOutcome.Skipped(SkipReason.Unavailable), outcome)
     }
 
@@ -161,33 +168,42 @@ class HealthSyncerTest {
         val outcome = sync(source, letterbox)
         // The pending round still went out, and the sync ended as unavailable, not as an error.
         assertEquals(1, letterbox.puts.size)
-        assertNull(rounds.pending())
+        assertNull(rounds.of(originA).pending())
         assertEquals(SyncOutcome.Skipped(SkipReason.Unavailable), outcome)
         assertEquals(0, created)
     }
 
     @Test
-    fun aPendingRoundForAnotherOriginIsDiscarded() = runBlocking {
+    fun aPendingRoundForAnotherOriginWaitsForIt() = runBlocking {
         leaveRound(originA, parts = 2, sent = 1)
         val source = FakeSource(changes = 0)
         val letterbox = FakeLetterbox()
         val state = State()
         val outcome = sync(source, letterbox, origin = originB, state = state)
-        // Nothing of A's round went to B; B's sync then ran on its own.
+        // Nothing of A's round went to B; B's sync then ran on its own, and A's round is still there.
         assertEquals(emptyList(), letterbox.puts)
-        assertNull(rounds.pending())
         assertEquals(1, source.reads)
-        assertEquals(SyncOutcome.Done(0, "token-1", HealthRecords.TYPES.map { it.name }.sorted().joinToString(","), originB), outcome)
-        assertNull(state.value.token) // the runtime stores the outcome's token
+        assertEquals(SyncOutcome.Done(0, "token-1", types, originB), outcome)
+        assertTrue(state.value.tokens.isEmpty()) // the runtime stores the outcome's token
+        assertEquals(1, rounds.of(originA).pending()!!.partsSent)
+        // A, shown again: the rest of its round goes to A, under its batch id, before anything new is read.
+        sync(source, letterbox, origin = originA, state = state)
+        assertEquals(
+            listOf("https://a.example/inbox/hc-20231114T221320Z-batch-1-p2of2.health-connect.json" to "part 2"),
+            letterbox.puts,
+        )
+        assertNull(rounds.of(originA).pending())
+        assertEquals("token-left", state.value.tokens[originA]?.token)
     }
 
     @Test
-    fun noBaseUrlDiscardsThePendingRound() = runBlocking {
+    fun noBaseUrlSendsNothing() = runBlocking {
         leaveRound(originA, parts = 1, sent = 0)
         val letterbox = FakeLetterbox()
         assertEquals(SyncOutcome.Failed("No Retinue base URL is set"), sync(FakeSource(), letterbox, origin = null))
         assertEquals(emptyList(), letterbox.puts)
-        assertNull(rounds.pending())
+        // Whether A's round is still wanted is the runtime's to decide (HealthRounds.retainOnly).
+        assertEquals(0, rounds.of(originA).pending()!!.partsSent)
     }
 
     @Test
@@ -196,7 +212,7 @@ class HealthSyncerTest {
         val letterbox = FakeLetterbox(put = UploadResult.Failed("HTTP 500"))
         val state = State()
         assertEquals(SyncOutcome.Failed("Part 1 of 3: HTTP 500"), sync(source, letterbox, state = state))
-        val pending = rounds.pending()!!
+        val pending = rounds.of(originA).pending()!!
         assertEquals(0, pending.partsSent)
         assertEquals(originA, pending.origin)
         val first = Json.parseToJsonElement(letterbox.puts.single().second).jsonObject
@@ -214,7 +230,7 @@ class HealthSyncerTest {
             listOf("p1of3", "p1of3", "p2of3", "p3of3", "p1of1"),
             letterbox.puts.map { Regex("p\\d+of\\d+").find(it.first)!!.value },
         )
-        assertNull(rounds.pending())
+        assertNull(rounds.of(originA).pending())
         assertEquals(SyncOutcome.Done(10_002, "token-2", (outcome as SyncOutcome.Done).types, originA), outcome)
     }
 
@@ -237,15 +253,22 @@ class HealthSyncerTest {
     }
 
     @Test
-    fun theTokenIsPerOrigin() = runBlocking {
+    fun eachOriginReadsFromItsOwnToken() = runBlocking {
         val source = FakeSource(changes = 0)
-        val types = HealthRecords.TYPES.map { it.name }.sorted().joinToString(",")
-        val state = State(HealthSyncState(token = "old", tokenTypes = types, tokenOrigin = originA))
+        val state = State(
+            HealthSyncState(
+                tokens = mapOf(originA to ChangesToken("token-a", types), originB to ChangesToken("token-b", types)),
+            ),
+        )
         sync(source, FakeLetterbox(), origin = originB, state = state)
-        // No token for B: an initial read, not the changes since A's token.
-        assertEquals(1, source.reads)
-        val collected = source.collect(emptyList(), null)
-        assertEquals(SyncKind.Initial, collected.kind)
+        sync(source, FakeLetterbox(), origin = originA, state = state)
+        // No token for C: a window read, not the changes since A's or B's.
+        sync(source, FakeLetterbox(), origin = "https://c.example", state = state)
+        assertEquals(listOf("token-b", "token-a", null), source.tokensGiven)
+        // A token made for other types is no token.
+        state.value = HealthSyncState(tokens = mapOf(originA to ChangesToken("token-a", "StepsRecord")))
+        sync(source, FakeLetterbox(), origin = originA, state = state)
+        assertNull(source.tokensGiven.last())
     }
 
     @Test

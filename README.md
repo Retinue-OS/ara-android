@@ -249,10 +249,11 @@ types are. Its trigger is `link` on `<base>/sync-health`, `manual` elsewhere.
 One sync runs at a time; Health Connect and the network are used off the main
 thread.
 
-**What.** With a stored Changes token (kept per set of granted types): every
-change since (`kind: changes`). Without one (`initial`), or when it expired
-after about 30 days (`resync`): every record of the last 30 days as upserts,
-with a fresh token taken before reading, so nothing falls between the two.
+**What.** With a stored Changes token for the server (each server has its own,
+kept per set of granted types): every change since (`kind: changes`),
+deletions included. Without one (`initial`), or when it expired after about 30
+days (`resync`): every record of the last 30 days as upserts, with a fresh
+token taken before reading, so nothing falls between the two.
 
 **Where.** Before Health Connect is read, Ara probes the letterbox share
 `<origin>/inbox/`: a `PROPFIND` of depth 0, and when that is a 404 an
@@ -274,23 +275,31 @@ WebView's cookies for the origin. One round has one `batch_id` and one
 
 A round's parts are written to the device first (one at a time, in Ara's own
 files) and uploaded one by one, each file deleted once the server has it. The
-token advances only when every part of the round was stored; it is kept per
-set of granted types and per origin (another server starts with the whole
-window). A round that failed halfway stays on the device, and the next sync
-resumes it first — before Health Connect is even asked, so a permission
-revoked meanwhile cannot strand data already read — from the first unsent
-part, under the same `batch_id` and `sent_at`: the server sees one batch and
-no orphans. The round records its origin; one for another server (the base
-URL was changed or cleared) is discarded, at once when the setting changes
-and again at the next sync. A token Health Connect no longer accepts (after a
-reset or reinstall) is treated like an expired one: the window is read again.
+token advances only when every part of the round was stored. Tokens and rounds
+are kept **per server** (origin): each server's token marks where in Health
+Connect's change log its own deliveries stand, so a server that was not shown
+for a while gets exactly what changed since its last delivery when it is shown
+again — deletions included, nothing twice — as long as Health Connect still
+has that token (about 30 days; after that it gets the 30-day window again). A
+server without a token starts with the whole window. A round that failed
+halfway stays on the device, in its server's own folder, and the next sync to
+that server resumes it first — before Health Connect is even asked, so a
+permission revoked meanwhile cannot strand data already read — from the first
+unsent part, under the same `batch_id` and `sent_at`: the server sees one
+batch and no orphans. Showing another endpoint leaves a round where it is: it
+waits for its server. It is discarded only when its endpoint is removed, its
+address changed or its health switch turned off; a server's token is
+forgotten only when no endpoint points at it any more. A token Health
+Connect no longer accepts (after a reset or reinstall) is treated like an
+expired one: the window is read again.
 
 After a sync that stored nothing — no letterbox, or an upload error —
 automatic syncs back off: the interval, doubled with each failure in a row,
 capped at six hours (5 → 10 → 20 min …); a resume in that time reports
 `skipped` with the reason of the last failure (`no-backend-support`, or
-`interval`). A success resets it, and so does switching to another endpoint:
-the back-off is the failing server's, kept per origin. A deliberate sync never
+`interval`). A success on that server resets it; switching to another
+endpoint leaves it behind: the back-off is the failing server's, kept per
+origin. A deliberate sync never
 waits and always probes again.
 
 **The file** (`schema` `retinue-health-connect/1`):
@@ -341,7 +350,7 @@ and unit-tested), `health/HealthRecords.kt` (records → JSON, unit-tested),
 `health/HealthSyncer.kt` (the order of one sync, against interfaces for Health
 Connect and the letterbox; unit-tested with fakes), `health/HealthSyncRuntime.kt`
 (the real Health Connect and OkHttp behind them, state) and
-`health/HealthRoundStore.kt` (the round on the device).
+`health/HealthRoundStore.kt` (the rounds on the device, one per server).
 
 ---
 
@@ -516,8 +525,11 @@ the preferences) and shows one, the **current** endpoint; everything that is
 the password, the letterbox — is the current endpoint's. Switching (the web
 app's Settings page, *Use* in the native list, a link for another endpoint,
 or `RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
-and loads its start page; a Health Connect round left half-sent for the old
-origin is discarded, as before when the base URL changed.
+and loads its start page. Health Connect sync follows the current endpoint
+only: a sync still running for the old one stops, and its round, if any,
+waits on the device for that server (see "Health Connect" above); each
+server's Changes token is its own, so a server shown again gets what changed
+since its last delivery.
 
 The web app sees the list through `RetinueShell.endpoints()`: `[{id, label,
 current}]` — the label the shell shows, never the other servers' URLs — and
@@ -726,7 +738,7 @@ shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation
 health/    HealthSyncLogic, HealthRecords,          — pure: sync gating and back-off, file envelope and name,
            HealthSyncer                               rounds, records → JSON, the order of one sync (unit-tested)
            HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
-                                                      sync state, the round kept on the device
+                                                      sync state, the rounds kept on the device (one per server)
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
            FolderKind                                 codec, edits, folder types (unit-tested)
            AppCatalog, FolderIcons                  — launchable apps and their icons, folder images
