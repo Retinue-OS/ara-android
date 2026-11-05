@@ -1306,6 +1306,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     /** Edit a bar entry: a folder in the folder editor, anything else in the entry dialog. */
     private fun editLauncherEntry(entry: LauncherEntry) {
+        tray.collapse()
         if (entry is LauncherEntry.Folder) {
             folderEditor = FolderEditorRequest(entry, isNew = false)
         } else {

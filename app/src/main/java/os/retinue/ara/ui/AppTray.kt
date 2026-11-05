@@ -56,6 +56,8 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
 import os.retinue.ara.launcher.AppInfo
@@ -74,10 +76,13 @@ private val TrayCellMinWidth = 72.dp
 /** A release faster than this (per second) goes all the way up or down; slower ones settle on a line. */
 private val TrayFlingVelocity = 600.dp
 
-/** Space left above the tray when the page shows no top menu, or has not said yet: a strip to tap. */
+/**
+ * Space left above the tray when the page shows no top menu, or has not said
+ * yet: a strip to tap. A measured menu is never taller than half the page
+ * (see [TrayLogic.TOP_MENU_SCRIPT]) and leaves at least [MinTopMenu].
+ */
 private val DefaultTopMenu = 48.dp
 private val MinTopMenu = 24.dp
-private val MaxTopMenu = 160.dp
 
 /** How dark the page gets behind the tray, pulled all the way up. */
 private const val ScrimAlpha = 0.32f
@@ -110,8 +115,9 @@ internal fun trayItems(
  * fling takes it all the way. [collapse] puts it down again, animated, from
  * outside: a launch, a tap above it, Back, Home.
  *
- * Also the bar's [DraggableState]: a drag, which a running animation gives way
- * to. Lives as long as the window, so it can be asked to collapse from there.
+ * Also the bar's [DraggableState]. A running animation gives way to a drag,
+ * on the bar or on the lines, and to [snapCollapsed]. Lives as long as the
+ * window, so it can be asked to collapse from there.
  */
 @Stable
 class TrayState : DraggableState {
@@ -134,23 +140,24 @@ class TrayState : DraggableState {
     private var line = 1f
     private var flingVelocity = Float.MAX_VALUE
     private val mutex = MutatorMutex()
+
+    /** The animation on its way (opening, settling, closing), if any. */
+    private var animation: Job? = null
     private val dragScope = object : DragScope {
         override fun dragBy(pixels: Float) {
             pull(pixels)
         }
     }
 
-    /** Put the tray down, animated (a no-op when it is down). */
+    /** Put the tray down, animated: also one only starting to come up (a no-op when it is down and still). */
     fun collapse() {
-        if (expansion > 0f) collapseRequests++
+        if (expansion > 0f || animation != null) collapseRequests++
     }
 
-    /** Put the tray down at once: the window is leaving the screen, or the bar is hiding. */
+    /** Put the tray down at once, stopping any animation: the window is leaving the screen, or the bar is hiding. */
     fun snapCollapsed() {
-        val wasOpen = expansion > 0f
+        animation?.cancel()
         expansion = 0f
-        // Also overrides an animation still on its way (it gives way to the new request).
-        if (wasOpen) collapseRequests++
     }
 
     /** The layout's measures: the tray's reach, a line's height, the fling speed (all px). */
@@ -161,6 +168,16 @@ class TrayState : DraggableState {
             maxExpansion = max
             if (expansion > max) expansion = max
         }
+    }
+
+    /**
+     * A finger on the lines moved by [delta] px (positive = down): an
+     * animation on its way stops, as it does for a drag on the bar. Returns
+     * what the tray took of it.
+     */
+    internal fun pullByUser(delta: Float): Float {
+        animation?.cancel()
+        return pull(delta)
     }
 
     /** A finger moved by [delta] px (positive = down); returns what the tray took of it. */
@@ -177,8 +194,14 @@ class TrayState : DraggableState {
 
     internal suspend fun animateTo(target: Float, velocity: Float = 0f) {
         mutex.mutate {
-            animate(expansion, target, velocity, spring(stiffness = Spring.StiffnessMediumLow)) { value, _ ->
-                expansion = value.coerceIn(0f, maxExpansion)
+            val job = currentCoroutineContext()[Job]
+            animation = job
+            try {
+                animate(expansion, target, velocity, spring(stiffness = Spring.StiffnessMediumLow)) { value, _ ->
+                    expansion = value.coerceIn(0f, maxExpansion)
+                }
+            } finally {
+                if (animation === job) animation = null
             }
         }
     }
@@ -200,10 +223,10 @@ class TrayState : DraggableState {
 private class TrayScrollConnection(private val tray: TrayState) : NestedScrollConnection {
 
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
-        if (available.y < 0f && source == NestedScrollSource.UserInput) Offset(0f, tray.pull(available.y)) else Offset.Zero
+        if (available.y < 0f && source == NestedScrollSource.UserInput) Offset(0f, tray.pullByUser(available.y)) else Offset.Zero
 
     override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
-        if (available.y > 0f && source == NestedScrollSource.UserInput) Offset(0f, tray.pull(available.y)) else Offset.Zero
+        if (available.y > 0f && source == NestedScrollSource.UserInput) Offset(0f, tray.pullByUser(available.y)) else Offset.Zero
 
     override suspend fun onPreFling(available: Velocity): Velocity {
         if (tray.expansion <= 0f || tray.expansion >= tray.maxExpansion) return Velocity.Zero
@@ -252,7 +275,7 @@ internal fun LauncherTray(
         if (open) onOpened()
     }
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val topMenu = with(density) { topMenuPx?.toDp()?.coerceIn(MinTopMenu, MaxTopMenu) } ?: DefaultTopMenu
+        val topMenu = with(density) { topMenuPx?.toDp()?.coerceAtLeast(MinTopMenu) } ?: DefaultTopMenu
         val columns = (maxWidth / TrayCellMinWidth).toInt().coerceAtLeast(1)
         val linePx = with(density) { TrayLineHeight.toPx() }
         val availablePx = with(density) { (maxHeight - topMenu - LauncherBarHeight).toPx() }
