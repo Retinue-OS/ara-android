@@ -49,6 +49,9 @@ enum class SkipReason(val key: String) {
     NoPermission("no-permission"),
     Unavailable("unavailable"),
     NoBackendSupport("no-backend-support"),
+
+    /** The current endpoint does not take health data (its upload switch is off). */
+    Disabled("disabled"),
 }
 
 /** The last sync's outcome, kept across restarts. */
@@ -71,6 +74,8 @@ data class HealthSyncStatus(
     val lastCount: Int? = null,
     val minIntervalMinutes: Int = HealthSyncLogic.DEFAULT_INTERVAL_MINUTES,
     val autoOnResume: Boolean = true,
+    /** The current endpoint takes health data at all (its per-endpoint upload switch); false with no endpoint. */
+    val enabled: Boolean = false,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         put("available", available)
@@ -81,6 +86,7 @@ data class HealthSyncStatus(
         put("last_count", lastCount?.let { JsonPrimitive(it) } ?: JsonNull)
         put("min_interval_minutes", minIntervalMinutes)
         put("auto_on_resume", autoOnResume)
+        put("enabled", enabled)
     }
 }
 
@@ -469,4 +475,6 @@ data class HealthSyncState(
     val failures: Int = 0,
     /** No automatic sync before this (epoch ms; 0 for none), after such a failure (see [HealthSyncLogic.backoffMs]). */
     val backoffUntil: Long = 0L,
+    /** The origin [failures] and [backoffUntil] belong to: a failing server does not hold back another. */
+    val backoffOrigin: String? = null,
 )

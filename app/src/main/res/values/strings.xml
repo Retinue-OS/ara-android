@@ -4,11 +4,14 @@
 
     <string name="action_cancel">Cancel</string>
     <string name="no_app_for_link">No app on this device can open that.</string>
-    <string name="msg_base_url_needed">Set the Retinue base URL to show the web app.</string>
+    <string name="msg_base_url_needed">Add a Retinue endpoint to show the web app.</string>
 
     <!-- retinue-shell: links (shell/ShellLinks). -->
     <string name="link_other_origin">This link is for %1$s, which is not set up in this app.</string>
     <string name="link_malformed">This link could not be opened.</string>
+    <string name="link_switch_title">Switch to %1$s?</string>
+    <string name="link_switch_body">This link is for %1$s, another Retinue set up in this app. Switch to it and open the link there?</string>
+    <string name="link_switch_confirm">Switch</string>
 
     <!-- Health Connect: why Ara asks (HealthRationaleActivity). -->
     <string name="health_rationale_title">Health data in Ara</string>
@@ -126,13 +129,34 @@
     <string name="auth_user">User name</string>
     <string name="auth_password">Password</string>
     <string name="auth_sign_in">Sign in</string>
+    <string name="auth_remember">Remember for this endpoint</string>
 
-    <!-- Settings. -->
-    <string name="settings_title">Shell settings</string>
+    <!-- Settings: the phone shell's own, reached from the web app's Settings page. -->
+    <string name="settings_title">Phone shell</string>
     <string name="settings_close">Close</string>
     <string name="settings_save">Save</string>
     <string name="settings_version">Ara shell %1$s</string>
-    <string name="settings_section_retinue">Retinue</string>
+    <string name="settings_section_endpoints">Retinue endpoints</string>
+    <string name="settings_endpoints_hint">The Retinue servers this phone can show. The web app\'s Settings page switches between them; here they are set up: address, client certificate, sign-in, and whether health data goes there. Each is listed under its own name, from its server.</string>
+    <string name="settings_endpoints_empty">No endpoint yet. Add the Retinue server this phone should show.</string>
+    <string name="settings_endpoint_add">Add endpoint</string>
+    <string name="settings_endpoint_edit">Edit endpoint</string>
+    <string name="settings_endpoint_use">Use</string>
+    <string name="settings_endpoint_current">Shown now</string>
+    <string name="settings_endpoint_summary">Certificate: %1$s · Sign-in: %2$s · Health data: %3$s</string>
+    <string name="settings_endpoint_summary_none">none</string>
+    <string name="settings_endpoint_summary_on">on</string>
+    <string name="settings_endpoint_summary_off">off</string>
+    <string name="settings_endpoint_remove">Remove endpoint</string>
+    <string name="settings_endpoint_remove_title">Remove %1$s?</string>
+    <string name="settings_endpoint_remove_body">Its address, certificate choice and stored password are forgotten on this phone. Nothing changes on the server.</string>
+    <string name="settings_endpoint_remove_confirm">Remove</string>
+    <string name="settings_endpoint_signin">Sign-in</string>
+    <string name="settings_endpoint_signin_hint">Only where the Retinue edge asks for a password instead of a certificate. Stored encrypted on this phone, and used for the dashboard and the health data upload alike.</string>
+    <string name="settings_endpoint_password_stored">A password is stored. Leave the field empty to keep it.</string>
+    <string name="settings_endpoint_forget_password">Forget password</string>
+    <string name="settings_endpoint_health">Upload health data to this endpoint</string>
+    <string name="settings_endpoint_health_hint">Health Connect data from this phone goes to this endpoint\'s letterbox. Off: nothing is read or sent for it, not even on request.</string>
     <string name="settings_base_url">Retinue base URL</string>
     <string name="settings_base_url_hint">https://agents.example.com</string>
     <string name="settings_base_url_https">Retinue needs https</string>
@@ -191,7 +215,7 @@
     <string name="wake_channel_name">Wake phrase</string>
     <string name="wake_channel_desc">Shown while Ara listens for the wake phrase in the background.</string>
     <string name="wake_notification_title">Listening for the wake phrase</string>
-    <string name="wake_notification_body">Tap to open Ara. Turn it off in the shell settings.</string>
+    <string name="wake_notification_body">Tap to open Ara. Turn it off in the phone shell settings.</string>
     <string name="wake_alert_channel_name">Wake phrase heard</string>
     <string name="wake_alert_channel_desc">Opens Ara when the wake phrase is heard while another app is in front or the phone is locked.</string>
     <string name="wake_alert_title">Wake phrase heard</string>
@@ -264,6 +288,8 @@
     <string name="page_ssl_other">error %1$d</string>
     <string name="page_retry">Retry</string>
     <string name="page_choose_certificate">Choose certificate</string>
+    <string name="page_switch_endpoint">Switch endpoint</string>
+    <string name="page_open_settings">Phone shell settings</string>
     <string name="settings_section_page">Page status</string>
     <string name="page_status_idle">Not loaded yet.</string>
     <string name="page_status_loading">Loading (%1$d%%)</string>

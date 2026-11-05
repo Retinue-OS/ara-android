@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -52,6 +53,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -82,7 +84,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.data.credentials
 import os.retinue.ara.health.HealthPermissionRequester
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
@@ -90,6 +95,7 @@ import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
@@ -97,6 +103,7 @@ import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
 import os.retinue.ara.shell.ShellDecisions
 import os.retinue.ara.shell.ShellLinks
+import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
@@ -153,6 +160,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private val settings: ShellSettings get() = page.settings
     override val router: UrlRouter get() = page.router
     override val certificateAlias: String? get() = settings.certificateAlias
+    override fun storedCredentials(): BasicCredentials? = settings.current?.credentials()
 
     /** This window shows the page (the other one shows a placeholder). */
     private val showsPage: Boolean get() = page.owner === this
@@ -178,6 +186,22 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     /** A folder with apps in it that the user asked to remove: confirmed first. */
     private var confirmRemove by mutableStateOf<LauncherEntry.Folder?>(null)
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
+
+    /**
+     * The endpoint editor, over the settings (see [EndpointEditor]). The draft
+     * lives here, not in the editor: the certificate chooser is a system dialog
+     * whose answer arrives later and goes into the draft.
+     */
+    private var endpointEditor by mutableStateOf<EndpointDraft?>(null)
+
+    /** An endpoint the user asked to remove: confirmed first. */
+    private var confirmRemoveEndpoint by mutableStateOf<Endpoint?>(null)
+
+    /** A `retinue-shell:` link for another configured endpoint, waiting for the user to agree to the switch. */
+    private var linkSwitch by mutableStateOf<LinkSwitch?>(null)
+
+    /** The editor was opened for the first endpoint once in this window (a dismissal is not nagged about). */
+    private var firstRunEditorShown = false
     private var isDefaultHome by mutableStateOf(false)
     private var pinShortcutsSupported by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
@@ -391,6 +415,37 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                         }
                     }
                     if (showSettings) SettingsOverlay(launcher)
+                    endpointEditor?.let { draft ->
+                        Surface(Modifier.fillMaxSize()) {
+                            EndpointEditor(
+                                draft = draft,
+                                onChange = { endpointEditor = it },
+                                onSave = { saveEndpoint(draft) },
+                                onSelectCertificate = { chooseCertificateFor(draft) },
+                                onClearCertificate = { endpointEditor = draft.copy(certificateAlias = null) },
+                                onRemove = if (draft.isNew) null else ({ askRemoveEndpoint(draft.id) }),
+                                onDismiss = { endpointEditor = null },
+                            )
+                        }
+                    }
+                    confirmRemoveEndpoint?.let { endpoint ->
+                        EndpointRemoveDialog(
+                            label = EndpointLabels.label(endpoint, settings.endpoints),
+                            onConfirm = {
+                                viewModel.removeEndpoint(endpoint.id)
+                                confirmRemoveEndpoint = null
+                                endpointEditor = null
+                            },
+                            onDismiss = { confirmRemoveEndpoint = null },
+                        )
+                    }
+                    linkSwitch?.let { request ->
+                        LinkSwitchDialog(
+                            label = request.label,
+                            onConfirm = { switchForLink(request) },
+                            onDismiss = { linkSwitch = null },
+                        )
+                    }
                     editor?.let { request ->
                         LaunchedEffect(request) { viewModel.refreshApps() }
                         Surface(Modifier.fillMaxSize()) {
@@ -565,6 +620,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                 onRetry = ::retryLoad,
                 onChooseCertificate = ::chooseCertificate,
                 onSettings = ::openSettings,
+                onSwitchEndpoint = if (settings.endpoints.size > 1) ({ openSettings() }) else null,
             )
             PageStatus.Idle, PageStatus.Ready -> Unit
         }
@@ -610,13 +666,15 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             showSettings = false
         }
 
-        override fun saveBaseUrl(url: String) {
-            viewModel.setBaseUrl(url)
+        override fun addEndpoint() {
+            endpointEditor = EndpointDraft.forNew(ShellViewModel.newId())
         }
 
-        override fun selectCertificate() = chooseCertificate()
-        override fun clearCertificate() {
-            viewModel.setCertificateAlias(null)
+        override fun editEndpoint(id: String) = this@MainActivity.editEndpoint(id)
+
+        override fun useEndpoint(id: String) {
+            viewModel.selectEndpoint(id)
+            showSettings = false
         }
 
         override fun requestHomeRole() = requestHome()
@@ -899,14 +957,24 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     }
 
     /**
-     * The pending link's URL when it is on the configured origin. Otherwise
+     * The pending link's URL when it is on the configured origin. For another
+     * configured endpoint the user is asked whether to switch ([LinkSwitchDialog]);
+     * the link is kept and loads once the switch has been made. Otherwise
      * nothing is loaded and nothing is set up: the user is told, and null.
      */
     private fun takeLinkUrl(): String? {
         val link = pendingLink ?: return null
         pendingLink = null
-        return when (val target = ShellLinks.target(link, settings.base)) {
+        val current = settings.current
+        val others = settings.endpoints.filter { it.id != current?.id }.associate { it.id to it.baseUrl }
+        return when (val target = ShellLinks.target(link, settings.base, others)) {
             is LinkTarget.Open -> target.url
+            is LinkTarget.OtherEndpoint -> {
+                settings.endpoints.firstOrNull { it.id == target.endpointId }?.let { endpoint ->
+                    linkSwitch = LinkSwitch(endpoint.id, EndpointLabels.label(endpoint, settings.endpoints), link)
+                }
+                null
+            }
             is LinkTarget.OtherOrigin -> {
                 Toast.makeText(this, getString(R.string.link_other_origin, target.origin), Toast.LENGTH_LONG).show()
                 null
@@ -932,17 +1000,30 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
         keepSplitWindowInRecents()
+        // The endpoint list the page sees: baked into the bridge script on every
+        // install, and pushed to a page already on screen when it changed.
+        val labels = page.endpointLabels()
+        val labelsChanged = labels != page.pushedEndpoints
+        page.pushedEndpoints = labels
         if (base == null) {
             page.loadedBase = null
+            page.loadedEndpointId = null
             showSettings = true
+            // First run: straight into the editor of the first endpoint.
+            if (s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow) {
+                firstRunEditorShown = true
+                if (endpointEditor == null) endpointEditor = EndpointDraft.forNew(ShellViewModel.newId())
+            }
             webView?.loadUrl("about:blank")
             // A link cannot be for an origin that is not set up.
             openPendingLink()
             tryDeliverWake()
             return
         }
-        if (base != page.loadedBase || aliasChanged) {
+        val endpointId = s.current?.id
+        if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
             page.loadedBase = base
+            page.loadedEndpointId = endpointId
             bridge.install()
             page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
@@ -950,6 +1031,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             // A link that brought the shell up loads instead of the start page.
             webView?.loadUrl(takeLinkUrl() ?: ShellUrls.startUrl(base))
         } else {
+            if (labelsChanged) bridge.endpointsChanged(labels)
             openPendingLink()
             tryDeliverWake()
         }
@@ -1080,18 +1162,24 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         openFolderId = null
         folderEditor = null
         confirmRemove = null
+        endpointEditor = null
+        confirmRemoveEndpoint = null
         if (settings.base != null) showSettings = false
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
-                openFolderId != null || folderEditor != null || confirmRemove != null
+                openFolderId != null || folderEditor != null || confirmRemove != null ||
+                endpointEditor != null || confirmRemoveEndpoint != null || linkSwitch != null
             // The split-screen window is a plain app: at the root, Back leaves it.
             val webCanGoBack = showsPage && webView?.canGoBack() == true
             when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
+                    linkSwitch != null -> linkSwitch = null
+                    confirmRemoveEndpoint != null -> confirmRemoveEndpoint = null
+                    endpointEditor != null -> endpointEditor = null
                     confirmRemove != null -> confirmRemove = null
                     editing != null -> editing = null
                     folderEditor != null -> folderEditor = null
@@ -1109,7 +1197,43 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     private fun openSettings() {
         showSettings = true
+        // The names the list shows come from the servers; ask again if they are due.
+        viewModel.refreshEndpointNames()
     }
+
+    /**
+     * The page's `openSettings(section)`: the endpoint section means the list
+     * (it is at the top), or the editor straight away when there is one endpoint.
+     */
+    private fun openSettingsAt(section: String?) {
+        openSettings()
+        if (section == ShellMessages.SECTION_ENDPOINTS && settings.endpoints.size == 1) editEndpoint(settings.endpoints[0].id)
+    }
+
+    private fun editEndpoint(id: String) {
+        val endpoint = settings.endpoints.firstOrNull { it.id == id } ?: return
+        endpointEditor = EndpointDraft.of(endpoint)
+    }
+
+    private fun saveEndpoint(draft: EndpointDraft) {
+        if (!draft.canSave) return
+        viewModel.saveEndpoint(draft)
+        endpointEditor = null
+    }
+
+    private fun askRemoveEndpoint(id: String) {
+        confirmRemoveEndpoint = settings.endpoints.firstOrNull { it.id == id } ?: return
+    }
+
+    /** The link's endpoint becomes the current one; the link loads once it is (applySettings → takeLinkUrl). */
+    private fun switchForLink(request: LinkSwitch) {
+        linkSwitch = null
+        pendingLink = request.link
+        viewModel.selectEndpoint(request.endpointId)
+    }
+
+    /** A link for another configured endpoint: which, what it is called, and the link itself. */
+    private class LinkSwitch(val endpointId: String, val label: String, val link: String)
 
     /** The failure card's Retry: load the start page afresh. */
     private fun retryLoad() {
@@ -1320,16 +1444,36 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
 
     // --- Certificate ---------------------------------------------------------
 
+    /** The failure card's "Choose certificate": for the current endpoint, saved at once. */
     private fun chooseCertificate() {
-        val host = router.origin
+        val endpoint = settings.current ?: return openSettings()
+        val host = endpoint.origin
         KeyChain.choosePrivateKeyAlias(
             this,
-            { alias -> runOnUiThread { if (alias != null) viewModel.setCertificateAlias(alias) } },
+            { alias -> runOnUiThread { if (alias != null) viewModel.setEndpointCertificate(endpoint.id, alias) } },
             null, // any key type
             null, // any issuer
             host?.host,
             host?.port ?: -1,
-            settings.certificateAlias,
+            endpoint.certificateAlias,
+        )
+    }
+
+    /** The editor's "Select certificate": the answer goes into the draft, saved with it. */
+    private fun chooseCertificateFor(draft: EndpointDraft) {
+        val host = ShellUrls.origin(draft.base)
+        KeyChain.choosePrivateKeyAlias(
+            this,
+            { alias ->
+                runOnUiThread {
+                    if (alias != null) endpointEditor = endpointEditor?.takeIf { it.id == draft.id }?.copy(certificateAlias = alias)
+                }
+            },
+            null, // any key type
+            null, // any issuer
+            host?.host,
+            host?.port ?: -1,
+            draft.certificateAlias,
         )
     }
 
@@ -1339,7 +1483,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     internal fun onWebMessage(message: WebMessage) {
         when (message) {
             is WebMessage.VoiceActive -> WakeRuntime.setVoiceActive(message.active)
-            WebMessage.OpenSettings -> openSettings()
+            is WebMessage.OpenSettings -> openSettingsAt(message.section)
+            is WebMessage.SelectEndpoint -> viewModel.selectEndpoint(message.id)
             is WebMessage.Speak, WebMessage.StopSpeaking, WebMessage.Voices -> page.speech?.handle(message)
             WebMessage.HealthSync -> HealthSyncRuntime.syncNow(
                 HealthSyncLogic.triggerFor(webView?.url, settings.base),
@@ -1382,6 +1527,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         page.pageLoading = false
         bridge.onPageFinished(url)
         updatePage { onPageFinished(url) }
+        // The server is reachable: a name that is due is fetched now (rate-limited).
+        if (page.pageReady) viewModel.refreshEndpointNames()
         // A wake waiting for this page goes out now.
         if (pendingWakeAt != 0L) tryDeliverWake()
     }
@@ -1492,6 +1639,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private fun AuthDialog(prompt: AuthPrompt) {
         var user by remember(prompt) { mutableStateOf("") }
         var password by remember(prompt) { mutableStateOf("") }
+        var keep by remember(prompt) { mutableStateOf(false) }
+        val endpointId = settings.current?.id
         AlertDialog(
             onDismissRequest = { prompt.cancel() },
             title = { Text(stringResource(R.string.auth_title)) },
@@ -1511,10 +1660,21 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
+                    if (endpointId != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = keep, onCheckedChange = { keep = it })
+                            Text(stringResource(R.string.auth_remember), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { prompt.proceed(user, password) }) { Text(stringResource(R.string.auth_sign_in)) }
+                TextButton(
+                    onClick = {
+                        if (keep && endpointId != null) viewModel.rememberCredentials(endpointId, user, password)
+                        prompt.proceed(user, password)
+                    },
+                ) { Text(stringResource(R.string.auth_sign_in)) }
             },
             dismissButton = {
                 TextButton(onClick = { prompt.cancel() }) { Text(stringResource(R.string.action_cancel)) }

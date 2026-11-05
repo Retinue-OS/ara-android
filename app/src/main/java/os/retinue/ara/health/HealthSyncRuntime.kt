@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,7 +28,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.data.AraStore
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
+import os.retinue.ara.net.BasicCredentials
+import os.retinue.ara.shell.Origin
 import os.retinue.ara.shell.UrlRouter
 
 /**
@@ -49,10 +54,13 @@ interface HealthSyncListener {
  * Process-wide owner of Health Connect sync (contract §3). A sync reads what
  * changed since the stored Changes token (or, without a usable token, the
  * last [HealthSyncLogic.WINDOW_DAYS] days) and writes it, in parts of at most
- * [HealthSyncLogic.MAX_PART] changes, as files into the configured origin's
+ * [HealthSyncLogic.MAX_PART] changes, as files into the current endpoint's
  * letterbox (`<origin>/inbox/`, a WebDAV share: one plain `PUT` per part),
- * authenticated as the WebView is (the client certificate and the WebView's
- * cookies for that origin). Before Health Connect is read, the letterbox is
+ * authenticated as the WebView is (the endpoint's client certificate and
+ * stored password, and the WebView's cookies for that origin). Only an
+ * endpoint whose health upload is switched on gets any of this: for another
+ * one nothing is read and nothing is sent, and a sync asked for is reported
+ * as skipped (`disabled`). Before Health Connect is read, the letterbox is
  * probed: a server without one costs one small request, and automatic syncs
  * then back off (doubling from the interval up to six hours; so after any
  * upload error) until a sync succeeds. A round's parts are written to the
@@ -88,6 +96,10 @@ object HealthSyncRuntime {
     private var available = false
     private var permissions = PermissionState.None
 
+    /** The current endpoint's origin (`https://host[:port]`), and whether it takes health data at all. */
+    private var endpointOrigin: String? = null
+    private var uploadEnabled = false
+
     /** The one sync running. */
     private var job: Job? = null
 
@@ -116,12 +128,28 @@ object HealthSyncRuntime {
             loaded.complete(Unit)
             refresh()
         }
-        // A round on the device is for one origin: when the base URL is changed
-        // or cleared, a round for the old one goes at once, not at the next sync.
+        // The current endpoint: its origin and its health switch. A round on the
+        // device is for one origin: when the endpoint is switched or cleared, a
+        // round for the old one goes at once, not at the next sync. A sync still
+        // running for the old endpoint, or for this one with its switch just
+        // turned off, is stopped first: nothing more is read or sent for it, and
+        // the round is not discarded under its feet.
         scope.launch {
-            store.settings.map { UrlRouter(it.base).origin?.toString() }.distinctUntilChanged().collect { origin ->
-                withContext(Dispatchers.IO) { rounds.discardUnless(origin) }
-            }
+            store.settings
+                .map { s -> (UrlRouter(s.base).origin?.toString()) to (s.current?.healthUpload == true) }
+                .distinctUntilChanged()
+                .collect { (origin, enabled) ->
+                    val stale = origin != endpointOrigin || !enabled
+                    endpointOrigin = origin
+                    uploadEnabled = enabled
+                    val running = job?.takeIf { it.isActive }
+                    if (stale && running != null) {
+                        running.cancelAndJoin()
+                        if (!enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+                    }
+                    publish()
+                    withContext(Dispatchers.IO) { rounds.discardUnless(origin) }
+                }
         }
     }
 
@@ -191,6 +219,7 @@ object HealthSyncRuntime {
             lastCount = state.lastCount,
             minIntervalMinutes = state.intervalMinutes,
             autoOnResume = state.autoOnResume,
+            enabled = uploadEnabled,
         )
         if (s == _status.value) return
         _status.value = s
@@ -208,7 +237,14 @@ object HealthSyncRuntime {
 
     /** Decide (see [HealthSyncLogic.decide]) and start a sync. Main thread, no suspension between check and start. */
     private fun start(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
+        // The endpoint's own switch comes first: off, nothing is read for it.
+        if (!uploadEnabled) {
+            if (trigger.deliberate) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+            return
+        }
         val now = System.currentTimeMillis()
+        // A back-off is the failing server's, not the next one's.
+        val backoffUntil = if (state.backoffOrigin == endpointOrigin) state.backoffUntil else 0L
         val decision = HealthSyncLogic.decide(
             trigger = trigger,
             now = now,
@@ -217,7 +253,7 @@ object HealthSyncRuntime {
             lastDeliberateAt = lastDeliberateAt,
             intervalMinutes = state.intervalMinutes,
             autoOnResume = state.autoOnResume,
-            backoffUntil = state.backoffUntil,
+            backoffUntil = backoffUntil,
             backoffReason = HealthSyncLogic.backoffReason(state.lastResult, state.lastError),
         )
         when (decision) {
@@ -241,8 +277,13 @@ object HealthSyncRuntime {
     private suspend fun run(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
         emit(HealthSyncEvent.Started(trigger))
         save { it.copy(lastAttemptAt = System.currentTimeMillis()) }
+        // The endpoint this sync is for, read once: [start] checked the switch,
+        // but the settings may have changed while the attempt was saved. Its own
+        // switch decides here, and the outcome is booked against its origin.
+        val endpoint = store.settingsNow().current
+        val origin = endpoint?.origin?.toString()
         val outcome = try {
-            sync(trigger, requester)
+            if (endpoint == null || !endpoint.healthUpload) SyncOutcome.Skipped(SkipReason.Disabled) else sync(endpoint, trigger, requester)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -260,42 +301,52 @@ object HealthSyncRuntime {
                         token = outcome.token,
                         tokenTypes = outcome.types,
                         tokenOrigin = outcome.origin,
-                        failures = 0,
-                        backoffUntil = 0L,
-                    )
+                    ).let { s ->
+                        // This server's back-off ends; another server's stays its own.
+                        if (s.backoffOrigin == null || s.backoffOrigin == outcome.origin) {
+                            s.copy(failures = 0, backoffUntil = 0L, backoffOrigin = null)
+                        } else {
+                            s
+                        }
+                    }
                 }
                 emit(HealthSyncEvent.Done(outcome.count))
             }
             is SyncOutcome.Skipped -> {
                 save {
                     val s = it.copy(lastResult = SyncResult.Skipped, lastError = outcome.reason.key, lastCount = null)
-                    if (outcome.reason == SkipReason.NoBackendSupport) s.backedOff() else s
+                    if (outcome.reason == SkipReason.NoBackendSupport) s.backedOff(origin) else s
                 }
                 emit(HealthSyncEvent.Skipped(outcome.reason))
             }
             is SyncOutcome.Failed -> {
-                save { it.copy(lastResult = SyncResult.Error, lastError = outcome.message, lastCount = null).backedOff() }
+                save { it.copy(lastResult = SyncResult.Error, lastError = outcome.message, lastCount = null).backedOff(origin) }
                 emit(HealthSyncEvent.Error(outcome.message))
             }
         }
     }
 
-    /** One more failure in a row: automatic syncs wait longer (see [HealthSyncLogic.backoffMs]). */
-    private fun HealthSyncState.backedOff(): HealthSyncState {
-        val n = failures + 1
-        return copy(failures = n, backoffUntil = System.currentTimeMillis() + HealthSyncLogic.backoffMs(n, intervalMinutes))
+    /** One more failure in a row for [origin]: automatic syncs to it wait longer (see [HealthSyncLogic.backoffMs]). */
+    private fun HealthSyncState.backedOff(origin: String?): HealthSyncState {
+        val n = if (backoffOrigin == origin) failures + 1 else 1
+        return copy(
+            failures = n,
+            backoffUntil = System.currentTimeMillis() + HealthSyncLogic.backoffMs(n, intervalMinutes),
+            backoffOrigin = origin,
+        )
     }
 
-    /** One sync (see [HealthSyncer]) against Health Connect and the configured origin's letterbox. */
-    private suspend fun sync(trigger: HealthTrigger, requester: HealthPermissionRequester?): SyncOutcome {
-        val settings = store.settingsNow()
-        val origin = UrlRouter(settings.base).origin?.toString()
+    /** One sync (see [HealthSyncer]) against Health Connect and the current endpoint's letterbox. */
+    private suspend fun sync(endpoint: Endpoint, trigger: HealthTrigger, requester: HealthPermissionRequester?): SyncOutcome {
+        val origin = endpoint.origin?.toString()
+        // The stored password is opened off the main thread (the Keystore).
+        val credentials = withContext(Dispatchers.IO) { endpoint.credentials() }
         // Nothing touches HealthConnectClient.getOrCreate (which throws without
         // Health Connect) before the syncer's availability gate: the client is
         // made on first use, after it.
         val syncer = HealthSyncer(
             source = HealthConnectSource(available = ::sdkAvailable, create = ::client),
-            letterbox = OkHttpLetterbox(settings.certificateAlias),
+            letterbox = OkHttpLetterbox(endpoint.certificateAlias, credentials, endpoint.origin),
             rounds = rounds,
             client = ClientInfo(app.packageName, BuildConfig.VERSION_NAME),
         )
@@ -315,16 +366,21 @@ object HealthSyncRuntime {
 
     /**
      * The letterbox over OkHttp, as the WebView reaches the origin: the
-     * selected client certificate ([alias]) and the WebView's cookies, read
-     * on the main thread per request (the session may be renewed meanwhile).
-     * Network and the KeyChain on the IO dispatcher.
+     * endpoint's client certificate ([alias]) and stored password
+     * ([credentials], answered to its host only), and the WebView's cookies,
+     * read on the main thread per request (the session may be renewed
+     * meanwhile). Network and the KeyChain on the IO dispatcher.
      */
-    private class OkHttpLetterbox(private val alias: String?) : Letterbox {
+    private class OkHttpLetterbox(
+        private val alias: String?,
+        private val credentials: BasicCredentials?,
+        private val origin: Origin?,
+    ) : Letterbox {
 
         private var http: OkHttpClient? = null
 
         private suspend fun client(): OkHttpClient =
-            http ?: withContext(Dispatchers.IO) { httpClient(alias) }.also { http = it }
+            http ?: withContext(Dispatchers.IO) { httpClient(alias, credentials, origin) }.also { http = it }
 
         /** Is there a letterbox? A `PROPFIND` of depth 0 on it, then an `OPTIONS` if that is a 404 (see [HealthSyncLogic.probe]). */
         override suspend fun probe(origin: String): ProbeResult {
@@ -373,13 +429,7 @@ object HealthSyncRuntime {
         }
     }
 
-    /** The client certificate as the WebView presents it; none when none is selected. No redirects either way. */
-    private fun httpClient(alias: String?): OkHttpClient {
-        if (alias != null) return AraHttp.build(app, alias, TimeUnit.SECONDS.toMillis(TIMEOUT_S))
-        return OkHttpClient.Builder()
-            .callTimeout(TIMEOUT_S, TimeUnit.SECONDS)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .build()
-    }
+    /** The client certificate and password as the WebView presents them; neither when none is set. No redirects. */
+    private fun httpClient(alias: String?, credentials: BasicCredentials?, origin: Origin?): OkHttpClient =
+        AraHttp.build(app, alias, TimeUnit.SECONDS.toMillis(TIMEOUT_S), credentials, origin)
 }

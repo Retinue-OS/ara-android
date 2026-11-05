@@ -27,17 +27,24 @@ import os.retinue.ara.wake.WakeMode
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "ara")
 
 /**
- * The single persistence surface: shell settings, the launcher bar (as JSON,
- * see [LauncherCodec]) and the health sync state.
+ * The single persistence surface: shell settings (the endpoints as JSON, see
+ * [EndpointCodec]), the launcher bar (as JSON, see [LauncherCodec]) and the
+ * health sync state.
+ *
+ * Endpoints replaced the one base URL and certificate alias of earlier builds:
+ * until the endpoint list is written once, those two keys are read as the
+ * first endpoint, and every write of the list mirrors the current endpoint
+ * back into them, so an older build still finds its server.
  */
 class AraStore(context: Context) {
 
     private val store = context.applicationContext.dataStore
 
     val settings: Flow<ShellSettings> = store.data.map { p ->
+        val endpoints = endpointsOf(p)
         ShellSettings(
-            baseUrl = p[K.baseUrl] ?: "",
-            certificateAlias = p[K.certAlias],
+            endpoints = endpoints.endpoints,
+            currentEndpointId = endpoints.currentId,
             wakeMode = WakeMode.fromKey(p[K.wakeMode]),
             wakeThreshold = p[K.wakeThreshold] ?: ShellSettings.DEFAULT_WAKE_THRESHOLD,
             wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
@@ -64,10 +71,27 @@ class AraStore(context: Context) {
 
     suspend fun settingsNow(): ShellSettings = settings.first()
 
-    suspend fun setBaseUrl(url: String) = edit { it[K.baseUrl] = url.trim() }
+    /**
+     * Apply [change] to the stored endpoints atomically (no lost updates
+     * between edits) and return the result. The current endpoint's base URL
+     * and certificate alias are mirrored into the legacy keys.
+     */
+    suspend fun updateEndpoints(change: (EndpointSet) -> EndpointSet): EndpointSet {
+        var after = EndpointSet.EMPTY
+        edit { p ->
+            after = change(endpointsOf(p))
+            p[K.endpoints] = EndpointCodec.encode(after.endpoints)
+            p.putOrRemove(K.currentEndpoint, after.currentId)
+            val current = after.current
+            p.putOrRemove(K.baseUrl, current?.baseUrl?.trim()?.takeIf { it.isNotEmpty() })
+            p.putOrRemove(K.certAlias, current?.certificateAlias)
+        }
+        return after
+    }
 
-    suspend fun setCertificateAlias(alias: String?) = edit {
-        if (alias == null) it.remove(K.certAlias) else it[K.certAlias] = alias
+    private fun endpointsOf(p: Preferences): EndpointSet {
+        val list = EndpointCodec.decode(p[K.endpoints]) ?: EndpointCodec.legacy(p[K.baseUrl], p[K.certAlias])
+        return EndpointSet(list, p[K.currentEndpoint])
     }
 
     suspend fun setWakeMode(mode: WakeMode) = edit { it[K.wakeMode] = mode.key }
@@ -125,6 +149,7 @@ class AraStore(context: Context) {
             it[K.healthPermissionsAsked] = s.permissionsAsked
             it[K.healthFailures] = s.failures
             it[K.healthBackoffUntil] = s.backoffUntil
+            it.putOrRemove(K.healthBackoffOrigin, s.backoffOrigin)
         }
         return after
     }
@@ -143,6 +168,7 @@ class AraStore(context: Context) {
         permissionsAsked = p[K.healthPermissionsAsked] ?: false,
         failures = p[K.healthFailures] ?: 0,
         backoffUntil = p[K.healthBackoffUntil] ?: 0L,
+        backoffOrigin = p[K.healthBackoffOrigin],
     )
 
     private fun MutablePreferences.putOrRemove(key: Preferences.Key<String>, value: String?) {
@@ -154,8 +180,11 @@ class AraStore(context: Context) {
     }
 
     private object K {
+        /** The one base URL and certificate alias of builds before the endpoint list; mirrored from the current endpoint. */
         val baseUrl = stringPreferencesKey("base_url")
         val certAlias = stringPreferencesKey("certificate_alias")
+        val endpoints = stringPreferencesKey("endpoints_json")
+        val currentEndpoint = stringPreferencesKey("current_endpoint")
         val wakeMode = stringPreferencesKey("wake_mode")
         val wakeThreshold = floatPreferencesKey("wake_threshold")
         val wakeModelUrl = stringPreferencesKey("wake_model_url")
@@ -179,5 +208,6 @@ class AraStore(context: Context) {
         val healthPermissionsAsked = booleanPreferencesKey("health_permissions_asked")
         val healthFailures = intPreferencesKey("health_failures")
         val healthBackoffUntil = longPreferencesKey("health_backoff_until")
+        val healthBackoffOrigin = stringPreferencesKey("health_backoff_origin")
     }
 }

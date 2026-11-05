@@ -39,7 +39,8 @@ fun PageProgressBar(progress: Int, modifier: Modifier = Modifier) {
 
 /**
  * Covers the web area when the main frame failed: why, where, and what to do
- * (retry, pick a client certificate, open the shell settings).
+ * (retry, pick a client certificate, switch to another endpoint when there is
+ * one, open the phone shell's settings).
  */
 @Composable
 fun PageFailureCard(
@@ -50,6 +51,7 @@ fun PageFailureCard(
     onChooseCertificate: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onSwitchEndpoint: (() -> Unit)? = null,
 ) {
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(
@@ -75,7 +77,10 @@ fun PageFailureCard(
                             Text(stringResource(R.string.page_choose_certificate))
                         }
                     }
-                    OutlinedButton(onClick = onSettings) { Text(stringResource(R.string.settings_title)) }
+                    if (onSwitchEndpoint != null) {
+                        OutlinedButton(onClick = onSwitchEndpoint) { Text(stringResource(R.string.page_switch_endpoint)) }
+                    }
+                    OutlinedButton(onClick = onSettings) { Text(stringResource(R.string.page_open_settings)) }
                 }
             }
         }

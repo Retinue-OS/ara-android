@@ -2,11 +2,13 @@
 // only (see web/ShellBridge.kt). Two things live here:
 //
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
-//     {platform, version, setVoiceActive(bool), openSettings()} and Health
-//     Connect sync: healthConnectAvailable(), healthSync(), healthSyncStatus(),
-//     setHealthSyncInterval(minutes), setHealthAutoSync(bool). Shell -> web
-//     events arrive as `retinue-shell` CustomEvents dispatched on window; the
-//     shell checks whether a page listener ran for them (see below).
+//     {platform, version, setVoiceActive(bool), openSettings(section?)},
+//     Health Connect sync: healthConnectAvailable(), healthSync(),
+//     healthSyncStatus(), setHealthSyncInterval(minutes),
+//     setHealthAutoSync(bool), and the endpoints (RetinueShell/3):
+//     endpoints(), selectEndpoint(id). Shell -> web events arrive as
+//     `retinue-shell` CustomEvents dispatched on window; the shell checks
+//     whether a page listener ran for them (see below).
 //
 //  2. A speechSynthesis / SpeechSynthesisUtterance stand-in, backed by
 //     Android's TextToSpeech, installed only when the WebView has no working
@@ -39,6 +41,7 @@
   var health = {
     available: false, permissions: 'none', last_sync_at: null, last_result: null,
     last_error: null, last_count: null, min_interval_minutes: 5, auto_on_resume: true,
+    enabled: false,
   };
   function takeHealth(s) {
     if (!s || typeof s !== 'object') return;
@@ -48,14 +51,49 @@
   }
   try { takeHealth(JSON.parse("__RETINUE_HEALTH_STATUS__")); } catch (_) { /* the bare asset: defaults */ }
 
+  // ---- Endpoints -----------------------------------------------------------
+  //
+  // The Retinue servers this phone knows, as the shell shows them: id, label
+  // (the instance's own name) and which one is shown. A snapshot the shell
+  // baked in when it installed this script, replaced by its `endpoints.status`
+  // messages (an `endpoints` event follows each). Switching and editing are the
+  // shell's: the page only asks, and never learns the other servers' URLs.
+  var endpoints = [];
+  function takeEndpoints(list) {
+    if (!Array.isArray(list)) return;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e && typeof e === 'object' && typeof e.id === 'string' && e.id) {
+        out.push({ id: e.id, label: typeof e.label === 'string' && e.label ? e.label : e.id, current: !!e.current });
+      }
+    }
+    endpoints = out;
+  }
+  try { takeEndpoints(JSON.parse("__RETINUE_ENDPOINTS__")); } catch (_) { /* the bare asset: none */ }
+
   var shell = {
     platform: 'android',
     version: '__RETINUE_SHELL_VERSION__',
     // The page has the microphone in use: the shell pauses wake detection and
     // keeps the screen on until it is reported inactive again.
     setVoiceActive: function (active) { post({ type: 'voiceActive', active: !!active }); },
-    openSettings: function () { post({ type: 'openSettings' }); },
+    // The native settings; `section` names a part of them ('endpoints': the
+    // endpoint list, or the editor of the one endpoint there is).
+    openSettings: function (section) {
+      var msg = { type: 'openSettings' };
+      if (typeof section === 'string' && section) msg.section = section;
+      post(msg);
+    },
     nativeSpeech: false,
+    // The configured endpoints as a JSON string: [{id, label, current}].
+    endpoints: function () { return JSON.stringify(endpoints); },
+    // Show the endpoint `id` (one of endpoints()); the shell switches and
+    // loads that server's dashboard, so this page is left.
+    selectEndpoint: function (id) {
+      if (typeof id !== 'string' || !id) return;
+      post({ type: 'endpoint.select', id: id });
+    },
     healthConnectAvailable: function () { return health.available ? 'true' : 'false'; },
     // A sync now (asks for Health Connect permissions first if needed);
     // returns at once, the outcome comes as `health-sync` events.
@@ -151,7 +189,9 @@
   });
 
   receivers.push(function (msg) {
-    if (msg && msg.type === 'health.status') takeHealth(msg.status);
+    if (!msg) return;
+    if (msg.type === 'health.status') takeHealth(msg.status);
+    else if (msg.type === 'endpoints.status') takeEndpoints(msg.endpoints);
   });
 
   // ---- speechSynthesis stand-in -------------------------------------------

@@ -277,17 +277,21 @@ class HealthSyncLogicTest {
         assertEquals(
             Json.parseToJsonElement(
                 """{"available":false,"permissions":"none","last_sync_at":null,"last_result":null,
-                "last_error":null,"last_count":null,"min_interval_minutes":5,"auto_on_resume":true}""",
+                "last_error":null,"last_count":null,"min_interval_minutes":5,"auto_on_resume":true,"enabled":false}""",
             ),
             HealthSyncStatus().toJson(),
         )
         val s = HealthSyncStatus(
             available = true, permissions = PermissionState.Partial, lastSyncAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(),
-            lastResult = SyncResult.Ok, lastCount = 12, minIntervalMinutes = 10, autoOnResume = false,
+            lastResult = SyncResult.Ok, lastCount = 12, minIntervalMinutes = 10, autoOnResume = false, enabled = true,
         ).toJson()
         assertEquals("\"2026-11-01T17:15:00Z\"", s["last_sync_at"].toString())
         assertEquals("\"partial\"", s["permissions"].toString())
         assertEquals("12", s["last_count"].toString())
+        assertEquals("true", s["enabled"].toString())
+        // The per-endpoint switch, off: a sync asked for is skipped with its own reason.
+        assertEquals("disabled", SkipReason.Disabled.key)
+        assertEquals("""{"state":"skipped","reason":"disabled"}""", HealthSyncEvent.Skipped(SkipReason.Disabled).detail().toString())
     }
 
     @Test
