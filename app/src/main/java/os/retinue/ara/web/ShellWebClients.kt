@@ -23,6 +23,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.net.AraHttp
+import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
@@ -32,6 +33,9 @@ import os.retinue.ara.shell.UrlRouter
 interface ShellHost {
     val router: UrlRouter
     val certificateAlias: String?
+
+    /** The current endpoint's stored user name and password, opened for use; null when none. */
+    fun storedCredentials(): BasicCredentials?
 
     fun onPageStarted(url: String?)
     fun onPageFinished(url: String?)
@@ -50,8 +54,8 @@ interface ShellHost {
     fun onConsoleError(message: String, source: String, line: Int)
 }
 
-/** The user agent suffix of the contract (plan §4). */
-const val SHELL_UA_SUFFIX = " RetinueShell/2 (Android)"
+/** The user agent suffix of the contract (plan §4); 3: the endpoint members of the bridge exist. */
+const val SHELL_UA_SUFFIX = " RetinueShell/3 (Android)"
 
 /** WebView configuration for the shell (plan §1). */
 @SuppressLint("SetJavaScriptEnabled")
@@ -90,6 +94,12 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
         }
     }
 
+    /**
+     * The stored password has answered a challenge of this page load: a second
+     * challenge means it was wrong, and the dialog takes over rather than loop.
+     */
+    private var storedAuthUsed = false
+
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
         return when (val route = host.router.route(url, request.isForMainFrame)) {
@@ -120,6 +130,7 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
     }
 
     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+        storedAuthUsed = false
         host.onPageStarted(url)
     }
 
@@ -183,15 +194,25 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
     }
 
     /**
-     * HTTP authentication: the sign-in dialog only for the configured host (a
-     * frame of another origin must not ask for the user's password in the
-     * shell's name). The callback carries no port, so the host decides.
+     * HTTP authentication, only for the configured host (a frame of another
+     * origin must not ask for the user's password in the shell's name; the
+     * callback carries no port, so the host decides): the endpoint's stored
+     * user name and password answer the first challenge of a page load by
+     * themselves, the sign-in dialog any other.
      */
     override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) {
         val router = this.host.router
         if (!router.isConfiguredHost(host, router.origin?.port ?: -1)) {
             handler.cancel()
             return
+        }
+        if (!storedAuthUsed) {
+            val stored = this.host.storedCredentials()
+            if (stored != null) {
+                storedAuthUsed = true
+                handler.proceed(stored.username, stored.password)
+                return
+            }
         }
         this.host.onHttpAuth(host.orEmpty(), realm.orEmpty(), handler)
     }

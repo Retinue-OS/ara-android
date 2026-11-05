@@ -15,7 +15,13 @@ sealed class LinkTarget {
     data class Open(val url: String) : LinkTarget()
 
     /**
-     * The link is for [origin], which is not the configured one. Nothing is
+     * The link is for another of the configured endpoints ([endpointId]), not
+     * the one shown. The shell asks before it switches; [url] loads once it has.
+     */
+    data class OtherEndpoint(val endpointId: String, val url: String) : LinkTarget()
+
+    /**
+     * The link is for [origin], which is not configured at all. Nothing is
      * loaded and nothing is set up: the user is only told.
      */
     data class OtherOrigin(val origin: String) : LinkTarget()
@@ -49,16 +55,20 @@ object ShellLinks {
     /** True when [raw] is a `retinue-shell:` link (of any shape). */
     fun isShellLink(raw: String?): Boolean = raw != null && UrlRouter.schemeOf(raw.trim()) == SCHEME
 
-    /** Decide what the link [raw] does for the configured [base] URL (null: none configured). */
-    fun target(raw: String?, base: String?): LinkTarget {
+    /**
+     * Decide what the link [raw] does for the configured [base] URL (null: none
+     * configured). [others] are the other configured endpoints, id to base URL:
+     * a link for one of them is [LinkTarget.OtherEndpoint], to be switched to
+     * after a confirmation; anything else is [LinkTarget.OtherOrigin].
+     */
+    fun target(raw: String?, base: String?, others: Map<String, String?> = emptyMap()): LinkTarget {
         val url = targetUrl(raw) ?: return LinkTarget.Malformed
         val parsed = url.toHttpUrlOrNull() ?: return LinkTarget.Malformed
         val origin = Origin(parsed.scheme, parsed.host.lowercase(), parsed.port)
-        return if (UrlRouter(base).origin == origin) {
-            LinkTarget.Open(parsed.toString())
-        } else {
-            LinkTarget.OtherOrigin(origin.toString())
-        }
+        if (UrlRouter(base).origin == origin) return LinkTarget.Open(parsed.toString())
+        val other = others.entries.firstOrNull { (_, b) -> UrlRouter(b).origin == origin }
+        if (other != null) return LinkTarget.OtherEndpoint(other.key, parsed.toString())
+        return LinkTarget.OtherOrigin(origin.toString())
     }
 
     /**

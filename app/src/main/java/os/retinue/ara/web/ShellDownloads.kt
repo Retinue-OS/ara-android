@@ -30,6 +30,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody
 import os.retinue.ara.R
 import os.retinue.ara.net.AraHttp
+import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.shell.ContentDisposition
 import os.retinue.ara.shell.FileNames
 import os.retinue.ara.shell.UrlRouter
@@ -94,11 +95,12 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
             return
         }
         val alias = host.certificateAlias
+        val credentials = host.storedCredentials()
         val cookies = CookieManager.getInstance().getCookie(url)
         toast(if (view) R.string.view_started else R.string.download_started, name)
         executor.execute {
             try {
-                fetch(url, router, alias, userAgent, cookies) { resp ->
+                fetch(url, router, alias, credentials, userAgent, cookies) { resp ->
                     if (view) open(resp, name, mimetype) else save(resp, name, mimetype)
                 }
             } catch (e: Exception) {
@@ -109,18 +111,19 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
     }
 
     /**
-     * Fetch [url], following same-origin redirects by hand (the certificate stays on its origin),
-     * and hand the final response to [handle].
+     * Fetch [url], following same-origin redirects by hand (the certificate and the password stay
+     * on their origin), and hand the final response to [handle].
      */
     private fun fetch(
         url: String,
         router: UrlRouter,
         alias: String?,
+        credentials: BasicCredentials?,
         userAgent: String?,
         cookies: String?,
         handle: (Response) -> Unit,
     ) {
-        val client = client(alias)
+        val client = client(alias, credentials, router)
         var target = url
         repeat(MAX_REDIRECTS + 1) {
             val request = Request.Builder().url(target).get().apply {
@@ -145,13 +148,10 @@ class ShellDownloads(context: Context, private val host: ShellHost) : DownloadLi
         throw IOException("Too many redirects")
     }
 
-    private fun client(alias: String?): OkHttpClient {
+    /** As the WebView reaches the origin: the endpoint's certificate and stored password, neither when none is set. */
+    private fun client(alias: String?, credentials: BasicCredentials?, router: UrlRouter): OkHttpClient {
         // No call timeout: a large file may take a while; a stalled one times out on read.
-        val base = if (alias != null) {
-            AraHttp.build(app, alias, TimeUnit.SECONDS.toMillis(TIMEOUT_S)).newBuilder()
-        } else {
-            OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
-        }
+        val base = AraHttp.build(app, alias, TimeUnit.SECONDS.toMillis(TIMEOUT_S), credentials, router.origin).newBuilder()
         return base.callTimeout(0, TimeUnit.MILLISECONDS)
             .connectTimeout(TIMEOUT_S, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_S, TimeUnit.SECONDS)

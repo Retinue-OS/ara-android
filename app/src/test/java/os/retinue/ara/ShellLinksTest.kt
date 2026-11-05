@@ -36,6 +36,30 @@ class ShellLinksTest {
     }
 
     @Test
+    fun aLinkForAnotherConfiguredEndpointNamesIt() {
+        val others = mapOf("admin" to "https://admin.example.com", "broken" to "not a url")
+        // The link's origin is another endpoint's: the shell asks before switching, and loads this URL after.
+        assertEquals(
+            LinkTarget.OtherEndpoint("admin", "https://admin.example.com/sync-health#sync"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fadmin.example.com%2Fsync-health%23sync", base, others),
+        )
+        // The current endpoint wins over the others, and an origin nobody has stays a stranger.
+        assertEquals(
+            LinkTarget.Open("https://agents.example.com/a"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fagents.example.com%2Fa", base, others),
+        )
+        assertEquals(
+            LinkTarget.OtherOrigin("https://else.example.com"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Felse.example.com%2Fa", base, others),
+        )
+        // Without a current endpoint, a link for a configured one is still that one's.
+        assertEquals(
+            LinkTarget.OtherEndpoint("admin", "https://admin.example.com/"),
+            ShellLinks.target("retinue-shell://open?url=https%3A%2F%2Fadmin.example.com%2F", null, others),
+        )
+    }
+
+    @Test
     fun loadsTheCanonicalUrlNotTheLinksSpelling() {
         // Chromium canonicalises `straße.example` by IDNA 2008 (to xn--strae-oqa.example),
         // the parser of the origin check by IDNA 2003 (to strasse.example): the link's

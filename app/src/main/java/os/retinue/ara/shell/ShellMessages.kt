@@ -23,8 +23,14 @@ sealed class WebMessage {
     /** `setVoiceActive(bool)`: the page has the mic open (wake pauses, screen stays on). */
     data class VoiceActive(val active: Boolean) : WebMessage()
 
-    /** `openSettings()`: show the native settings. */
-    data object OpenSettings : WebMessage()
+    /**
+     * `openSettings(section?)`: show the native settings — at [section] when it
+     * is one the shell knows ([ShellMessages.SECTION_ENDPOINTS]), else at the top.
+     */
+    data class OpenSettings(val section: String? = null) : WebMessage()
+
+    /** `selectEndpoint(id)`: show another of the configured endpoints (the page may only ask; the shell decides). */
+    data class SelectEndpoint(val id: String) : WebMessage()
 
     /** The `speechSynthesis` stand-in asks for one utterance to be spoken now. */
     data class Speak(
@@ -57,6 +63,14 @@ sealed class WebMessage {
 data class ShellVoice(val name: String, val lang: String, val localService: Boolean, val isDefault: Boolean)
 
 /**
+ * One configured endpoint as the page sees it (`RetinueShell.endpoints()`): its
+ * id, the label the shell shows for it (the instance's own name, see
+ * EndpointLabels) and whether it is the one shown. No URL: the current page
+ * knows its own origin, and the other servers are none of its business.
+ */
+data class EndpointLabel(val id: String, val label: String, val current: Boolean)
+
+/**
  * Parsing of page → shell messages and building of shell → page scripts (plan
  * §4). Pure, so the wire format is pinned down by unit tests.
  */
@@ -66,6 +80,12 @@ object ShellMessages {
 
     /** The event name the web app listens for (contract §4). */
     const val EVENT = "retinue-shell"
+
+    /** The one settings section a page may ask for by name: the endpoint list (and the editor, with one endpoint). */
+    const val SECTION_ENDPOINTS = "endpoints"
+
+    /** The type of the `retinue-shell` event that says the endpoint list changed (nobody needs to take it). */
+    const val ENDPOINTS_EVENT = "endpoints"
 
     /** Parse one message; null for malformed or unknown ones (ignored). */
     fun parse(raw: String?): WebMessage? {
@@ -77,7 +97,8 @@ object ShellMessages {
         } ?: return null
         return when (obj.str("type")) {
             "voiceActive" -> WebMessage.VoiceActive(obj.bool("active") ?: false)
-            "openSettings" -> WebMessage.OpenSettings
+            "openSettings" -> WebMessage.OpenSettings(obj.str("section")?.takeIf { it.isNotBlank() })
+            "endpoint.select" -> WebMessage.SelectEndpoint(obj.str("id")?.takeIf { it.isNotBlank() } ?: return null)
             "tts.speak" -> {
                 val id = obj.long("id") ?: return null
                 WebMessage.Speak(
@@ -145,6 +166,27 @@ object ShellMessages {
         buildJsonObject {
             put("type", "health.status")
             put("status", status.toJson())
+        },
+    )
+
+    /** The endpoint list as the page's `endpoints()` answers it (and the shell bakes it into the script). */
+    fun endpointsJson(list: List<EndpointLabel>): JsonArray = buildJsonArray {
+        list.forEach { e ->
+            add(
+                buildJsonObject {
+                    put("id", e.id)
+                    put("label", e.label)
+                    put("current", e.current)
+                },
+            )
+        }
+    }
+
+    /** The endpoint list changed: the page's copy is replaced (an `endpoints` event follows separately). */
+    fun endpointsStatus(list: List<EndpointLabel>): String = receiveScript(
+        buildJsonObject {
+            put("type", "endpoints.status")
+            put("endpoints", endpointsJson(list))
         },
     )
 
