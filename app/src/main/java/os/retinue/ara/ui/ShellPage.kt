@@ -69,6 +69,13 @@ object ShellPage {
     /** The base URL the start page was loaded for. */
     var loadedBase: String? = null
 
+    /**
+     * The endpoint the start page was loaded for: two endpoints may share an
+     * address (and certificate) and differ in their sign-in, so a switch
+     * between them loads the start page afresh too.
+     */
+    var loadedEndpointId: String? = null
+
     /** The endpoint list as last handed to the page (see [endpointLabels]), so only a change is pushed. */
     var pushedEndpoints: List<EndpointLabel>? = null
 
@@ -153,6 +160,7 @@ object ShellPage {
             settings = ShellSettings()
             router = UrlRouter(null)
             loadedBase = null
+            loadedEndpointId = null
             pushedEndpoints = null
             pageReady = false
             pageLoading = false

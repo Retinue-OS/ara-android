@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.data.AraStore
+import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
 import os.retinue.ara.net.BasicCredentials
@@ -128,14 +130,23 @@ object HealthSyncRuntime {
         }
         // The current endpoint: its origin and its health switch. A round on the
         // device is for one origin: when the endpoint is switched or cleared, a
-        // round for the old one goes at once, not at the next sync.
+        // round for the old one goes at once, not at the next sync. A sync still
+        // running for the old endpoint, or for this one with its switch just
+        // turned off, is stopped first: nothing more is read or sent for it, and
+        // the round is not discarded under its feet.
         scope.launch {
             store.settings
                 .map { s -> (UrlRouter(s.base).origin?.toString()) to (s.current?.healthUpload == true) }
                 .distinctUntilChanged()
                 .collect { (origin, enabled) ->
+                    val stale = origin != endpointOrigin || !enabled
                     endpointOrigin = origin
                     uploadEnabled = enabled
+                    val running = job?.takeIf { it.isActive }
+                    if (stale && running != null) {
+                        running.cancelAndJoin()
+                        if (!enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+                    }
                     publish()
                     withContext(Dispatchers.IO) { rounds.discardUnless(origin) }
                 }
@@ -266,8 +277,13 @@ object HealthSyncRuntime {
     private suspend fun run(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
         emit(HealthSyncEvent.Started(trigger))
         save { it.copy(lastAttemptAt = System.currentTimeMillis()) }
+        // The endpoint this sync is for, read once: [start] checked the switch,
+        // but the settings may have changed while the attempt was saved. Its own
+        // switch decides here, and the outcome is booked against its origin.
+        val endpoint = store.settingsNow().current
+        val origin = endpoint?.origin?.toString()
         val outcome = try {
-            sync(trigger, requester)
+            if (endpoint == null || !endpoint.healthUpload) SyncOutcome.Skipped(SkipReason.Disabled) else sync(endpoint, trigger, requester)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -285,22 +301,26 @@ object HealthSyncRuntime {
                         token = outcome.token,
                         tokenTypes = outcome.types,
                         tokenOrigin = outcome.origin,
-                        failures = 0,
-                        backoffUntil = 0L,
-                        backoffOrigin = null,
-                    )
+                    ).let { s ->
+                        // This server's back-off ends; another server's stays its own.
+                        if (s.backoffOrigin == null || s.backoffOrigin == outcome.origin) {
+                            s.copy(failures = 0, backoffUntil = 0L, backoffOrigin = null)
+                        } else {
+                            s
+                        }
+                    }
                 }
                 emit(HealthSyncEvent.Done(outcome.count))
             }
             is SyncOutcome.Skipped -> {
                 save {
                     val s = it.copy(lastResult = SyncResult.Skipped, lastError = outcome.reason.key, lastCount = null)
-                    if (outcome.reason == SkipReason.NoBackendSupport) s.backedOff(endpointOrigin) else s
+                    if (outcome.reason == SkipReason.NoBackendSupport) s.backedOff(origin) else s
                 }
                 emit(HealthSyncEvent.Skipped(outcome.reason))
             }
             is SyncOutcome.Failed -> {
-                save { it.copy(lastResult = SyncResult.Error, lastError = outcome.message, lastCount = null).backedOff(endpointOrigin) }
+                save { it.copy(lastResult = SyncResult.Error, lastError = outcome.message, lastCount = null).backedOff(origin) }
                 emit(HealthSyncEvent.Error(outcome.message))
             }
         }
@@ -317,18 +337,16 @@ object HealthSyncRuntime {
     }
 
     /** One sync (see [HealthSyncer]) against Health Connect and the current endpoint's letterbox. */
-    private suspend fun sync(trigger: HealthTrigger, requester: HealthPermissionRequester?): SyncOutcome {
-        val settings = store.settingsNow()
-        val endpoint = settings.current
-        val origin = endpoint?.origin?.toString()
+    private suspend fun sync(endpoint: Endpoint, trigger: HealthTrigger, requester: HealthPermissionRequester?): SyncOutcome {
+        val origin = endpoint.origin?.toString()
         // The stored password is opened off the main thread (the Keystore).
-        val credentials = withContext(Dispatchers.IO) { endpoint?.credentials() }
+        val credentials = withContext(Dispatchers.IO) { endpoint.credentials() }
         // Nothing touches HealthConnectClient.getOrCreate (which throws without
         // Health Connect) before the syncer's availability gate: the client is
         // made on first use, after it.
         val syncer = HealthSyncer(
             source = HealthConnectSource(available = ::sdkAvailable, create = ::client),
-            letterbox = OkHttpLetterbox(endpoint?.certificateAlias, credentials, endpoint?.origin),
+            letterbox = OkHttpLetterbox(endpoint.certificateAlias, credentials, endpoint.origin),
             rounds = rounds,
             client = ClientInfo(app.packageName, BuildConfig.VERSION_NAME),
         )

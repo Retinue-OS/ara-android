@@ -1007,6 +1007,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         page.pushedEndpoints = labels
         if (base == null) {
             page.loadedBase = null
+            page.loadedEndpointId = null
             showSettings = true
             // First run: straight into the editor of the first endpoint.
             if (s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow) {
@@ -1019,8 +1020,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             tryDeliverWake()
             return
         }
-        if (base != page.loadedBase || aliasChanged) {
+        val endpointId = s.current?.id
+        if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
             page.loadedBase = base
+            page.loadedEndpointId = endpointId
             bridge.install()
             page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
