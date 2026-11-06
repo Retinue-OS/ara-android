@@ -8,9 +8,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.content.pm.ShortcutInfo
-import android.content.pm.ShortcutManager
-import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -52,6 +49,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialog
@@ -64,12 +62,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -86,13 +88,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import os.retinue.ara.R
-import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.data.credentials
 import os.retinue.ara.health.HealthPermissionRequester
+import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
+import os.retinue.ara.health.HealthTrigger
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.LauncherCodec
@@ -101,6 +104,11 @@ import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.launcher.TrayLogic
 import os.retinue.ara.net.BasicCredentials
+import os.retinue.ara.settings.AppPage
+import os.retinue.ara.settings.SettingsAction
+import os.retinue.ara.settings.SettingsMessages
+import os.retinue.ara.settings.SettingsPageHost
+import os.retinue.ara.settings.SettingsWebView
 import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
@@ -112,7 +120,6 @@ import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
-import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.update.UpdateState
 import os.retinue.ara.wake.WakeAlert
@@ -124,14 +131,15 @@ import os.retinue.ara.web.SplitAware
 
 /**
  * The shell (plan §1): a full-size WebView showing the Retinue web app, the
- * launcher bar below it, and native settings on top when asked for. Also the
- * home activity when the user makes the shell their default home app.
+ * launcher bar below it, and the settings page on top when asked for (the
+ * app's own page, in a WebView of its own: [SettingsWebView]). Also the home
+ * activity when the user makes the shell their default home app.
  *
  * The same shell runs in a second window for split screen
  * ([SplitShellActivity], [isSplitWindow]); the page itself is shared between
  * the two (see [ShellPage]) and shown by the one in front.
  */
-open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
+open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPageHost {
 
     companion object {
         /**
@@ -140,9 +148,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
          * ([WakeRuntime.EXTRA_WAKE_TOKEN]): the activity is exported.
          */
         const val ACTION_WAKE = "os.retinue.ara.action.WAKE"
-
-        /** The shortcut the settings' pin test asks for. */
-        private const val TEST_SHORTCUT_ID = "ara-pin-test"
 
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
@@ -201,23 +206,24 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private var confirmRemove by mutableStateOf<LauncherEntry.Folder?>(null)
     private var authPrompt by mutableStateOf<AuthPrompt?>(null)
 
-    /**
-     * The endpoint editor, over the settings (see [EndpointEditor]). The draft
-     * lives here, not in the editor: the certificate chooser is a system dialog
-     * whose answer arrives later and goes into the draft.
-     */
-    private var endpointEditor by mutableStateOf<EndpointDraft?>(null)
+    /** The launcher bar's editor, over the settings page (its Launcher bar card opens it). */
+    private var showLauncherEditor by mutableStateOf(false)
 
-    /** An endpoint the user asked to remove: confirmed first. */
-    private var confirmRemoveEndpoint by mutableStateOf<Endpoint?>(null)
+    /** The settings page while it is up ([SettingsPageOverlay]); null while the settings are closed. */
+    private var settingsPage: SettingsWebView? = null
+
+    /** Where the settings page opens: at the top, at an endpoint's editor, or at a new one ([AppPage.startUrl]). */
+    private var settingsStart = AppPage.START_URL
+
+    /** Counts the settings pages whose renderer went away: each is replaced by a fresh one. */
+    private var settingsGeneration by mutableIntStateOf(0)
 
     /** A `retinue-shell:` link for another configured endpoint, waiting for the user to agree to the switch. */
     private var linkSwitch by mutableStateOf<LinkSwitch?>(null)
 
-    /** The editor was opened for the first endpoint once in this window (a dismissal is not nagged about). */
+    /** The settings page opened at a new endpoint once in this window, on first run (a dismissal is not nagged about). */
     private var firstRunEditorShown = false
     private var isDefaultHome by mutableStateOf(false)
-    private var pinShortcutsSupported by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
@@ -431,30 +437,21 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                             )
                         }
                     }
-                    if (showSettings) SettingsOverlay(launcher)
-                    endpointEditor?.let { draft ->
+                    // A fresh page in place of one whose renderer went away (onSettingsPageGone).
+                    if (showSettings) key(settingsGeneration) { SettingsPageOverlay() }
+                    if (showLauncherEditor) {
                         Surface(Modifier.fillMaxSize()) {
-                            EndpointEditor(
-                                draft = draft,
-                                onChange = { endpointEditor = it },
-                                onSave = { saveEndpoint(draft) },
-                                onSelectCertificate = { chooseCertificateFor(draft) },
-                                onClearCertificate = { endpointEditor = draft.copy(certificateAlias = null) },
-                                onRemove = if (draft.isNew) null else ({ askRemoveEndpoint(draft.id) }),
-                                onDismiss = { endpointEditor = null },
+                            LauncherEditorScreen(
+                                entries = launcher.entries,
+                                onClose = { showLauncherEditor = false },
+                                onAdd = { template -> editing = template to true },
+                                onAddFolder = { newFolder() },
+                                onEdit = ::editLauncherEntry,
+                                onRemove = ::removeLauncherEntry,
+                                onMove = { entry, delta -> viewModel.updateLauncher { it.move(entry.id, delta) } },
+                                onReset = { viewModel.resetLauncher() },
                             )
                         }
-                    }
-                    confirmRemoveEndpoint?.let { endpoint ->
-                        EndpointRemoveDialog(
-                            label = EndpointLabels.label(endpoint, settings.endpoints),
-                            onConfirm = {
-                                viewModel.removeEndpoint(endpoint.id)
-                                confirmRemoveEndpoint = null
-                                endpointEditor = null
-                            },
-                            onDismiss = { confirmRemoveEndpoint = null },
-                        )
                     }
                     linkSwitch?.let { request ->
                         LinkSwitchDialog(
@@ -700,171 +697,166 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         }
     }
 
+    /**
+     * The settings page, over everything (see [SettingsWebView]). Its state is
+     * everything read here, sent whole whenever any of it changes; the bridge
+     * drops a state it has sent already.
+     */
     @Composable
-    private fun SettingsOverlay(launcher: os.retinue.ara.launcher.LauncherConfig) {
-        val s by viewModel.settings.collectAsStateWithLifecycle()
+    private fun SettingsPageOverlay() {
+        val stored by viewModel.settings.collectAsStateWithLifecycle()
         val models by viewModel.models.collectAsStateWithLifecycle()
-        val busy by viewModel.modelBusy.collectAsStateWithLifecycle()
-        val message by viewModel.modelMessage.collectAsStateWithLifecycle()
+        val modelBusy by viewModel.modelBusy.collectAsStateWithLifecycle()
+        val modelMessage by viewModel.modelMessage.collectAsStateWithLifecycle()
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
+        val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
         val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
+        val state = settingsPageState(
+            context = LocalContext.current,
+            settings = stored ?: ShellSettings(),
+            page = page.state,
+            health = health,
+            isDefaultHome = isDefaultHome,
+            wake = WakeConditions(
+                status = wakeStatus,
+                micGranted = micGranted,
+                notificationsAllowed = notificationsAllowed,
+                fullScreenAllowed = fullScreenIntentAllowed,
+                overlayAllowed = overlayAllowed,
+                models = models,
+                modelBusy = modelBusy,
+                modelMessage = modelMessage,
+            ),
+            update = update,
+            installAllowed = installAllowed,
+            usageAccess = usageAccess,
+        )
+        val message = SettingsMessages.state(state.toJson())
+        val view = remember { SettingsWebView(this@MainActivity, this@MainActivity) }
+        DisposableEffect(view) {
+            settingsPage = view
+            onDispose {
+                if (settingsPage === view) settingsPage = null
+                view.destroy()
+            }
+        }
+        SideEffect { view.show(message, state.current?.origin, state.current?.frameKey, settingsStart) }
         Surface(Modifier.fillMaxSize()) {
-            SettingsScreen(
-                state = SettingsState(
-                    settings = s ?: ShellSettings(),
-                    launcher = launcher,
-                    isDefaultHome = isDefaultHome,
-                    pinShortcutsSupported = pinShortcutsSupported,
-                    models = models,
-                    modelBusy = busy,
-                    modelMessage = message,
-                    wakeStatus = wakeStatus,
-                    micGranted = micGranted,
-                    fullScreenIntentAllowed = fullScreenIntentAllowed,
-                    overlayAllowed = overlayAllowed,
-                    notificationsAllowed = notificationsAllowed,
-                    page = page.state,
-                    update = update,
-                    installAllowed = installAllowed,
-                    usageAccess = usageAccess,
-                ),
-                actions = settingsActions,
+            AndroidView(
+                factory = {
+                    (view.view.parent as? ViewGroup)?.removeView(view.view)
+                    view.view
+                },
+                modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
             )
         }
     }
 
-    private val settingsActions = object : SettingsActions {
-        override fun close() {
-            if (settings.base == null) {
-                Toast.makeText(this@MainActivity, R.string.msg_base_url_needed, Toast.LENGTH_SHORT).show()
+    /** What the user did on the settings page (see [SettingsMessages]). */
+    override fun onSettingsAction(action: SettingsAction) {
+        when (action) {
+            // The bridge answers a hello with the page's state by itself.
+            SettingsAction.Hello -> Unit
+            SettingsAction.Close -> closeSettings()
+            SettingsAction.Retry -> {
+                closeSettings()
+                retryLoad()
             }
-            showSettings = false
+            is SettingsAction.Open -> if (router.isConfiguredOrigin(action.url)) openInDashboard(action.url)
+            is SettingsAction.SelectEndpoint -> viewModel.selectEndpoint(action.id)
+            is SettingsAction.SaveEndpoint -> saveEndpoint(action)
+            is SettingsAction.RemoveEndpoint -> viewModel.removeEndpoint(action.id)
+            is SettingsAction.ChooseCertificate -> chooseCertificateFor(action)
+            is SettingsAction.HealthUpload -> settings.current?.let { viewModel.setHealthUpload(it.id, action.on) }
+            SettingsAction.HealthSync -> HealthSyncRuntime.syncNow(HealthTrigger.Manual, healthPermissionRequester)
+            is SettingsAction.HealthAuto -> HealthSyncRuntime.setAutoSync(action.on)
+            is SettingsAction.HealthInterval -> HealthSyncRuntime.setInterval(action.minutes)
+            SettingsAction.HomeRequest -> requestHome()
+            is SettingsAction.SplitLaunch -> viewModel.setSplitLaunch(action.on)
+            is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
+            SettingsAction.LauncherEdit -> showLauncherEditor = true
+            SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
+            is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
+            // The slider's range.
+            is SettingsAction.WakeThreshold -> viewModel.setWakeThreshold(action.value.coerceIn(0.1f, 0.9f))
+            SettingsAction.WakeFeatures -> viewModel.downloadFeatureModels()
+            is SettingsAction.WakePhrase -> viewModel.downloadPhraseModel(action.url)
+            SettingsAction.WakePick -> pickPhraseModel()
+            SettingsAction.WakeFullScreen -> WakeAlert.fullScreenIntentSettings(this)?.let(::startSystemPage)
+            SettingsAction.WakeOverlay -> startSystemPage(WakeAlert.overlaySettings(this))
+            SettingsAction.WakeNotifications -> startSystemPage(WakeAlert.notificationSettings(this))
+            is SettingsAction.UpdateAuto -> viewModel.setAutoUpdate(action.on)
+            is SettingsAction.UpdateChannelSet -> viewModel.setUpdateChannel(action.channel)
+            SettingsAction.UpdateCheck -> UpdateRuntime.checkNow()
+            SettingsAction.UpdateInstall -> UpdateRuntime.installNow()
+            SettingsAction.UpdateConfirm -> UpdateRuntime.confirmation()?.let(::startUpdateConfirmation)
+            SettingsAction.UpdateCancel -> UpdateRuntime.cancelConfirmation()
+            SettingsAction.UpdateAllowInstalls -> startSystemPage(UpdateRuntime.installSettings(this))
+            is SettingsAction.DeviceSet -> viewModel.setDeviceWebSetting(action.key, action.value)
         }
+    }
 
-        override fun addEndpoint() {
-            endpointEditor = EndpointDraft.forNew(ShellViewModel.newId())
+    /** A page of the dashboard, from the settings page (its instance section, or its way into the dashboard). */
+    override fun openInDashboard(url: String) {
+        showLauncherEditor = false
+        showSettings = false
+        page.take(this)
+        page.pageReady = false
+        webView?.loadUrl(url)
+    }
+
+    /** The settings page's renderer is gone: a fresh page takes its place, at the top. */
+    override fun onSettingsPageGone() {
+        settingsStart = AppPage.START_URL
+        settingsGeneration++
+    }
+
+    /** A health sync's events, for the settings page while it is up (see [ShellPage]). */
+    internal fun onHealthSyncEvent(event: HealthSyncEvent) {
+        settingsPage?.bridge?.send(SettingsMessages.health(event.detail()))
+    }
+
+    /**
+     * The editor's save, checked again here (what is stored already, such as
+     * a password, is the app's, never the page's); the page is told whether it
+     * is saved, and keeps the editor open with the reason when it is not.
+     */
+    private fun saveEndpoint(action: SettingsAction.SaveEndpoint) {
+        val existing = settings.endpoints.firstOrNull { it.id == action.draft.id }
+        val draft = SettingsMessages.toEndpointDraft(action.draft, existing)
+        val problem = draft.problem
+        if (problem == null) viewModel.saveEndpoint(draft)
+        settingsPage?.bridge?.send(SettingsMessages.saved(action.request, problem))
+    }
+
+    /** The microphone first (and notifications after it, for Always), then the mode. */
+    private fun setWakeMode(mode: WakeMode) {
+        val wantsNotifications = mode == WakeMode.Always
+        if (mode != WakeMode.Off && !hasMic()) {
+            // One request at a time: the notification request follows the mic's answer.
+            askNotificationsAfterMic = wantsNotifications
+            micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        } else if (wantsNotifications) {
+            requestNotificationsIfNeeded()
         }
+        viewModel.setWakeMode(mode)
+    }
 
-        override fun editEndpoint(id: String) = this@MainActivity.editEndpoint(id)
-
-        override fun useEndpoint(id: String) {
-            viewModel.selectEndpoint(id)
-            showSettings = false
+    private fun pickPhraseModel() {
+        try {
+            phraseModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
         }
+    }
 
-        override fun requestHomeRole() = requestHome()
-        override fun testPinShortcut() = requestTestShortcut()
-        override fun addEntry(template: LauncherEntry) {
-            editing = template to true
-        }
-
-        override fun addFolder() = newFolder()
-
-        override fun editEntry(entry: LauncherEntry) = editLauncherEntry(entry)
-
-        override fun removeEntry(entry: LauncherEntry) = removeLauncherEntry(entry)
-
-        override fun moveEntry(entry: LauncherEntry, delta: Int) {
-            viewModel.updateLauncher { it.move(entry.id, delta) }
-        }
-
-        override fun openUsageAccess() = AppUsage.openAccessSettings(this@MainActivity)
-
-        override fun resetLauncher() {
-            viewModel.resetLauncher()
-        }
-
-        override fun setWakeMode(mode: WakeMode) {
-            val wantsNotifications = mode == WakeMode.Always
-            if (mode != WakeMode.Off && !hasMic()) {
-                // One request at a time: the notification request follows the mic's answer.
-                askNotificationsAfterMic = wantsNotifications
-                micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            } else if (wantsNotifications) {
-                requestNotificationsIfNeeded()
-            }
-            viewModel.setWakeMode(mode)
-        }
-
-        override fun setWakeThreshold(value: Float) {
-            viewModel.setWakeThreshold(value)
-        }
-
-        override fun downloadFeatureModels() {
-            viewModel.downloadFeatureModels()
-        }
-
-        override fun downloadPhraseModel(url: String) {
-            viewModel.downloadPhraseModel(url)
-        }
-
-        override fun pickPhraseModel() {
-            try {
-                phraseModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        override fun openNotificationSettings() {
-            try {
-                startActivity(WakeAlert.notificationSettings(this@MainActivity))
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        override fun allowOverlay() {
-            try {
-                startActivity(WakeAlert.overlaySettings(this@MainActivity))
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        override fun allowFullScreenIntent() {
-            val intent = WakeAlert.fullScreenIntentSettings(this@MainActivity) ?: return
-            try {
-                startActivity(intent)
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        override fun setAutoUpdate(on: Boolean) {
-            viewModel.setAutoUpdate(on)
-        }
-
-        override fun setUpdateChannel(channel: UpdateChannel) {
-            viewModel.setUpdateChannel(channel)
-        }
-
-        override fun setSplitLaunch(on: Boolean) {
-            viewModel.setSplitLaunch(on)
-        }
-
-        override fun setKeepSplitInRecents(on: Boolean) {
-            viewModel.setKeepSplitInRecents(on)
-        }
-
-        override fun checkForUpdates() = UpdateRuntime.checkNow()
-
-        override fun installUpdate() = UpdateRuntime.installNow()
-
-        override fun confirmUpdate() {
-            val intent = UpdateRuntime.confirmation() ?: return
-            startUpdateConfirmation(intent)
-        }
-
-        override fun cancelUpdate() = UpdateRuntime.cancelConfirmation()
-
-        override fun allowUpdateInstalls() {
-            try {
-                startActivity(UpdateRuntime.installSettings(this@MainActivity))
-            } catch (_: ActivityNotFoundException) {
-                Toast.makeText(this@MainActivity, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
-            }
+    /** One of Android's settings pages (notifications, overlays, installs); a phone without it is told so. */
+    private fun startSystemPage(intent: Intent) {
+        try {
+            startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1077,6 +1069,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
      */
     private fun applySettings(s: ShellSettings) {
         val aliasChanged = s.certificateAlias != settings.certificateAlias
+        val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
         page.settings = s
         settingsLoaded = true
         page.router = UrlRouter(s.baseUrl)
@@ -1091,12 +1084,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         if (base == null) {
             page.loadedBase = null
             page.loadedEndpointId = null
+            // First run: the settings page opens at a new endpoint, once.
+            val firstRun = s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow
+            if (firstRun) firstRunEditorShown = true
+            if (!showSettings) settingsStart = if (firstRun) AppPage.startUrl(add = true) else AppPage.START_URL
             showSettings = true
-            // First run: straight into the editor of the first endpoint.
-            if (s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow) {
-                firstRunEditorShown = true
-                if (endpointEditor == null) endpointEditor = EndpointDraft.forNew(ShellViewModel.newId())
-            }
             webView?.loadUrl("about:blank")
             // A link cannot be for an origin that is not set up.
             openPendingLink()
@@ -1115,6 +1107,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             webView?.loadUrl(takeLinkUrl() ?: ShellUrls.startUrl(base))
         } else {
             if (labelsChanged) bridge.endpointsChanged(labels)
+            if (deviceChanged) bridge.deviceSettingsChanged(s.deviceWebSettings)
             openPendingLink()
             tryDeliverWake()
         }
@@ -1212,7 +1205,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             ShellDecisions.WakeDelivery.WaitForPage -> Unit
             ShellDecisions.WakeDelivery.OpenSettings -> {
                 completeWake()
-                showSettings = true
+                openSettings()
             }
         }
     }
@@ -1246,31 +1239,29 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         openFolderId = null
         folderEditor = null
         confirmRemove = null
-        endpointEditor = null
-        confirmRemoveEndpoint = null
+        showLauncherEditor = false
         if (settings.base != null) showSettings = false
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
-            val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
-                openFolderId != null || folderEditor != null || confirmRemove != null ||
-                endpointEditor != null || confirmRemoveEndpoint != null || linkSwitch != null || tray.isOpen
+            val overlay = showSettings || showLauncherEditor || showDrawer || editing != null || authPrompt != null ||
+                openFolderId != null || folderEditor != null || confirmRemove != null || linkSwitch != null || tray.isOpen
             // The split-screen window is a plain app: at the root, Back leaves it.
             val webCanGoBack = showsPage && webView?.canGoBack() == true
             when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
                     linkSwitch != null -> linkSwitch = null
-                    confirmRemoveEndpoint != null -> confirmRemoveEndpoint = null
-                    endpointEditor != null -> endpointEditor = null
                     confirmRemove != null -> confirmRemove = null
                     editing != null -> editing = null
                     folderEditor != null -> folderEditor = null
+                    showLauncherEditor -> showLauncherEditor = false
                     openFolderId != null -> openFolderId = null
                     showDrawer -> showDrawer = false
                     tray.isOpen && !showSettings -> tray.collapse()
-                    else -> settingsActions.close()
+                    // The page takes Back first (its dialog, its editor), then the settings close.
+                    else -> settingsPage?.bridge?.back { closeSettings() } ?: closeSettings()
                 }
                 ShellDecisions.BackAction.WebBack -> webView?.goBack()
                 ShellDecisions.BackAction.Ignore -> Unit
@@ -1280,35 +1271,35 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         }
     }
 
-    private fun openSettings() {
-        tray.collapse()
-        showSettings = true
-        // The names the list shows come from the servers; ask again if they are due.
-        viewModel.refreshEndpointNames()
-    }
+    private fun openSettings() = openSettingsPage(AppPage.START_URL)
 
     /**
      * The page's `openSettings(section)`: the endpoint section means the list
      * (it is at the top), or the editor straight away when there is one endpoint.
      */
     private fun openSettingsAt(section: String?) {
-        openSettings()
-        if (section == ShellMessages.SECTION_ENDPOINTS && settings.endpoints.size == 1) editEndpoint(settings.endpoints[0].id)
+        val only = settings.endpoints.singleOrNull()
+        openSettingsPage(
+            if (section == ShellMessages.SECTION_ENDPOINTS && only != null) AppPage.startUrl(editId = only.id) else AppPage.START_URL,
+        )
     }
 
-    private fun editEndpoint(id: String) {
-        val endpoint = settings.endpoints.firstOrNull { it.id == id } ?: return
-        endpointEditor = EndpointDraft.of(endpoint)
+    /** The settings page, opened at [start] ([AppPage.startUrl]); one that is up already stays where it is. */
+    private fun openSettingsPage(start: String) {
+        tray.collapse()
+        if (!showSettings) settingsStart = start
+        showSettings = true
+        // The names the list shows come from the servers; ask again if they are due.
+        viewModel.refreshEndpointNames()
     }
 
-    private fun saveEndpoint(draft: EndpointDraft) {
-        if (!draft.canSave) return
-        viewModel.saveEndpoint(draft)
-        endpointEditor = null
-    }
-
-    private fun askRemoveEndpoint(id: String) {
-        confirmRemoveEndpoint = settings.endpoints.firstOrNull { it.id == id } ?: return
+    /** The settings close; with no endpoint to show, the shell says what it needs. */
+    private fun closeSettings() {
+        if (settings.base == null) {
+            Toast.makeText(this, R.string.msg_base_url_needed, Toast.LENGTH_SHORT).show()
+        }
+        showLauncherEditor = false
+        showSettings = false
     }
 
     /** The link's endpoint becomes the current one; the link loads once it is (applySettings → takeLinkUrl). */
@@ -1495,27 +1486,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private fun refreshHomeRole() {
         val rm = getSystemService(RoleManager::class.java)
         isDefaultHome = rm != null && rm.isRoleAvailable(RoleManager.ROLE_HOME) && rm.isRoleHeld(RoleManager.ROLE_HOME)
-        pinShortcutsSupported = getSystemService(ShortcutManager::class.java)?.isRequestPinShortcutSupported == true
-    }
-
-    /**
-     * Pin a shortcut to Ara's own start page through ShortcutManager, as a
-     * browser installing a web app does: when Android routes the request,
-     * Ara's confirm dialog appears; when it refuses, the toast says so.
-     */
-    private fun requestTestShortcut() {
-        val sm = getSystemService(ShortcutManager::class.java)
-        val info = ShortcutInfo.Builder(this, TEST_SHORTCUT_ID)
-            .setShortLabel(getString(R.string.settings_pin_test_label))
-            .setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher))
-            .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
-            .build()
-        val sent = try {
-            sm != null && sm.isRequestPinShortcutSupported && sm.requestPinShortcut(info, null)
-        } catch (e: IllegalStateException) {
-            false
-        }
-        if (!sent) Toast.makeText(this, R.string.settings_pin_refused, Toast.LENGTH_LONG).show()
     }
 
     /** Ask to become the default home app (RoleManager), or open the system's home settings. */
@@ -1553,21 +1523,17 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         )
     }
 
-    /** The editor's "Select certificate": the answer goes into the draft, saved with it. */
-    private fun chooseCertificateFor(draft: EndpointDraft) {
-        val host = ShellUrls.origin(draft.base)
+    /** The page's "Select certificate": the answer goes back to the page, into its draft (saved with it). */
+    private fun chooseCertificateFor(action: SettingsAction.ChooseCertificate) {
+        val host = ShellUrls.origin(ShellUrls.normalizeBase(action.baseUrl))
         KeyChain.choosePrivateKeyAlias(
             this,
-            { alias ->
-                runOnUiThread {
-                    if (alias != null) endpointEditor = endpointEditor?.takeIf { it.id == draft.id }?.copy(certificateAlias = alias)
-                }
-            },
+            { alias -> runOnUiThread { settingsPage?.bridge?.send(SettingsMessages.certificate(action.request, alias)) } },
             null, // any key type
             null, // any issuer
             host?.host,
             host?.port ?: -1,
-            draft.certificateAlias,
+            action.current,
         )
     }
 
@@ -1586,6 +1552,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
             )
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
+            is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
         }
     }
 

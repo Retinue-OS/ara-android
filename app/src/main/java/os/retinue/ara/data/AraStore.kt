@@ -53,6 +53,7 @@ class AraStore(context: Context) {
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
             splitLaunch = p[K.splitLaunch] ?: false,
             keepSplitInRecents = p[K.keepSplitInRecents] ?: false,
+            deviceWebSettings = DeviceWebSettings.decode(p[K.deviceWebSettings]),
         )
     }
 
@@ -67,6 +68,20 @@ class AraStore(context: Context) {
 
     /** Health Connect sync: its two settings and its state (see HealthSyncRuntime). */
     val healthSync: Flow<HealthSyncState> = store.data.map { healthSyncOf(it) }
+
+    /**
+     * Set one of the dashboard's per-device preferences (null removes it).
+     * False when [DeviceWebSettings] refuses the change; nothing is stored then.
+     */
+    suspend fun setDeviceWebSetting(key: String, value: String?): Boolean {
+        var accepted = false
+        edit { p ->
+            val after = DeviceWebSettings.apply(DeviceWebSettings.decode(p[K.deviceWebSettings]), key, value) ?: return@edit
+            accepted = true
+            p[K.deviceWebSettings] = DeviceWebSettings.encode(after)
+        }
+        return accepted
+    }
 
     val launcher: Flow<LauncherConfig> = store.data.map { p -> LauncherCodec.decode(p[K.launcher]) }
 
@@ -224,5 +239,8 @@ class AraStore(context: Context) {
         val healthFailures = intPreferencesKey("health_failures")
         val healthBackoffUntil = longPreferencesKey("health_backoff_until")
         val healthBackoffOrigin = stringPreferencesKey("health_backoff_origin")
+
+        /** The dashboard's per-device preferences (JSON, see [DeviceWebSettings]). */
+        val deviceWebSettings = stringPreferencesKey("device_web_settings_json")
     }
 }

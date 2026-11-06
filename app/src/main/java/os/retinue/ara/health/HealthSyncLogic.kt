@@ -19,7 +19,7 @@ enum class HealthTrigger(val key: String) {
     /** Ara came to the front (automatic, at most every [HealthSyncLogic.DEFAULT_INTERVAL_MINUTES]). */
     Resume("resume"),
 
-    /** The web app asked (`RetinueShell.healthSync()`), e.g. Settings → Phone shell. */
+    /** Someone asked: the settings page's "Update health data now", or the web app (`RetinueShell.healthSync()`). */
     Manual("manual"),
 
     /** As [Manual], from the `/sync-health` page a thread or an intent link opened. */
