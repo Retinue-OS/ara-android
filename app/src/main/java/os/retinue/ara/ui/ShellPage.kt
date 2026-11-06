@@ -7,11 +7,13 @@ import android.webkit.WebView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncListener
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthSyncStatus
+import os.retinue.ara.shell.EndpointLabel
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.UrlRouter
@@ -66,6 +68,23 @@ object ShellPage {
 
     /** The base URL the start page was loaded for. */
     var loadedBase: String? = null
+
+    /**
+     * The endpoint the start page was loaded for: two endpoints may share an
+     * address (and certificate) and differ in their sign-in, so a switch
+     * between them loads the start page afresh too.
+     */
+    var loadedEndpointId: String? = null
+
+    /** The endpoint list as last handed to the page (see [endpointLabels]), so only a change is pushed. */
+    var pushedEndpoints: List<EndpointLabel>? = null
+
+    /** The configured endpoints as the page may see them: id, the label the shell shows, and which is current. */
+    fun endpointLabels(): List<EndpointLabel> {
+        val current = settings.current?.id
+        val labels = EndpointLabels.labels(settings.endpoints)
+        return settings.endpoints.map { EndpointLabel(it.id, labels[it.id] ?: it.hostLabel, it.id == current) }
+    }
 
     /** The main frame finished loading a page of the configured origin. */
     var pageReady = false
@@ -141,6 +160,8 @@ object ShellPage {
             settings = ShellSettings()
             router = UrlRouter(null)
             loadedBase = null
+            loadedEndpointId = null
+            pushedEndpoints = null
             pageReady = false
             pageLoading = false
             tracker = PageStatusTracker()
@@ -231,7 +252,7 @@ object ShellPage {
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         bind(view, window)
-        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }) { message ->
+        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }) { message ->
             owner?.onWebMessage(message)
         }
         owner = window

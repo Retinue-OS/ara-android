@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -55,11 +56,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.R
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.shell.PageState
-import os.retinue.ara.shell.ShellUrls
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.update.UpdateState
@@ -97,9 +99,15 @@ data class SettingsState(
 /** What the settings screen can ask for. */
 interface SettingsActions {
     fun close()
-    fun saveBaseUrl(url: String)
-    fun selectCertificate()
-    fun clearCertificate()
+
+    /** Open the editor on a new endpoint. */
+    fun addEndpoint()
+
+    /** Open the editor on the endpoint [id]. */
+    fun editEndpoint(id: String)
+
+    /** Show the endpoint [id] from now on. */
+    fun useEndpoint(id: String)
     fun requestHomeRole()
 
     /** Ask Android to pin a shortcut to Ara, the way a browser installing a web app does. */
@@ -145,8 +153,10 @@ interface SettingsActions {
 }
 
 /**
- * The shell's native settings (plan §1): base URL, client certificate, page
- * status, home role, split screen, launcher editor, wake phrase, updates.
+ * The phone shell's own settings (plan §1): the endpoints (address, client
+ * certificate, sign-in, health data), page status, home role, split screen,
+ * launcher editor, wake phrase, updates. Everything that is Retinue is on the
+ * web app's Settings page, which opens this screen for the rest.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -171,7 +181,7 @@ fun SettingsScreen(state: SettingsState, actions: SettingsActions) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            RetinueSection(state, actions)
+            EndpointsSection(state, actions)
             HorizontalDivider()
             PageDiagnostics(state.page, state.settings.certificateAlias)
             HorizontalDivider()
@@ -199,42 +209,55 @@ private fun SectionTitle(res: Int) {
     Text(stringResource(res), style = MaterialTheme.typography.titleMedium)
 }
 
+/**
+ * The endpoints: each under the name its server gives itself (EndpointLabels),
+ * with its address and what is set up for it; tap one to edit it, Use to show
+ * it. The web app's Settings page switches between them as well.
+ */
 @Composable
-private fun RetinueSection(state: SettingsState, actions: SettingsActions) {
-    var baseUrl by remember(state.settings.baseUrl) { mutableStateOf(state.settings.baseUrl) }
-    SectionTitle(R.string.settings_section_retinue)
-    OutlinedTextField(
-        value = baseUrl,
-        onValueChange = { baseUrl = it },
-        label = { Text(stringResource(R.string.settings_base_url)) },
-        placeholder = { Text(stringResource(R.string.settings_base_url_hint)) },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        isError = baseUrl.isNotBlank() && ShellSettings(baseUrl = baseUrl).base == null,
-        supportingText = if (ShellUrls.isCleartextBase(baseUrl)) {
-            { Text(stringResource(R.string.settings_base_url_https)) }
-        } else {
-            null
-        },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Button(
-        onClick = { actions.saveBaseUrl(baseUrl) },
-        enabled = baseUrl.trim() != state.settings.baseUrl,
-    ) { Text(stringResource(R.string.settings_save)) }
-
-    Text(stringResource(R.string.settings_certificate), style = MaterialTheme.typography.labelLarge)
-    Text(
-        state.settings.certificateAlias ?: stringResource(R.string.settings_certificate_none),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = actions::selectCertificate) { Text(stringResource(R.string.settings_select_certificate)) }
-        if (state.settings.certificateAlias != null) {
-            OutlinedButton(onClick = actions::clearCertificate) { Text(stringResource(R.string.settings_clear_certificate)) }
+private fun EndpointsSection(state: SettingsState, actions: SettingsActions) {
+    SectionTitle(R.string.settings_section_endpoints)
+    Text(stringResource(R.string.settings_endpoints_hint), style = MaterialTheme.typography.bodySmall)
+    val endpoints = state.settings.endpoints
+    val labels = EndpointLabels.labels(endpoints)
+    val current = state.settings.current
+    if (endpoints.isEmpty()) {
+        Text(stringResource(R.string.settings_endpoints_empty), style = MaterialTheme.typography.bodyMedium)
+    }
+    endpoints.forEach { endpoint ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = stringResource(R.string.settings_endpoint_edit)) { actions.editEndpoint(endpoint.id) }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(labels[endpoint.id] ?: endpoint.hostLabel, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(endpoint.baseUrl, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(endpointSummary(endpoint), style = MaterialTheme.typography.bodySmall)
+            }
+            if (endpoint.id == current?.id) {
+                Text(stringResource(R.string.settings_endpoint_current), style = MaterialTheme.typography.labelMedium)
+            } else {
+                OutlinedButton(onClick = { actions.useEndpoint(endpoint.id) }) { Text(stringResource(R.string.settings_endpoint_use)) }
+            }
+            IconButton(onClick = { actions.editEndpoint(endpoint.id) }) {
+                Icon(Icons.Filled.Edit, stringResource(R.string.settings_endpoint_edit))
+            }
         }
     }
+    OutlinedButton(onClick = actions::addEndpoint) { Text(stringResource(R.string.settings_endpoint_add)) }
 }
+
+/** One line on what is set up for an endpoint: certificate, sign-in, health data. */
+@Composable
+private fun endpointSummary(endpoint: Endpoint): String = stringResource(
+    R.string.settings_endpoint_summary,
+    endpoint.certificateAlias ?: stringResource(R.string.settings_endpoint_summary_none),
+    endpoint.username?.takeIf { it.isNotBlank() } ?: stringResource(R.string.settings_endpoint_summary_none),
+    stringResource(if (endpoint.healthUpload) R.string.settings_endpoint_summary_on else R.string.settings_endpoint_summary_off),
+)
 
 @Composable
 private fun HomeSection(state: SettingsState, actions: SettingsActions) {
