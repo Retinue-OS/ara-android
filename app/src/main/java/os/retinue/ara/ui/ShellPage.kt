@@ -121,7 +121,11 @@ object ShellPage {
         state = tracker.state
     }
 
-    /** Health sync status and events go to the page, whichever window shows it. */
+    /**
+     * Health sync status and events go to the page, whichever window shows it;
+     * the events also go to a settings page that is up, in either window (the
+     * status reaches it with the rest of its state).
+     */
     private val healthListener = object : HealthSyncListener {
         override fun onHealthStatus(status: HealthSyncStatus) {
             if (webView != null) bridge.healthStatusChanged(status)
@@ -129,6 +133,7 @@ object ShellPage {
 
         override fun onHealthEvent(event: HealthSyncEvent) {
             if (webView != null) bridge.healthEvent(event)
+            windows.forEach { it.onHealthSyncEvent(event) }
         }
     }
 
@@ -252,7 +257,7 @@ object ShellPage {
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         bind(view, window)
-        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }) { message ->
+        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }, { settings.deviceWebSettings }) { message ->
             owner?.onWebMessage(message)
         }
         owner = window

@@ -130,6 +130,11 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         store.updateEndpoints { set -> set.update(id) { it.copy(certificateAlias = alias) } }
     }
 
+    /** The settings page's health switch: the endpoint [id] takes health data, or not. */
+    fun setHealthUpload(id: String, on: Boolean) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(healthUpload = on) } }
+    }
+
     /** The sign-in dialog's "Remember": the endpoint [id] keeps this user name and (sealed) password. */
     fun rememberCredentials(id: String, username: String, password: String) = viewModelScope.launch {
         val user = username.trim()
@@ -168,6 +173,12 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
     fun setKeepSplitInRecents(on: Boolean) = viewModelScope.launch { store.setKeepSplitInRecents(on) }
+
+    /**
+     * One of the dashboard's per-device preferences (DeviceWebSettings), for
+     * every endpoint; null removes it. A key the app does not hold is ignored.
+     */
+    fun setDeviceWebSetting(key: String, value: String?) = viewModelScope.launch { store.setDeviceWebSetting(key, value) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
         viewModelScope.launch { editLauncher(change = change) }

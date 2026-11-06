@@ -82,8 +82,8 @@ internal fun slotWidth(available: Dp, slots: Int): Dp =
  * The bottom launcher bar: the configured entries (scrolling horizontally when
  * there are many) and, always last, "All apps". Long-press an entry to open it
  * the other way ([alternateOpen]), edit / remove / move it (an app or web app
- * also into a folder) and for the phone shell's settings; long-press "All apps" for a
- * new folder.
+ * also into a folder) and for the settings; long-press "All apps" for a new
+ * folder.
  */
 @Composable
 fun LauncherBar(
