@@ -29,6 +29,13 @@ data class ShellSettings(
     val splitLaunch: Boolean = false,
     /** The home screen keeps the split-screen window among the recent apps, ready to pair. */
     val keepSplitInRecents: Boolean = false,
+    /**
+     * The dashboard's per-device preferences, held for every endpoint (see
+     * [DeviceWebSettings]). Read with the rest, so the page script a page
+     * starts with always carries them: a page that found none there would
+     * hand the app its own older values instead.
+     */
+    val deviceWebSettings: Map<String, String> = emptyMap(),
 ) {
     val endpointSet: EndpointSet get() = EndpointSet(endpoints, currentEndpointId)
 

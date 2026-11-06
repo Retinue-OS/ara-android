@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Settings</title>
+  <!-- The Ara app's settings page: one page for everything settable on this
+       phone, in three sections. This app (its endpoints, the dashboard's
+       per-device preferences it holds for all of them, home screen, split
+       screen, wake phrase, launcher bar, updates), this app with the endpoint
+       on screen (health data), and this instance, embedded from the
+       endpoint's own settings-instance.html. Served by the app from its
+       assets at a reserved address (os.retinue.ara.settings.AppPage), so it
+       opens with or without a server; it talks to the app through
+       AraSettingsNative (SettingsBridge). No inline scripts or styles: its
+       Content-Security-Policy allows its own files only. -->
+  <link rel="stylesheet" href="settings.css">
+  <script type="module" src="page.mjs"></script>
+</head>
+<body>
+  <div class="view" data-view="main">
+    <header class="bar">
+      <button type="button" class="bar-btn" data-close aria-label="Close settings">&#8249;</button>
+      <h1>Settings</h1>
+    </header>
+    <main>
+      <p class="card hint" data-no-bridge hidden>This page belongs to the Ara app and works only inside it.</p>
+
+      <section class="card failure" data-failure hidden>
+        <h3>The dashboard could not be loaded</h3>
+        <p data-failure-reason></p>
+        <p class="mono" data-failure-url></p>
+        <div class="actions"><button type="button" class="btn primary" data-retry>Retry</button></div>
+        <details data-failure-console hidden>
+          <summary>Console errors</summary>
+          <ul class="mono plain" data-failure-errors></ul>
+        </details>
+      </section>
+
+      <h2 class="group">This app</h2>
+
+      <section class="card">
+        <h3>Retinue</h3>
+        <p class="hint">The Retinue servers this phone can show, each under the
+          name it gives itself. The one shown is marked Active.</p>
+        <p data-endpoints-empty hidden>No endpoint yet. Add the Retinue server this phone should show.</p>
+        <ul class="endpoints plain" data-endpoints></ul>
+        <div class="actions"><button type="button" class="btn" data-endpoint-add>Add endpoint</button></div>
+      </section>
+
+      <section class="card">
+        <h3>Voice</h3>
+        <p class="hint">Continuous conversation reads Ara's answers aloud, then
+          opens the mic. A pause as long as the first value ends what you say
+          and sends it; if you say nothing, the mic closes after the second.
+          The same for every endpoint.</p>
+        <label class="row">Pause that ends a take (seconds)
+          <input type="number" min="0.5" max="5" step="0.1" inputmode="decimal" data-voice-silence>
+        </label>
+        <label class="row">Mic closes with no speech after (seconds)
+          <input type="number" min="2" max="30" step="1" inputmode="decimal" data-voice-nospeech>
+        </label>
+      </section>
+
+      <section class="card">
+        <h3>Shelf</h3>
+        <p class="hint">Threads, chats and projects you minimize wait on the
+          shelf at the foot of every page. When it is full, the item used
+          longest ago with nothing new on it makes room; items with an answer
+          or messages waiting are never dropped. The same size for every
+          endpoint.</p>
+        <label class="row">Shelf size
+          <input type="number" min="1" max="50" step="1" inputmode="numeric" data-shelf-size>
+        </label>
+      </section>
+
+      <section class="card">
+        <h3>Home screen</h3>
+        <p data-home-status></p>
+        <div class="actions"><button type="button" class="btn" data-home-request></button></div>
+      </section>
+
+      <section class="card">
+        <h3>Split screen</h3>
+        <p class="hint">The home screen cannot share the screen with an app, so
+          Ara has a second window for split screen. It shows the same page, in
+          the same place, and what you open from it goes in the other half.</p>
+        <label class="switch-row"><span>Open apps beside Ara</span>
+          <input type="checkbox" role="switch" data-split-launch></label>
+        <p class="hint">Apps, web apps and links from the home screen open in
+          split screen, next to Ara. Long-press one to open it full screen
+          instead.</p>
+        <label class="switch-row"><span>Keep Ara in recent apps</span>
+          <input type="checkbox" role="switch" data-split-recents></label>
+        <p class="hint">When the split-screen Ara is not among the recent apps,
+          the home screen puts it back there, ready to pair with an app.</p>
+      </section>
+
+      <section class="card">
+        <h3>Wake phrase</h3>
+        <p class="hint">Say the phrase to open a voice conversation in the web
+          app. Detection runs on the phone; no audio leaves it until the web
+          app opens the mic.</p>
+        <div class="choices" role="radiogroup" aria-label="Wake phrase">
+          <label><input type="radio" name="wake-mode" value="off"> Off</label>
+          <label><input type="radio" name="wake-mode" value="visible"> While the home screen is visible</label>
+          <label><input type="radio" name="wake-mode" value="always"> Always, with a notification</label>
+        </div>
+        <p data-wake-status></p>
+        <div data-wake-notes></div>
+        <label class="row column">
+          <span>Sensitivity threshold: <span data-wake-threshold-value></span></span>
+          <input type="range" min="0.1" max="0.9" step="0.05" data-wake-threshold>
+        </label>
+        <p class="hint">Lower wakes more easily, and more often by mistake. 0.5
+          is the default.</p>
+        <details class="advanced">
+          <summary>Advanced: the wake models</summary>
+          <p class="hint" data-wake-models></p>
+          <div class="actions"><button type="button" class="btn" data-wake-features>Download feature models</button></div>
+          <label class="field">Phrase model URL (.onnx)
+            <input type="url" inputmode="url" spellcheck="false" autocomplete="off" data-wake-url>
+          </label>
+          <div class="actions">
+            <button type="button" class="btn" data-wake-phrase>Download phrase model</button>
+            <button type="button" class="btn" data-wake-pick>Choose file…</button>
+          </div>
+          <p class="hint" data-wake-message aria-live="polite"></p>
+        </details>
+      </section>
+
+      <section class="card">
+        <h3>Launcher bar</h3>
+        <p class="hint">Apps, links, web-app pages and folders on the bar at the
+          bottom. A long press on an entry of the bar edits or moves it too.</p>
+        <div class="actions"><button type="button" class="btn" data-launcher-edit>Edit launcher bar</button></div>
+      </section>
+
+      <section class="card">
+        <h3>Updates</h3>
+        <p data-update-installed></p>
+        <label class="switch-row"><span>Install updates automatically</span>
+          <input type="checkbox" role="switch" data-update-auto></label>
+        <p class="hint">Ara then checks when it comes to the front, at most
+          every six hours, and installs a new build over Wi-Fi once a voice
+          conversation has ended. Installing restarts Ara. Off: nothing is
+          fetched until you check here.</p>
+        <div class="choices" role="radiogroup" aria-label="Update channel">
+          <label><input type="radio" name="update-channel" value="nightly"> Nightly builds
+            <span class="hint inline">a build of the latest code, most days</span></label>
+          <label><input type="radio" name="update-channel" value="release"> Releases
+            <span class="hint inline">proper releases only, when there are any</span></label>
+        </div>
+        <p data-update-status aria-live="polite"></p>
+        <progress max="1" data-update-progress hidden></progress>
+        <div class="actions">
+          <button type="button" class="btn" data-update-check>Check for updates</button>
+          <button type="button" class="btn primary" data-update-install hidden></button>
+          <button type="button" class="btn primary" data-update-confirm hidden>Confirm installation</button>
+          <button type="button" class="btn" data-update-cancel hidden>Cancel</button>
+        </div>
+        <div data-update-permission hidden>
+          <p class="hint">Android does not let Ara install apps yet. Allow it once;
+            updates then install without asking each time.</p>
+          <div class="actions"><button type="button" class="btn" data-update-allow>Allow Ara to install updates</button></div>
+        </div>
+      </section>
+      <p class="version" data-version></p>
+
+      <h2 class="group" data-endpoint-group hidden>This app with <span data-endpoint-name></span></h2>
+      <section class="card" data-health hidden>
+        <h3>Health data</h3>
+        <p data-health-unavailable hidden>Health Connect is not available on this
+          phone, so there is no health data to send.</p>
+        <div data-health-available>
+          <label class="switch-row"><span>Upload health data to <span data-health-name></span></span>
+            <input type="checkbox" role="switch" data-health-upload></label>
+          <p class="hint">Health data from the phone's Health Connect, such as a
+            watch, a ring or a blood-pressure app, goes to this endpoint's
+            health records. Off: nothing is read or sent for it, not even on
+            request.</p>
+          <div data-health-controls hidden>
+            <div class="actions"><button type="button" class="btn" data-health-sync>Update health data now</button></div>
+            <p data-health-line aria-live="polite"></p>
+            <label class="switch-row"><span>Update when the app comes to the front</span>
+              <input type="checkbox" role="switch" data-health-auto></label>
+            <label class="row">At most every (minutes)
+              <input type="number" min="1" max="1440" step="1" inputmode="numeric" data-health-interval>
+            </label>
+          </div>
+        </div>
+      </section>
+      <section class="card" data-notifications hidden>
+        <h3>Notifications</h3>
+        <p class="hint">The app cannot receive notifications yet. To get them on
+          this phone, install the dashboard as an app in Chrome and turn on
+          notifications there.</p>
+      </section>
+
+      <h2 class="group" data-instance-group hidden>This instance</h2>
+      <iframe class="instance" data-instance-frame title="This instance's settings" hidden></iframe>
+      <section class="card" data-instance-fallback hidden>
+        <p class="hint">This instance's settings could not be shown here. Its
+          server may be unreachable, or its dashboard older than this app.</p>
+        <div class="actions"><button type="button" class="btn" data-instance-open>Open them in the dashboard</button></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="view" data-view="editor" hidden>
+    <header class="bar">
+      <button type="button" class="bar-btn" data-editor-back aria-label="Back">&#8249;</button>
+      <h1 data-editor-title>Edit endpoint</h1>
+      <button type="button" class="bar-action" data-editor-save>Save</button>
+    </header>
+    <main>
+      <section class="card">
+        <label class="field">Retinue base URL
+          <input type="url" inputmode="url" autocomplete="off" spellcheck="false"
+                 placeholder="https://agents.example.com" data-draft-url>
+        </label>
+        <p class="error" data-draft-url-error hidden></p>
+      </section>
+      <section class="card">
+        <h3>Client certificate</h3>
+        <p data-draft-cert></p>
+        <div class="actions">
+          <button type="button" class="btn" data-draft-cert-select>Select certificate</button>
+          <button type="button" class="btn" data-draft-cert-clear>Clear</button>
+        </div>
+      </section>
+      <section class="card">
+        <h3>Sign-in</h3>
+        <p class="hint">Only where the Retinue edge asks for a password instead
+          of a certificate. Stored encrypted on this phone, and used for the
+          dashboard and the health data upload alike.</p>
+        <label class="field">User name
+          <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-draft-user>
+        </label>
+        <label class="field">Password
+          <input type="password" autocomplete="off" data-draft-password>
+        </label>
+        <p class="hint" data-draft-password-stored hidden>A password is stored. Leave the field empty to keep it.</p>
+        <p class="error" data-draft-signin-error hidden></p>
+        <div class="actions"><button type="button" class="btn" data-draft-forget hidden>Forget password</button></div>
+      </section>
+      <section class="card">
+        <label class="switch-row"><span>Upload health data to this endpoint</span>
+          <input type="checkbox" role="switch" data-draft-health></label>
+        <p class="hint">Health Connect data from this phone goes to this
+          endpoint's letterbox. Off: nothing is read or sent for it, not even on
+          request.</p>
+      </section>
+      <section class="card" data-draft-remove-card>
+        <div class="actions"><button type="button" class="btn danger" data-draft-remove>Remove endpoint</button></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="dialog-backdrop" data-dialog hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-text">
+      <h2 id="dialog-title" data-dialog-title></h2>
+      <p id="dialog-text" data-dialog-text></p>
+      <div class="actions end">
+        <button type="button" class="btn" data-dialog-cancel></button>
+        <button type="button" class="btn primary" data-dialog-confirm></button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

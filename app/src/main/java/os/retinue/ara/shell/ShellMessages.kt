@@ -3,6 +3,7 @@ package os.retinue.ara.shell
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.health.HealthSyncStatus
 
 /**
@@ -31,6 +33,13 @@ sealed class WebMessage {
 
     /** `selectEndpoint(id)`: show another of the configured endpoints (the page may only ask; the shell decides). */
     data class SelectEndpoint(val id: String) : WebMessage()
+
+    /**
+     * `setDeviceSetting(key, value)`: one of the dashboard's per-device
+     * preferences, held by the app for every endpoint ([value] null removes
+     * it; the app keeps only the keys DeviceWebSettings knows).
+     */
+    data class DeviceSet(val key: String, val value: String?) : WebMessage()
 
     /** The `speechSynthesis` stand-in asks for one utterance to be spoken now. */
     data class Speak(
@@ -99,6 +108,15 @@ object ShellMessages {
             "voiceActive" -> WebMessage.VoiceActive(obj.bool("active") ?: false)
             "openSettings" -> WebMessage.OpenSettings(obj.str("section")?.takeIf { it.isNotBlank() })
             "endpoint.select" -> WebMessage.SelectEndpoint(obj.str("id")?.takeIf { it.isNotBlank() } ?: return null)
+            "device.set" -> {
+                val key = obj.str("key")?.takeIf { it.isNotBlank() } ?: return null
+                val value = when (val v = obj["value"]) {
+                    null, is JsonNull -> null
+                    is JsonPrimitive -> if (v.isString) v.content else return null
+                    else -> return null
+                }
+                WebMessage.DeviceSet(key, value)
+            }
             "tts.speak" -> {
                 val id = obj.long("id") ?: return null
                 WebMessage.Speak(
@@ -181,6 +199,18 @@ object ShellMessages {
             )
         }
     }
+
+    /**
+     * The per-device preferences changed (here, on the app's settings page, or
+     * on another endpoint's page): the page's copy is replaced, and the page
+     * script announces the keys that changed with a `device-settings` event.
+     */
+    fun deviceStatus(values: Map<String, String>): String = receiveScript(
+        buildJsonObject {
+            put("type", "device.status")
+            put("settings", DeviceWebSettings.toJson(values))
+        },
+    )
 
     /** The endpoint list changed: the page's copy is replaced (an `endpoints` event follows separately). */
     fun endpointsStatus(list: List<EndpointLabel>): String = receiveScript(

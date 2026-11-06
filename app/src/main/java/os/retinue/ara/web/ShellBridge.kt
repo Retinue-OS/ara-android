@@ -9,6 +9,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.serialization.json.JsonPrimitive
 import os.retinue.ara.BuildConfig
+import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.shell.EndpointLabel
@@ -31,9 +32,10 @@ import os.retinue.ara.shell.WebMessage
  * `addDocumentStartJavaScript` alone, the script is injected into the main
  * frame when a page starts and again when it finishes loading (it is idempotent).
  *
- * The page's `healthConnectAvailable()`, `healthSyncStatus()` and `endpoints()`
- * answer at once, so the script carries the sync status and the endpoint list
- * as they were when it was installed ([healthStatus] and [endpoints] supply
+ * The page's `healthConnectAvailable()`, `healthSyncStatus()`, `endpoints()`
+ * and `deviceSettings()` answer at once, so the script carries the sync
+ * status, the endpoint list and the per-device preferences as they were when
+ * it was installed ([healthStatus], [endpoints] and [deviceSettings] supply
  * them), and every change is pushed to the page too.
  */
 class ShellBridge(
@@ -42,6 +44,7 @@ class ShellBridge(
     private val router: () -> UrlRouter,
     private val healthStatus: () -> HealthSyncStatus,
     private val endpoints: () -> List<EndpointLabel>,
+    private val deviceSettings: () -> Map<String, String>,
     private val onMessage: (WebMessage) -> Unit,
 ) {
     private val template: String = context.assets.open(ASSET).bufferedReader().use { it.readText() }
@@ -52,6 +55,7 @@ class ShellBridge(
         get() = template
             .replace(HEALTH_PLACEHOLDER, JsonPrimitive(healthStatus().toJson().toString()).toString())
             .replace(ENDPOINTS_PLACEHOLDER, JsonPrimitive(ShellMessages.endpointsJson(endpoints()).toString()).toString())
+            .replace(DEVICE_PLACEHOLDER, JsonPrimitive(DeviceWebSettings.encode(deviceSettings())).toString())
 
     private val listenerSupported = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
     private val documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
@@ -144,6 +148,16 @@ class ShellBridge(
     }
 
     /**
+     * The per-device preferences changed: pages loaded from now on start with
+     * them, and the page on screen gets the new copy (its script announces the
+     * keys that changed with a `device-settings` event).
+     */
+    fun deviceSettingsChanged(values: Map<String, String>) {
+        if (scriptHandler != null) installScript(router().origin?.toString())
+        run(ShellMessages.deviceStatus(values))
+    }
+
+    /**
      * The endpoint list (or a label in it) changed: pages loaded from now on
      * start with it, the page on screen is told and gets an `endpoints` event
      * (nobody needs to take it; the Settings page re-renders its menu).
@@ -169,5 +183,8 @@ class ShellBridge(
 
         /** Where the script takes the endpoint list, likewise. */
         const val ENDPOINTS_PLACEHOLDER = "\"__RETINUE_ENDPOINTS__\""
+
+        /** Where the script takes the per-device preferences, likewise. */
+        const val DEVICE_PLACEHOLDER = "\"__RETINUE_DEVICE_SETTINGS__\""
     }
 }

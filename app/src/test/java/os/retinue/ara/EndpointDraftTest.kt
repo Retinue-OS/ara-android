@@ -2,66 +2,61 @@ package os.retinue.ara
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
-import os.retinue.ara.data.Endpoint
 import os.retinue.ara.ui.EndpointDraft
-import os.retinue.ara.ui.EndpointDraft.Close
 import os.retinue.ara.ui.EndpointDraft.Problem
 
-/** What closing the endpoint editor does with what was typed (see [EndpointDraft.onClose]). */
+/**
+ * What the app saves of the settings page's editor (see [EndpointDraft.problem]).
+ * What closing the editor does is the page's (assets/settings/logic.mjs, tested
+ * in app/src/test/js/settings-page.test.mjs).
+ */
 class EndpointDraftTest {
 
-    private val home = Endpoint(
-        "home", "https://agents.example.com", certificateAlias = "ara-phone",
-        username = "reto", secret = "c2VhbGVk", healthUpload = true, name = "Retinue",
+    /** A stored endpoint, as the app checks it: user "reto" with a stored password. */
+    private val home = EndpointDraft(
+        id = "home", isNew = false, baseUrl = "https://agents.example.com", certificateAlias = "ara-phone",
+        username = "reto", password = "", hasStoredPassword = true, forgetPassword = false, healthUpload = true, name = "Retinue",
+    )
+
+    private val fresh = EndpointDraft(
+        id = "new", isNew = true, baseUrl = "", certificateAlias = null, username = "", password = "",
+        hasStoredPassword = false, forgetPassword = false, healthUpload = false, name = null,
     )
 
     @Test
-    fun anUntouchedDraftJustCloses() {
-        assertEquals(Close.Unchanged, EndpointDraft.of(home).onClose())
-        assertEquals(Close.Unchanged, EndpointDraft.forNew("new").onClose())
-        // Changed and changed back is no change; spaces around the address and the user name do not count.
-        val back = EndpointDraft.of(home).copy(baseUrl = "https://else.example").copy(baseUrl = " https://agents.example.com ", username = "reto ")
-        assertFalse(back.changed)
-        assertEquals(Close.Unchanged, back.onClose())
+    fun anHttpsAddressIsNeeded() {
+        assertEquals(Problem.Address, fresh.problem)
+        assertEquals(Problem.Address, home.copy(baseUrl = "http://plain.example").problem)
+        assertEquals(Problem.Address, home.copy(baseUrl = "  ").problem)
+        // https:// is assumed when left out; the path is kept.
+        assertNull(fresh.copy(baseUrl = "agents.example.com/retinue").problem)
+        assertEquals("https://agents.example.com/retinue", fresh.copy(baseUrl = "agents.example.com/retinue/").base)
     }
 
     @Test
-    fun changesThatCanBeSavedAreSavedOnTheWayOut() {
-        val d = EndpointDraft.of(home)
-        assertEquals(Close.Save, d.copy(healthUpload = false).onClose())
-        assertEquals(Close.Save, d.copy(certificateAlias = null).onClose())
-        assertEquals(Close.Save, d.copy(baseUrl = "agents.example.com/retinue").onClose())
+    fun aUserNameAndAPasswordGoTogether() {
+        // The stored password counts until it is forgotten.
+        assertNull(home.problem)
+        assertTrue(home.hasPassword)
+        assertEquals(Problem.Password, home.copy(forgetPassword = true).problem)
         // A new password for the stored user; or the sign-in dropped altogether.
-        assertEquals(Close.Save, d.copy(password = "new secret").onClose())
-        assertEquals(Close.Save, d.copy(username = "", forgetPassword = true).onClose())
-        // A new endpoint with an address is created on the way out.
-        assertEquals(Close.Save, EndpointDraft.forNew("new").copy(baseUrl = "https://admin.example.com").onClose())
-    }
-
-    @Test
-    fun changesThatCannotBeSavedAreAskedAboutNeverDropped() {
-        // No address yet, or not an https one.
-        assertEquals(Close.Ask(Problem.Address), EndpointDraft.forNew("new").copy(healthUpload = true).onClose())
-        assertEquals(Close.Ask(Problem.Address), EndpointDraft.of(home).copy(baseUrl = "http://plain.example").onClose())
-        assertEquals(Close.Ask(Problem.Address), EndpointDraft.of(home).copy(baseUrl = "").onClose())
-        // The stored password forgotten while the user name stays.
-        assertEquals(Close.Ask(Problem.Password), EndpointDraft.of(home).copy(forgetPassword = true).onClose())
-        assertEquals(Close.Ask(Problem.Password), EndpointDraft.forNew("new").copy(baseUrl = "https://a.example", username = "reto").onClose())
-        // A password typed without a user name: Save would drop it, so it is not saved silently.
-        val noUser = EndpointDraft.forNew("new").copy(baseUrl = "https://a.example", password = "pw")
-        assertEquals(Close.Ask(Problem.UserName), noUser.onClose())
+        assertNull(home.copy(forgetPassword = true, password = "new secret").problem)
+        assertNull(home.copy(username = "", forgetPassword = true).problem)
+        // A user name with no password anywhere.
+        assertEquals(Problem.Password, fresh.copy(baseUrl = "https://a.example", username = "reto").problem)
+        // A password without a user name: saving would drop it, so it is refused.
+        val noUser = fresh.copy(baseUrl = "https://a.example", password = "pw")
+        assertEquals(Problem.UserName, noUser.problem)
         assertFalse(noUser.canSave)
     }
 
     @Test
-    fun theSaveButtonFollowsTheSameRule() {
-        assertTrue(EndpointDraft.of(home).canSave)
-        assertFalse(EndpointDraft.forNew("new").canSave)
-        assertTrue(EndpointDraft.forNew("new").copy(baseUrl = "agents.example.com").canSave)
-        // A stored password counts until it is forgotten.
-        assertTrue(EndpointDraft.of(home).copy(password = "").canSave)
-        assertFalse(EndpointDraft.of(home).copy(forgetPassword = true).canSave)
+    fun canSaveIsNoProblem() {
+        assertTrue(home.canSave)
+        assertFalse(fresh.canSave)
+        assertTrue(fresh.copy(baseUrl = "https://admin.example.com").canSave)
     }
 }

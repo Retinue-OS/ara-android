@@ -284,3 +284,48 @@ console.log('health bridge tests passed');
   assert.equal(JSON.parse(shell.endpoints())[0].label, 'Admin');
 }
 console.log('endpoint bridge tests passed');
+
+// ---- Per-device preferences (RetinueShell/4): baked, written, pushed ----
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, CustomEvent, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const target = new EventTarget();
+  ctx.addEventListener = target.addEventListener.bind(target);
+  ctx.removeEventListener = target.removeEventListener.bind(target);
+  ctx.dispatchEvent = target.dispatchEvent.bind(target);
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  const values = { 'retinue.shelf.size': '7', 'retinue.shelf.v1': 'not kept', 'retinue.view.news': 'list' };
+  const baked = src.replace('"__RETINUE_DEVICE_SETTINGS__"', JSON.stringify(JSON.stringify(values)));
+  vm.createContext(ctx);
+  vm.runInContext(baked, ctx);
+  const shell = ctx.RetinueShell;
+  assert.equal(shell.settingsPage, true);
+  assert.deepEqual(JSON.parse(shell.deviceSettings()), { 'retinue.shelf.size': '7', 'retinue.view.news': 'list' });
+  // A write is kept at once and sent; keys and sizes the app refuses are neither.
+  shell.setDeviceSetting('retinue-voice-silence-ms', 2500);
+  shell.setDeviceSetting('retinue.view.news', null);
+  shell.setDeviceSetting('retinue.attention.held', '1');
+  shell.setDeviceSetting('retinue.layout.v1', 'x'.repeat(5000));
+  assert.deepEqual(posts.filter((p) => p.type === 'device.set'), [
+    { type: 'device.set', key: 'retinue-voice-silence-ms', value: '2500' },
+    { type: 'device.set', key: 'retinue.view.news', value: null },
+  ]);
+  assert.deepEqual(JSON.parse(shell.deviceSettings()), { 'retinue.shelf.size': '7', 'retinue-voice-silence-ms': '2500' });
+  // The app pushes a new copy: the page hears which keys changed, after the copy is current.
+  const heard = [];
+  ctx.addEventListener('retinue-shell', (e) => {
+    // Spread into this realm's array: the script's arrays come from its own context.
+    if (e.detail.type === 'device-settings') heard.push([[...e.detail.keys].sort(), shell.deviceSettings()]);
+  });
+  ctx.__retinueShellReceive({ type: 'device.status', settings: { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500', bogus: 'x' } });
+  assert.equal(heard.length, 1);
+  assert.deepEqual(heard[0][0], ['retinue.shelf.size']);
+  assert.deepEqual(JSON.parse(heard[0][1]), { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500' });
+  // The same copy again: nothing changed, no event.
+  ctx.__retinueShellReceive({ type: 'device.status', settings: { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500' } });
+  assert.equal(heard.length, 1);
+}
+console.log('device settings bridge tests passed');
