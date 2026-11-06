@@ -665,7 +665,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 view.destroy()
             }
         }
-        SideEffect { view.show(message, state.current?.origin, settingsStart) }
+        SideEffect { view.show(message, state.current?.origin, state.current?.frameKey, settingsStart) }
         Surface(Modifier.fillMaxSize()) {
             AndroidView(
                 factory = {

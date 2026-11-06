@@ -2,6 +2,7 @@ package os.retinue.ara
 
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
@@ -62,6 +63,10 @@ class SettingsPageTest {
         // No endpoint, or anything that is not a plain origin: no frames at all.
         assertTrue(AppPage.contentSecurityPolicy(null).contains("frame-src 'none';"))
         assertTrue(AppPage.contentSecurityPolicy("https://a.example; script-src *").contains("frame-src 'none';"))
+        // A policy cannot name an IPv6 address (Chromium ignores the source), so none is written.
+        assertNull(AppPage.frameSource("https://[::1]:8443"))
+        assertTrue(AppPage.contentSecurityPolicy("https://[2001:db8::1]").contains("frame-src 'none';"))
+        assertEquals("https://agents.example.com:8443", AppPage.frameSource("https://agents.example.com:8443"))
         assertEquals("https://appassets.androidplatform.net/settings/index.html#add", AppPage.startUrl(add = true))
         assertEquals("https://appassets.androidplatform.net/settings/index.html#edit=endpoint-1", AppPage.startUrl(editId = "endpoint-1"))
     }
@@ -121,10 +126,18 @@ class SettingsPageTest {
         assertEquals(listOf(true, false), rows.map { it.current })
         assertTrue(rows[1].hasPassword)
         assertEquals(
-            CurrentEndpoint("home", "Retinue", "https://agents.example.com", "https://agents.example.com/settings-instance.html", "https://agents.example.com/settings.html"),
+            CurrentEndpoint(
+                "home", "Retinue", "https://agents.example.com", "https://agents.example.com/settings-instance.html",
+                "https://agents.example.com/settings.html", SettingsPageState.frameKey(home),
+            ),
             SettingsPageState.currentEndpoint(settings),
         )
         assertNull(SettingsPageState.currentEndpoint(ShellSettings()))
+        // An endpoint at an IPv6 address: no frame (the page offers the dashboard), its pages as usual.
+        val v6 = Endpoint("v6", "https://[::1]:8443")
+        val v6Current = SettingsPageState.currentEndpoint(ShellSettings(endpoints = listOf(v6), currentEndpointId = "v6"))!!
+        assertNull(v6Current.instanceUrl)
+        assertEquals("https://[::1]:8443/settings.html", v6Current.settingsUrl)
         val state = SettingsPageState(
             version = "2.0+abc",
             endpoints = rows,
@@ -146,5 +159,24 @@ class SettingsPageTest {
         assertEquals("null", json["failure"].toString())
         assertEquals("true", json["home"]!!.jsonObject["isDefault"].toString())
         assertEquals("""{"type":"state","state":{}}""", SettingsMessages.state(JsonObject(emptyMap())))
+        assertEquals(SettingsPageState.frameKey(home), json["current"]!!.jsonObject["frameKey"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun theSectionLoadsAfreshWhenWhatSignsItInChanges() {
+        val home = Endpoint("home", "https://agents.example.com", certificateAlias = "ara-phone", username = "reto", secret = "sealed-1", name = "Retinue")
+        val key = SettingsPageState.frameKey(home)
+        for (changed in listOf(
+            home.copy(id = "other"),
+            home.copy(baseUrl = "https://agents.example.com/retinue"),
+            home.copy(certificateAlias = null),
+            home.copy(username = "anna"),
+            home.copy(secret = "sealed-2"),
+        )) {
+            assertNotEquals(key, SettingsPageState.frameKey(changed), changed.toString())
+        }
+        // What does not sign it in changes nothing: the health switch, the fetched name.
+        assertEquals(key, SettingsPageState.frameKey(home.copy(healthUpload = true, name = "Home")))
+        assertFalse(key.contains("sealed"), "nothing of the password")
     }
 }

@@ -68,6 +68,12 @@ class SettingsWebView(private val context: Context, private val host: SettingsPa
     private var loaded = false
     private var destroyed = false
 
+    /** What signs the instance section in, as last shown (SettingsPageState.frameKey). */
+    private var frameKey: String? = null
+
+    /** The stored password answered a challenge for the section as it is now: a second one gets no answer. */
+    private var storedAuthUsed = false
+
     init {
         configure()
         view.webViewClient = Client()
@@ -78,10 +84,17 @@ class SettingsWebView(private val context: Context, private val host: SettingsPa
     /**
      * Show [state] (a [SettingsMessages.state] message). The page loads at
      * [startUrl] the first time; when the current endpoint's origin changes,
-     * it loads afresh, so its policy lets it frame the new one.
+     * it loads afresh, so its policy lets it frame the new one. A new
+     * [frameKey] (another endpoint, address, certificate or sign-in) makes
+     * the page load the section afresh, which may use the stored password
+     * again.
      */
-    fun show(state: String, origin: String?, startUrl: String) {
+    fun show(state: String, origin: String?, frameKey: String?, startUrl: String) {
         if (destroyed) return
+        if (frameKey != this.frameKey) {
+            this.frameKey = frameKey
+            storedAuthUsed = false
+        }
         if (!loaded || origin != frameOrigin) {
             frameOrigin = origin
             val url = if (loaded) AppPage.START_URL else startUrl
@@ -121,9 +134,6 @@ class SettingsWebView(private val context: Context, private val host: SettingsPa
     }
 
     private inner class Client : WebViewClient() {
-
-        /** The stored password answered a challenge since the page loaded: a second one gets no answer. */
-        private var storedAuthUsed = false
 
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
             AppPageServer.respond(context, request.url, frameOrigin)

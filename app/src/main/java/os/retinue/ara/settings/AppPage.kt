@@ -70,12 +70,20 @@ object AppPage {
     fun encodingFor(mime: String): String? = if (mime.startsWith("text/") || mime == "image/svg+xml") "utf-8" else null
 
     /**
+     * [origin] as the policy names it in `frame-src`, or null when it cannot:
+     * no origin, anything but a plain https origin, or one with an IPv6
+     * address, which a policy cannot express (Chromium ignores such a source,
+     * so its frame could never load; the page offers the dashboard instead).
+     */
+    fun frameSource(origin: String?): String? = origin?.takeIf { isOrigin(it) }
+
+    /**
      * The page's policy: its own files only; in a frame, only the current
      * endpoint's origin ([frameOrigin], null for none); no network access of its
      * own, and no one frames it.
      */
     fun contentSecurityPolicy(frameOrigin: String?): String {
-        val frames = frameOrigin?.takeIf { isOrigin(it) } ?: "'none'"
+        val frames = frameSource(frameOrigin) ?: "'none'"
         return "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
             "connect-src 'none'; frame-src $frames; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     }

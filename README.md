@@ -228,7 +228,10 @@ endpoint it saves, and what is stored already (a password) never goes to the
 page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
 a frame of the current endpoint's origin (the page loads afresh when that
 changes) and nothing else; nobody may frame it, and the dashboard's WebView
-never loads anything from its address. The page's decisions live in
+never loads anything from its address. A policy cannot name an IPv6 address,
+so an endpoint at one gets the way into its dashboard instead of the frame.
+The frame signs in as the dashboard does (certificate, stored password) and
+loads afresh when the endpoint, its certificate or its sign-in changes. The page's decisions live in
 `assets/settings/logic.mjs`, tested with `node app/src/test/js/settings-page.test.mjs`.
 
 ---

@@ -244,10 +244,12 @@ function renderInstance() {
     clearTimeout(instanceTimer);
     frame.hidden = true;
     frame.removeAttribute('src');
-    fallback.hidden = true;
+    // An endpoint whose section cannot be framed here: the way to the dashboard at once.
+    fallback.hidden = !cur;
     return;
   }
-  const key = `${cur.id} ${cur.instanceUrl}`;
+  // Another endpoint, or a new certificate or sign-in for it: the section loads afresh.
+  const key = `${cur.id} ${cur.instanceUrl} ${cur.frameKey || ''}`;
   if (instanceFor === key) return;
   instanceFor = key;
   fallback.hidden = true;

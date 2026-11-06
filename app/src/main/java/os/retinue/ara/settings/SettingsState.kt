@@ -7,6 +7,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import os.retinue.ara.data.DeviceWebSettings
+import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 
@@ -33,10 +34,12 @@ data class CurrentEndpoint(
     val label: String,
     /** `https://host[:port]`: the only origin the page trusts a frame message from. */
     val origin: String,
-    /** The instance's section, embedded as the page's last part. */
-    val instanceUrl: String,
+    /** The instance's section, embedded as the page's last part; null when its origin cannot be framed (AppPage.frameSource). */
+    val instanceUrl: String?,
     /** The dashboard's own Settings page, for when the section cannot be shown. */
     val settingsUrl: String,
+    /** Changes whenever what signs the section in changes, so the page loads it afresh ([SettingsPageState.frameKey]). */
+    val frameKey: String,
 )
 
 /** Why the dashboard did not load, for the banner at the top. */
@@ -127,8 +130,9 @@ data class SettingsPageState(
                     put("id", c.id)
                     put("label", c.label)
                     put("origin", c.origin)
-                    put("instanceUrl", c.instanceUrl)
+                    put("instanceUrl", c.instanceUrl.json())
                     put("settingsUrl", c.settingsUrl)
+                    put("frameKey", c.frameKey)
                 }
             } ?: JsonNull,
         )
@@ -220,9 +224,20 @@ data class SettingsPageState(
                 id = e.id,
                 label = EndpointLabels.label(e, settings.endpoints),
                 origin = origin,
-                instanceUrl = "$base/settings-instance.html",
+                instanceUrl = if (AppPage.frameSource(origin) != null) "$base/settings-instance.html" else null,
                 settingsUrl = "$base/settings.html",
+                frameKey = frameKey(e),
             )
         }
+
+        /**
+         * Changes whenever what signs the instance section in changes: the
+         * endpoint shown, its address, its certificate or its sign-in (the
+         * sealed password counts, and each save seals afresh, so a new
+         * password is a change). A checksum: nothing of the password can be
+         * read from it.
+         */
+        fun frameKey(e: Endpoint): String =
+            listOf(e.id, e.base, e.certificateAlias, e.username, e.secret).hashCode().toUInt().toString(16)
     }
 }
