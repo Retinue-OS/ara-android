@@ -37,59 +37,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import os.retinue.ara.R
-import os.retinue.ara.data.Endpoint
 import os.retinue.ara.shell.ShellUrls
-
-/**
- * An endpoint as it is being edited: what the editor shows and what Save
- * turns into an [Endpoint] (see ShellViewModel.saveEndpoint). The password is
- * the one field that is not round-tripped: a stored one is never shown, a
- * typed one replaces it, an empty field keeps it unless [forgetPassword].
- */
-data class EndpointDraft(
-    val id: String,
-    val isNew: Boolean,
-    val baseUrl: String,
-    val certificateAlias: String?,
-    val username: String,
-    /** A password typed now; "" leaves the stored one (if any) as it is. */
-    val password: String,
-    /** A password is stored for this endpoint. */
-    val hasStoredPassword: Boolean,
-    /** Drop the stored password on save. */
-    val forgetPassword: Boolean,
-    val healthUpload: Boolean,
-    /** The instance's name as last fetched, for the title; null while unknown. */
-    val name: String?,
-) {
-    val base: String? get() = ShellUrls.normalizeBase(baseUrl)
-
-    /** A password is in force after Save: typed now, or stored and kept. */
-    val hasPassword: Boolean get() = password.isNotEmpty() || (hasStoredPassword && !forgetPassword)
-
-    /** A usable https URL, and a user name only together with a password. */
-    val canSave: Boolean get() = base != null && (username.isBlank() || hasPassword)
-
-    companion object {
-        fun forNew(id: String) = EndpointDraft(
-            id = id, isNew = true, baseUrl = "", certificateAlias = null, username = "", password = "",
-            hasStoredPassword = false, forgetPassword = false, healthUpload = false, name = null,
-        )
-
-        fun of(endpoint: Endpoint) = EndpointDraft(
-            id = endpoint.id,
-            isNew = false,
-            baseUrl = endpoint.baseUrl,
-            certificateAlias = endpoint.certificateAlias,
-            username = endpoint.username.orEmpty(),
-            password = "",
-            hasStoredPassword = endpoint.hasCredentials,
-            forgetPassword = false,
-            healthUpload = endpoint.healthUpload,
-            name = endpoint.knownName,
-        )
-    }
-}
 
 /**
  * The editor of one endpoint (plan §1): address, client certificate, sign-in
@@ -171,6 +119,7 @@ fun EndpointEditor(
                 onValueChange = { onChange(draft.copy(username = it)) },
                 label = { Text(stringResource(R.string.auth_user)) },
                 singleLine = true,
+                isError = draft.problem == EndpointDraft.Problem.UserName,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
@@ -213,6 +162,36 @@ fun EndpointEditor(
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/**
+ * Back (or the arrow) with changes that cannot be saved as they are: drop
+ * them, or go on editing. Changes that can be saved never get here: they are
+ * saved on the way out (see [EndpointDraft.onClose]).
+ */
+@Composable
+fun EndpointDiscardDialog(problem: EndpointDraft.Problem, onDiscard: () -> Unit, onKeepEditing: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeepEditing,
+        title = { Text(stringResource(R.string.settings_endpoint_discard_title)) },
+        text = {
+            Text(
+                stringResource(
+                    when (problem) {
+                        EndpointDraft.Problem.Address -> R.string.settings_endpoint_problem_address
+                        EndpointDraft.Problem.Password -> R.string.settings_endpoint_problem_password
+                        EndpointDraft.Problem.UserName -> R.string.settings_endpoint_problem_user
+                    },
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDiscard) { Text(stringResource(R.string.settings_endpoint_discard)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onKeepEditing) { Text(stringResource(R.string.settings_endpoint_keep_editing)) }
+        },
+    )
 }
 
 /** Removing an endpoint forgets its address, certificate choice and stored password on this phone: confirmed first. */
