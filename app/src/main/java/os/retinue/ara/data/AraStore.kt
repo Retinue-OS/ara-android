@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncState
 import os.retinue.ara.health.SyncResult
+import os.retinue.ara.launcher.AppRecency
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.update.UpdateChannel
@@ -28,8 +29,8 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 /**
  * The single persistence surface: shell settings (the endpoints as JSON, see
- * [EndpointCodec]), the launcher bar (as JSON, see [LauncherCodec]) and the
- * health sync state.
+ * [EndpointCodec]), the launcher bar (as JSON, see [LauncherCodec]), when Ara
+ * last launched each app (see [AppRecency]) and the health sync state.
  *
  * Endpoints replaced the one base URL and certificate alias of earlier builds:
  * until the endpoint list is written once, those two keys are read as the
@@ -83,6 +84,9 @@ class AraStore(context: Context) {
     }
 
     val launcher: Flow<LauncherConfig> = store.data.map { p -> LauncherCodec.decode(p[K.launcher]) }
+
+    /** When Ara last launched each app or web app (by [os.retinue.ara.launcher.LauncherEntry.Launchable.key], epoch ms). */
+    val launches: Flow<Map<String, Long>> = store.data.map { p -> AppRecency.decode(p[K.launches]) }
 
     suspend fun settingsNow(): ShellSettings = settings.first()
 
@@ -142,6 +146,11 @@ class AraStore(context: Context) {
             it[K.launcher] = LauncherCodec.encode(after)
         }
         return before to after
+    }
+
+    /** Ara launched [key] (an app or web app) at [at]. */
+    suspend fun recordLaunch(key: String, at: Long) = edit {
+        it[K.launches] = AppRecency.encode(AppRecency.recorded(AppRecency.decode(it[K.launches]), key, at))
     }
 
     /** Apply [change] to the stored health sync state atomically; returns the new state. */
@@ -205,6 +214,7 @@ class AraStore(context: Context) {
         val wakeThreshold = floatPreferencesKey("wake_threshold")
         val wakeModelUrl = stringPreferencesKey("wake_model_url")
         val launcher = stringPreferencesKey("launcher_json")
+        val launches = stringPreferencesKey("app_launches_json")
         val autoUpdate = booleanPreferencesKey("auto_update")
         val updateChannel = stringPreferencesKey("update_channel")
         val updateCheckedAt = longPreferencesKey("update_checked_at")

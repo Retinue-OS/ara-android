@@ -238,6 +238,19 @@ export function wakeNotes(w) {
   return notes;
 }
 
+// ── Launcher bar ────────────────────────────────────────────────────────────
+// The tray's order, with or without Android's usage stats, and the button to
+// the system page that gives (or takes back) usage access.
+export function usageAccessNote(launcher) {
+  const on = !!(launcher && launcher.usageAccess);
+  return on
+    ? { text: 'Ara has usage access: the tray counts apps however they were opened.', label: 'Usage access settings' }
+    : {
+      text: 'The tray counts the apps you open from Ara. With usage access it also counts those opened from a notification, from Recents or from another app.',
+      label: 'Allow usage access',
+    };
+}
+
 export function wakeModelsLine(w) {
   if (!w) return '';
   const yes = (b) => (b ? 'present' : 'missing');

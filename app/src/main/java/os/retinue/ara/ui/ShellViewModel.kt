@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -22,6 +23,7 @@ import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
+import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.FolderIcons
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
@@ -34,7 +36,7 @@ import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeRuntime
 import os.retinue.ara.wake.WakeStatus
 
-/** Settings, launcher bar, app list and model downloads for the shell's native UI. */
+/** Settings, launcher bar, app list (and its order by recent use) and model downloads for the shell's native UI. */
 class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     private val appCtx: Application = app
@@ -52,6 +54,23 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _shortcuts = MutableStateFlow<List<PinnedShortcut>>(emptyList())
     val shortcuts: StateFlow<List<PinnedShortcut>> = _shortcuts.asStateFlow()
+
+    /** Android's last use of each package, with usage access (see [AppUsage]); empty without. */
+    private val _usage = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    private val _usageAccess = MutableStateFlow(AppUsage.hasAccess(app))
+
+    /** The user has given Ara usage access, so the tray also sees apps opened elsewhere. */
+    val usageAccess: StateFlow<Boolean> = _usageAccess.asStateFlow()
+
+    /**
+     * The tray's lines: every app and web app but those on the bar itself
+     * (apps in folders included, folders not), the most recently used first.
+     */
+    internal val trayItems: StateFlow<List<DrawerItem>> =
+        combine(_apps, _shortcuts, launcher, store.launches, _usage) { apps, shortcuts, bar, launches, usage ->
+            trayItems(apps, shortcuts, bar, launches, usage)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _models = MutableStateFlow(WakeModelFiles.status(app))
     val models: StateFlow<WakeModelStatus> = _models.asStateFlow()
@@ -78,6 +97,20 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             _apps.value = AppCatalog.launchableApps(appCtx)
             _shortcuts.value = AppCatalog.pinnedShortcuts(appCtx)
         }
+    }
+
+    /** Read Android's usage stats again (and whether Ara may), for the tray's order. */
+    fun refreshUsage() {
+        viewModelScope.launch {
+            _usageAccess.value = AppUsage.hasAccess(appCtx)
+            _usage.value = AppUsage.lastUsed(appCtx)
+        }
+    }
+
+    /** Ara launched [item] (an app or web app) just now: it moves to the top of the tray. */
+    fun recordLaunch(item: LauncherEntry.Launchable) {
+        val at = System.currentTimeMillis()
+        viewModelScope.launch { store.recordLaunch(item.key, at) }
     }
 
     // --- Endpoints -----------------------------------------------------------

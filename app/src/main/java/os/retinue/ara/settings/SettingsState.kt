@@ -99,6 +99,8 @@ data class SettingsPageState(
     val updates: UpdatesInfo,
     /** The dashboard's per-device preferences (DeviceWebSettings). */
     val device: Map<String, String>,
+    /** Ara has usage access, so the tray's order counts apps however they were opened. */
+    val usageAccess: Boolean = false,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         put("version", version)
@@ -190,6 +192,7 @@ data class SettingsPageState(
             },
         )
         put("device", DeviceWebSettings.toJson(device))
+        put("launcher", buildJsonObject { put("usageAccess", usageAccess) })
     }
 
     private fun String?.json() = this?.let { JsonPrimitive(it) } ?: JsonNull

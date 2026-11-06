@@ -35,6 +35,8 @@
     <string name="launcher_options">Options</string>
     <string name="launcher_open_beside">Open beside Ara</string>
     <string name="launcher_open_full">Open full screen</string>
+    <string name="tray_more_apps">Show more apps</string>
+    <string name="tray_fewer_apps">Show fewer apps</string>
     <string name="split_page_elsewhere">Ara\'s page is open in its other window. Tap to show it here.</string>
     <string name="split_page_show_here">Show the page here</string>
     <string name="launcher_move_to_folder">Move to %1$s</string>

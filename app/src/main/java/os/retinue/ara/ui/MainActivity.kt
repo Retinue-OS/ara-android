@@ -38,11 +38,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -95,9 +97,12 @@ import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthTrigger
 import os.retinue.ara.launcher.AppInfo
+import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.LauncherCodec
+import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.launcher.TrayLogic
 import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.settings.AppPage
 import os.retinue.ara.settings.SettingsAction
@@ -184,6 +189,15 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** The folder open over the bar (its id, so it follows edits). */
     private var openFolderId by mutableStateOf<String?>(null)
+
+    /** The bar pulled up into a tray of more apps (see [LauncherTray]). */
+    private val tray = TrayState()
+
+    /**
+     * Where the web app's top menu ends, in px below the top of the page, as
+     * the page measured it when the tray last came up; null when unknown.
+     */
+    private var topMenuPx by mutableStateOf<Float?>(null)
 
     /** The folder editor, over everything else; sheets (drawer, open folder) wait under it. */
     private var folderEditor by mutableStateOf<FolderEditorRequest?>(null)
@@ -365,6 +379,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 val launcher by viewModel.launcher.collectAsStateWithLifecycle()
                 val apps by viewModel.apps.collectAsStateWithLifecycle()
                 val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
+                val trayItems by viewModel.trayItems.collectAsStateWithLifecycle()
                 val stored by viewModel.settings.collectAsStateWithLifecycle()
                 val voiceActive by WakeRuntime.voiceActive.collectAsStateWithLifecycle()
                 KeepScreenOn(voiceActive)
@@ -374,8 +389,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     stored?.splitLaunch == true -> R.string.launcher_open_full
                     else -> R.string.launcher_open_beside
                 }
+                // The tray needs the apps before it is first pulled up (it only comes up as far as they go).
+                LaunchedEffect(Unit) { viewModel.refreshApps() }
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                    ShellLayout(launcher.entries, alternateOpen)
+                    ShellLayout(launcher, trayItems, alternateOpen)
                     // Sheets are windows above everything here, so they step aside for the folder editor.
                     val editor = folderEditor
                     if (showDrawer && editor == null) {
@@ -534,48 +551,105 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     // --- Layout --------------------------------------------------------------
 
-    /** [alternateOpen]: the long-press item for the other way of opening an app (null for none). */
+    /**
+     * The page, and over its bottom the launcher bar, which pulls up into the
+     * tray ([LauncherTray]) of [trayItems]. [alternateOpen]: the long-press
+     * item for the other way of opening an app (null for none).
+     */
     @Composable
-    private fun ShellLayout(entries: List<LauncherEntry>, alternateOpen: Int?) {
+    private fun ShellLayout(launcher: LauncherConfig, trayItems: List<DrawerItem>, alternateOpen: Int?) {
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-        Column(
+        // The bar hides while the keyboard is up, and the tray with it.
+        LaunchedEffect(imeVisible) { if (imeVisible) tray.snapCollapsed() }
+        Box(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
         ) {
-            Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding().imePadding()) {
-                AndroidView(
-                    factory = {
-                        // Only ever in one place (a recreated node gets it from the old one).
-                        (pageContainer.parent as? ViewGroup)?.removeView(pageContainer)
-                        pageContainer
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (page.owner === this@MainActivity) {
-                    PageStatusOverlay()
-                } else if (page.webView != null) {
-                    PageElsewhere()
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth().statusBarsPadding().imePadding()) {
+                    AndroidView(
+                        factory = {
+                            // Only ever in one place (a recreated node gets it from the old one).
+                            (pageContainer.parent as? ViewGroup)?.removeView(pageContainer)
+                            pageContainer
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (page.owner === this@MainActivity) {
+                        PageStatusOverlay()
+                    } else if (page.webView != null) {
+                        PageElsewhere()
+                    }
+                }
+                // The bar's place, so the page keeps its height while the keyboard is down;
+                // the tray, pulled up, goes over the page instead of shrinking it.
+                if (!imeVisible) {
+                    Spacer(Modifier.fillMaxWidth().navigationBarsPadding().height(LauncherBarHeight))
                 }
             }
-            // The bar hides while the keyboard is up, so the page keeps its height.
             if (!imeVisible) {
-                LauncherBar(
-                    entries = entries,
-                    onOpen = { openEntry(it) },
+                LauncherTray(
+                    state = tray,
+                    items = trayItems,
+                    folders = launcher.folders,
+                    topMenuPx = topMenuPx,
+                    onOpened = ::onTrayOpened,
+                    onLaunch = { openEntry(it.toEntry().asEntry()) },
                     alternateOpen = alternateOpen,
-                    onOpenAlternate = { openEntry(it, alternate = true) },
-                    onEdit = ::editLauncherEntry,
-                    onRemove = ::removeLauncherEntry,
-                    onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
-                    onMoveToFolder = { app, folder -> viewModel.updateLauncher { it.moveIntoFolder(app.id, folder.id) } },
-                    onNewFolder = { newFolder() },
-                    onAllApps = { showDrawer = true },
-                    onSettings = ::openSettings,
-                    modifier = Modifier.navigationBarsPadding(),
-                )
+                    onLaunchAlternate = { openEntry(it.toEntry().asEntry(), alternate = true) },
+                    onPin = { item ->
+                        when (item) {
+                            is DrawerItem.App -> pinApp(item.app)
+                            is DrawerItem.Shortcut -> pinShortcut(item.shortcut)
+                        }
+                    },
+                    onAddToFolder = ::addToFolder,
+                    onNewFolder = ::newFolder,
+                    onRemoveShortcut = viewModel::forget,
+                    // Between the system bars: the tray stops below the page's top menu.
+                    modifier = Modifier.statusBarsPadding().navigationBarsPadding(),
+                ) {
+                    LauncherBar(
+                        entries = launcher.entries,
+                        onOpen = { openEntry(it) },
+                        alternateOpen = alternateOpen,
+                        onOpenAlternate = { openEntry(it, alternate = true) },
+                        onEdit = ::editLauncherEntry,
+                        onRemove = ::removeLauncherEntry,
+                        onMove = { e, delta -> viewModel.updateLauncher { it.move(e.id, delta) } },
+                        onMoveToFolder = { app, folder -> viewModel.updateLauncher { it.moveIntoFolder(app.id, folder.id) } },
+                        onNewFolder = { newFolder() },
+                        onAllApps = {
+                            tray.collapse()
+                            showDrawer = true
+                        },
+                        onSettings = ::openSettings,
+                    )
+                }
             }
         }
+    }
+
+    /**
+     * The tray starts to come up: the apps are read again (one may have been
+     * installed), so is Android's usage, and the page says where its top menu
+     * ends, so the tray stops below it.
+     */
+    private fun onTrayOpened() {
+        viewModel.refreshApps()
+        viewModel.refreshUsage()
+        measureTopMenu()
+    }
+
+    /** Ask the page where its top menu ends ([TrayLogic.TOP_MENU_SCRIPT]); only the web app's own pages. */
+    private fun measureTopMenu() {
+        val view = webView
+        if (!showsPage || view == null || !router.isConfiguredOrigin(view.url)) {
+            topMenuPx = null
+            return
+        }
+        view.evaluateJavascript(TrayLogic.TOP_MENU_SCRIPT) { result -> topMenuPx = TrayLogic.topMenuPx(result) }
     }
 
     /**
@@ -637,6 +711,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
+        val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
         val state = settingsPageState(
             context = LocalContext.current,
             settings = stored ?: ShellSettings(),
@@ -655,6 +730,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             ),
             update = update,
             installAllowed = installAllowed,
+            usageAccess = usageAccess,
         )
         val message = SettingsMessages.state(state.toJson())
         val view = remember { SettingsWebView(this@MainActivity, this@MainActivity) }
@@ -700,6 +776,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is SettingsAction.SplitLaunch -> viewModel.setSplitLaunch(action.on)
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
             SettingsAction.LauncherEdit -> showLauncherEditor = true
+            SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
             // The slider's range.
             is SettingsAction.WakeThreshold -> viewModel.setWakeThreshold(action.value.coerceIn(0.1f, 0.9f))
@@ -825,6 +902,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
         installAllowed = UpdateRuntime.canInstall(this)
         viewModel.refreshModels()
+        // Back from an app, maybe one opened elsewhere: the tray's order (and usage access) may have changed.
+        viewModel.refreshUsage()
         page.windowResumed(this)
         // Also here: the other window may have had it meanwhile (both up in a desktop mode).
         if (!parking) page.take(this)
@@ -864,6 +943,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     override fun onStop() {
         parking = false
+        // Back on screen, the home screen shows the bar again, not a tray left open.
+        tray.snapCollapsed()
         page.windowStopped(this)
         super.onStop()
     }
@@ -915,6 +996,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 bridge.dispatchEvent("home") { onUnhandledEvent(isWake = false) }
             }
             ShellDecisions.IntentAction.Show -> if (isHome) {
+                tray.snapCollapsed()
                 showDrawer = false
                 editing = null
                 openFolderId = null
@@ -1151,6 +1233,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     private fun closeOverlays() {
+        tray.collapse()
         showDrawer = false
         editing = null
         openFolderId = null
@@ -1163,7 +1246,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val overlay = showSettings || showLauncherEditor || showDrawer || editing != null || authPrompt != null ||
-                openFolderId != null || folderEditor != null || confirmRemove != null || linkSwitch != null
+                openFolderId != null || folderEditor != null || confirmRemove != null || linkSwitch != null || tray.isOpen
             // The split-screen window is a plain app: at the root, Back leaves it.
             val webCanGoBack = showsPage && webView?.canGoBack() == true
             when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
@@ -1176,6 +1259,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     showLauncherEditor -> showLauncherEditor = false
                     openFolderId != null -> openFolderId = null
                     showDrawer -> showDrawer = false
+                    tray.isOpen && !showSettings -> tray.collapse()
                     // The page takes Back first (its dialog, its editor), then the settings close.
                     else -> settingsPage?.bridge?.back { closeSettings() } ?: closeSettings()
                 }
@@ -1202,6 +1286,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** The settings page, opened at [start] ([AppPage.startUrl]); one that is up already stays where it is. */
     private fun openSettingsPage(start: String) {
+        tray.collapse()
         if (!showSettings) settingsStart = start
         showSettings = true
         // The names the list shows come from the servers; ask again if they are due.
@@ -1248,6 +1333,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * [alternate] is the long-press choice, the other way of opening it.
      */
     private fun openEntry(entry: LauncherEntry, alternate: Boolean = false) {
+        // Whatever opens, the tray goes down (an app may open beside Ara, which stays in view).
+        tray.collapse()
         if (entry is LauncherEntry.Folder) {
             openFolderId = entry.id
             return
@@ -1260,9 +1347,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
         val target = ShellDecisions.launchTarget(isSplitWindow, settings.splitLaunch, alternate)
         if (target == ShellDecisions.LaunchTarget.ThroughSplitWindow) {
+            // The split-screen window starts it, and counts it.
             openInSplitWindow(entry)
             return
         }
+        // An app or web app opened: it comes first in the tray from now on.
+        if (entry is LauncherEntry.Launchable) viewModel.recordLaunch(entry)
         // Here or beside this window: ShellIntents asks this window (SplitAware).
         when (val r = ShellIntents.launch(this, entry, router)) {
             is Route.Load -> {
@@ -1284,6 +1374,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         } catch (e: Exception) {
             // Never lose the tap: open it the usual way.
             Log.w(TAG, "split-screen window did not start", e)
+            if (entry is LauncherEntry.Launchable) viewModel.recordLaunch(entry)
             when (val r = ShellIntents.launch(this, entry, router)) {
                 is Route.Load -> webView?.loadUrl(r.url)
                 is Route.Browser -> ShellIntents.openInBrowser(this, r.url)
@@ -1330,6 +1421,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** Edit a bar entry: a folder in the folder editor, anything else in the entry dialog. */
     private fun editLauncherEntry(entry: LauncherEntry) {
+        tray.collapse()
         if (entry is LauncherEntry.Folder) {
             folderEditor = FolderEditorRequest(entry, isNew = false)
         } else {
@@ -1339,6 +1431,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** Open the folder editor on a new folder; made from All apps, it starts with [item] (an app or web app) in it. */
     private fun newFolder(item: LauncherEntry.Launchable? = null) {
+        tray.collapse()
         showDrawer = false
         val folder = LauncherEntry.Folder(ShellViewModel.newId(), label = "", apps = listOfNotNull(item))
         folderEditor = FolderEditorRequest(folder, isNew = true)

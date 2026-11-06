@@ -115,6 +115,17 @@ ok('the wake notes follow the mode, with the action that fixes each', () => {
   assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false, phrase: true }), 'Melspectrogram: present · Embedding: missing · Phrase: present');
 });
 
+ok('the launcher card says whether the tray sees apps opened elsewhere', () => {
+  for (const off of [undefined, null, {}, { usageAccess: false }]) {
+    const note = L.usageAccessNote(off);
+    assert.equal(note.label, 'Allow usage access');
+    assert.match(note.text, /apps you open from Ara/);
+  }
+  const on = L.usageAccessNote({ usageAccess: true });
+  assert.equal(on.label, 'Usage access settings');
+  assert.match(on.text, /however they were opened/);
+});
+
 ok("only the instance section's own message sizes its frame", () => {
   assert.equal(L.instanceHeight({ type: 'retinue-instance-settings', state: 'ready', height: 412.3 }), 413);
   assert.equal(L.instanceHeight({ type: 'retinue-instance-settings', height: 999999 }), 20000);

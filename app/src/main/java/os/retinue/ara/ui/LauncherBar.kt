@@ -39,7 +39,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import os.retinue.ara.R
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.LauncherEntry
@@ -83,7 +83,8 @@ internal fun slotWidth(available: Dp, slots: Int): Dp =
  * there are many) and, always last, "All apps". Long-press an entry to open it
  * the other way ([alternateOpen]), edit / remove / move it (an app or web app
  * also into a folder) and for the settings; long-press "All apps" for a new
- * folder.
+ * folder. It is the top line of the tray ([LauncherTray]), which gives it its
+ * background.
  */
 @Composable
 fun LauncherBar(
@@ -102,78 +103,76 @@ fun LauncherBar(
     modifier: Modifier = Modifier,
 ) {
     val folders = remember(entries) { entries.filterIsInstance<LauncherEntry.Folder>() }
-    Surface(modifier = modifier.fillMaxWidth(), tonalElevation = 3.dp) {
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // The entries plus "All apps".
-            val width = slotWidth(maxWidth, entries.size + 1)
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        // The entries plus "All apps".
+        val width = slotWidth(maxWidth, entries.size + 1)
+        Row(
+            modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
+                modifier = Modifier.weight(1f, fill = false).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
             ) {
-                Row(
-                    modifier = Modifier.weight(1f, fill = false).fillMaxHeight().horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    entries.forEachIndexed { index, entry ->
-                        var menu by remember(entry.id) { mutableStateOf(false) }
-                        Box {
-                            LauncherSlot(
-                                label = entryLabel(entry),
-                                icon = { EntryIcon(entry) },
-                                onClick = { onOpen(entry) },
-                                onLongClick = { menu = true },
-                                width = width,
-                            )
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                // What Android starts: apps, web apps and links (not pages of the web app, not folders).
-                                if (alternateOpen != null && (entry is LauncherEntry.Launchable || entry is LauncherEntry.Link)) {
-                                    AlternateOpenItem(alternateOpen) { menu = false; onOpenAlternate(entry) }
-                                }
-                                MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
-                                if (index > 0) {
-                                    MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
-                                        menu = false
-                                        onMove(entry, -1)
-                                    }
-                                }
-                                if (index < entries.lastIndex) {
-                                    MenuItem(R.string.launcher_move_right, Icons.AutoMirrored.Filled.KeyboardArrowRight) {
-                                        menu = false
-                                        onMove(entry, 1)
-                                    }
-                                }
-                                // Only apps and web apps go into folders.
-                                if (entry is LauncherEntry.Launchable) {
-                                    folders.forEach { folder ->
-                                        MenuItem(
-                                            text = stringResource(R.string.launcher_move_to_folder, folderName(folder)),
-                                            icon = { FolderIcon(folder, size = 24.dp) },
-                                        ) {
-                                            menu = false
-                                            onMoveToFolder(entry, folder)
-                                        }
-                                    }
-                                }
-                                MenuItem(R.string.launcher_remove, Icons.Filled.Delete) { menu = false; onRemove(entry) }
-                                MenuItem(R.string.settings_title, Icons.Filled.Settings) { menu = false; onSettings() }
+                entries.forEachIndexed { index, entry ->
+                    var menu by remember(entry.id) { mutableStateOf(false) }
+                    Box {
+                        LauncherSlot(
+                            label = entryLabel(entry),
+                            icon = { EntryIcon(entry) },
+                            onClick = { onOpen(entry) },
+                            onLongClick = { menu = true },
+                            width = width,
+                        )
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            // What Android starts: apps, web apps and links (not pages of the web app, not folders).
+                            if (alternateOpen != null && (entry is LauncherEntry.Launchable || entry is LauncherEntry.Link)) {
+                                AlternateOpenItem(alternateOpen) { menu = false; onOpenAlternate(entry) }
                             }
+                            MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
+                            if (index > 0) {
+                                MenuItem(R.string.launcher_move_left, Icons.AutoMirrored.Filled.KeyboardArrowLeft) {
+                                    menu = false
+                                    onMove(entry, -1)
+                                }
+                            }
+                            if (index < entries.lastIndex) {
+                                MenuItem(R.string.launcher_move_right, Icons.AutoMirrored.Filled.KeyboardArrowRight) {
+                                    menu = false
+                                    onMove(entry, 1)
+                                }
+                            }
+                            // Only apps and web apps go into folders.
+                            if (entry is LauncherEntry.Launchable) {
+                                folders.forEach { folder ->
+                                    MenuItem(
+                                        text = stringResource(R.string.launcher_move_to_folder, folderName(folder)),
+                                        icon = { FolderIcon(folder, size = 24.dp) },
+                                    ) {
+                                        menu = false
+                                        onMoveToFolder(entry, folder)
+                                    }
+                                }
+                            }
+                            MenuItem(R.string.launcher_remove, Icons.Filled.Delete) { menu = false; onRemove(entry) }
+                            MenuItem(R.string.settings_title, Icons.Filled.Settings) { menu = false; onSettings() }
                         }
                     }
                 }
-                var allMenu by remember { mutableStateOf(false) }
-                Box {
-                    LauncherSlot(
-                        label = stringResource(R.string.launcher_all_apps),
-                        icon = { Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(30.dp)) },
-                        onClick = onAllApps,
-                        onLongClick = { allMenu = true },
-                        width = width,
-                    )
-                    DropdownMenu(expanded = allMenu, onDismissRequest = { allMenu = false }) {
-                        MenuItem(R.string.folder_new, Icons.Filled.CreateNewFolder) { allMenu = false; onNewFolder() }
-                        MenuItem(R.string.settings_title, Icons.Filled.Settings) { allMenu = false; onSettings() }
-                    }
+            }
+            var allMenu by remember { mutableStateOf(false) }
+            Box {
+                LauncherSlot(
+                    label = stringResource(R.string.launcher_all_apps),
+                    icon = { Icon(Icons.Filled.Apps, contentDescription = null, modifier = Modifier.size(30.dp)) },
+                    onClick = onAllApps,
+                    onLongClick = { allMenu = true },
+                    width = width,
+                )
+                DropdownMenu(expanded = allMenu, onDismissRequest = { allMenu = false }) {
+                    MenuItem(R.string.folder_new, Icons.Filled.CreateNewFolder) { allMenu = false; onNewFolder() }
+                    MenuItem(R.string.settings_title, Icons.Filled.Settings) { allMenu = false; onSettings() }
                 }
             }
         }
@@ -214,11 +213,12 @@ fun LauncherSlot(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
-    width: Dp = 76.dp,
+    /** Unspecified: as wide as the place it is given (a cell of the tray's grid). */
+    width: Dp = Dp.Unspecified,
 ) {
     Column(
         modifier = modifier
-            .width(width)
+            .then(if (width.isSpecified) Modifier.width(width) else Modifier.fillMaxWidth())
             .fillMaxHeight()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onClickLabel = label)
             .padding(vertical = 6.dp),

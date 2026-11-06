@@ -45,6 +45,7 @@ internal fun settingsPageState(
     wake: WakeConditions,
     update: UpdateState,
     installAllowed: Boolean,
+    usageAccess: Boolean,
 ): SettingsPageState = SettingsPageState(
     version = BuildConfig.VERSION_NAME,
     endpoints = SettingsPageState.endpointRows(settings),
@@ -89,6 +90,7 @@ internal fun settingsPageState(
         installAllowed = installAllowed,
     ),
     device = settings.deviceWebSettings,
+    usageAccess = usageAccess,
 )
 
 private fun wakeStatusText(context: Context, status: WakeStatus): String = when (status) {

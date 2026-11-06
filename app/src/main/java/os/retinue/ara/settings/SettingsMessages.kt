@@ -56,6 +56,9 @@ sealed class SettingsAction {
 
     /** The launcher bar's own editor (native: it is the bar's). */
     data object LauncherEdit : SettingsAction()
+
+    /** Android's page where the user gives (or takes back) Ara's usage access, for the tray's order. */
+    data object LauncherUsageAccess : SettingsAction()
     data class WakeModeSet(val mode: WakeMode) : SettingsAction()
     data class WakeThreshold(val value: Float) : SettingsAction()
     data object WakeFeatures : SettingsAction()
@@ -136,6 +139,7 @@ object SettingsMessages {
             "split.launch" -> SettingsAction.SplitLaunch(obj.bool("on") ?: return null)
             "split.recents" -> SettingsAction.SplitRecents(obj.bool("on") ?: return null)
             "launcher.edit" -> SettingsAction.LauncherEdit
+            "launcher.usageAccess" -> SettingsAction.LauncherUsageAccess
             "wake.mode" -> {
                 val key = obj.str("mode") ?: return null
                 val mode = WakeMode.entries.firstOrNull { it.key == key } ?: return null

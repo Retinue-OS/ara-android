@@ -82,6 +82,8 @@ class SettingsPageTest {
         assertEquals(SettingsAction.WakeThreshold(0.35f), p("""{"type":"wake.threshold","value":0.35}"""))
         assertEquals(SettingsAction.UpdateChannelSet(UpdateChannel.Release), p("""{"type":"update.channel","channel":"release"}"""))
         assertEquals(SettingsAction.DeviceSet("retinue.shelf.size", "9"), p("""{"type":"device.set","key":"retinue.shelf.size","value":"9"}"""))
+        assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
+        assertEquals(SettingsAction.LauncherUsageAccess, p("""{"type":"launcher.usageAccess"}"""))
         assertEquals(SettingsAction.ChooseCertificate("r3", "https://agents.example.com", null), p("""{"type":"endpoint.certificate","request":"r3","baseUrl":"https://agents.example.com","current":null}"""))
         assertEquals(
             SettingsAction.SaveEndpoint("r1", PageDraft("ep-1", true, "admin.example.com", null, "reto", "pw", false, true)),
@@ -150,6 +152,7 @@ class SettingsPageTest {
             wake = WakeInfo("off", 0.5f, "Not listening.", true, false, true, true, true, false, false, false, "https://x/hey.onnx", false, null),
             updates = UpdatesInfo("Installed: a local build.", false, "nightly", "Not checked yet.", false, null, null, false, true, true),
             device = settings.deviceWebSettings,
+            usageAccess = true,
         )
         val json = Json.parseToJsonElement(state.toJson().toString()).jsonObject
         val text = json.toString()
@@ -158,6 +161,8 @@ class SettingsPageTest {
         assertEquals("Admin", json["endpoints"]!!.jsonArray[1].jsonObject["label"]!!.jsonPrimitive.content)
         assertEquals("null", json["failure"].toString())
         assertEquals("true", json["home"]!!.jsonObject["isDefault"].toString())
+        assertEquals("true", json["launcher"]!!.jsonObject["usageAccess"].toString())
+        assertEquals("false", state.copy(usageAccess = false).toJson()["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("""{"type":"state","state":{}}""", SettingsMessages.state(JsonObject(emptyMap())))
         assertEquals(SettingsPageState.frameKey(home), json["current"]!!.jsonObject["frameKey"]!!.jsonPrimitive.content)
     }

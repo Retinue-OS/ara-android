@@ -108,6 +108,7 @@ function render() {
   renderHome();
   renderSplit();
   renderWake();
+  renderLauncher();
   renderUpdates();
   $('[data-version]').textContent = state.version ? `Ara shell ${state.version}` : '';
   renderEndpointSection();
@@ -193,6 +194,12 @@ function renderWake() {
   setValue($('[data-wake-url]'), w.modelUrl || '');
   for (const sel of ['[data-wake-features]', '[data-wake-phrase]', '[data-wake-pick]']) $(sel).disabled = !!w.busy;
   $('[data-wake-message]').textContent = w.busy ? 'Working…' : (w.message || '');
+}
+
+function renderLauncher() {
+  const note = L.usageAccessNote(state.launcher);
+  $('[data-launcher-usage]').textContent = note.text;
+  $('[data-launcher-usage-access]').textContent = note.label;
 }
 
 function renderUpdates() {
@@ -491,6 +498,7 @@ $('[data-wake-phrase]').addEventListener('click', () => {
 $('[data-wake-pick]').addEventListener('click', () => send({ type: 'wake.pick' }));
 
 $('[data-launcher-edit]').addEventListener('click', () => send({ type: 'launcher.edit' }));
+$('[data-launcher-usage-access]').addEventListener('click', () => send({ type: 'launcher.usageAccess' }));
 
 $('[data-update-auto]').addEventListener('change', (e) => send({ type: 'update.auto', on: e.target.checked }));
 for (const r of document.querySelectorAll('input[name="update-channel"]')) {
