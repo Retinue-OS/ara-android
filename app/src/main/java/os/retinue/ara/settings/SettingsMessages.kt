@@ -75,6 +75,9 @@ sealed class SettingsAction {
     data object UpdateCancel : SettingsAction()
     data object UpdateAllowInstalls : SettingsAction()
 
+    /** The keyboard screen (switching it on, pairing, layouts, live typing are native). */
+    data object KeyboardOpen : SettingsAction()
+
     /** One of the dashboard's per-device preferences (DeviceWebSettings), for every endpoint. */
     data class DeviceSet(val key: String, val value: String?) : SettingsAction()
 }
@@ -140,6 +143,7 @@ object SettingsMessages {
             "split.recents" -> SettingsAction.SplitRecents(obj.bool("on") ?: return null)
             "launcher.edit" -> SettingsAction.LauncherEdit
             "launcher.usageAccess" -> SettingsAction.LauncherUsageAccess
+            "keyboard.open" -> SettingsAction.KeyboardOpen
             "wake.mode" -> {
                 val key = obj.str("mode") ?: return null
                 val mode = WakeMode.entries.firstOrNull { it.key == key } ?: return null

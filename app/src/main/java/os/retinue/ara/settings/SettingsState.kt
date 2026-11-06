@@ -6,6 +6,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import os.retinue.ara.keyboard.KeyLayouts
+import os.retinue.ara.keyboard.KeyboardStatus
 import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
@@ -101,6 +103,8 @@ data class SettingsPageState(
     val device: Map<String, String>,
     /** Ara has usage access, so the tray's order counts apps however they were opened. */
     val usageAccess: Boolean = false,
+    /** The keyboard for other devices: its card shows whether it is on and the device it types into. */
+    val keyboard: KeyboardStatus = KeyboardStatus(),
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         put("version", version)
@@ -193,6 +197,16 @@ data class SettingsPageState(
         )
         put("device", DeviceWebSettings.toJson(device))
         put("launcher", buildJsonObject { put("usageAccess", usageAccess) })
+        put(
+            "keyboard",
+            buildJsonObject {
+                put("available", keyboard.available)
+                put("enabled", keyboard.enabled)
+                put("connected", keyboard.connected)
+                put("host", keyboard.host?.name.json())
+                put("layout", KeyLayouts.byId(keyboard.layout)?.label ?: keyboard.layout)
+            },
+        )
     }
 
     private fun String?.json() = this?.let { JsonPrimitive(it) } ?: JsonNull

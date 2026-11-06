@@ -96,6 +96,9 @@ import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthTrigger
+import os.retinue.ara.keyboard.KeyboardEvent
+import os.retinue.ara.keyboard.KeyboardLogic
+import os.retinue.ara.keyboard.KeyboardRuntime
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.LauncherCodec
@@ -712,6 +715,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
         val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
+        val keyboard by KeyboardRuntime.status.collectAsStateWithLifecycle()
         val state = settingsPageState(
             context = LocalContext.current,
             settings = stored ?: ShellSettings(),
@@ -731,6 +735,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             update = update,
             installAllowed = installAllowed,
             usageAccess = usageAccess,
+            keyboard = keyboard,
         )
         val message = SettingsMessages.state(state.toJson())
         val view = remember { SettingsWebView(this@MainActivity, this@MainActivity) }
@@ -794,6 +799,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             SettingsAction.UpdateCancel -> UpdateRuntime.cancelConfirmation()
             SettingsAction.UpdateAllowInstalls -> startSystemPage(UpdateRuntime.installSettings(this))
             is SettingsAction.DeviceSet -> viewModel.setDeviceWebSetting(action.key, action.value)
+            SettingsAction.KeyboardOpen -> openKeyboard()
         }
     }
 
@@ -1553,7 +1559,30 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
+            is WebMessage.KeyboardType -> KeyboardRuntime.type(message.text, message.enter, message.id)
+            is WebMessage.KeyboardKey -> KeyboardRuntime.key(message.name)
+            is WebMessage.KeyboardSecret -> openSecretDialog(message)
+            WebMessage.KeyboardOpen -> openKeyboard()
         }
+    }
+
+    /** The keyboard screen (pairing, layout, live typing). */
+    internal fun openKeyboard() {
+        startActivity(Intent(this, KeyboardActivity::class.java))
+    }
+
+    /**
+     * The page asks for a secret to be typed: the native dialog, only when a
+     * device is connected (otherwise the page hears why at once, and no
+     * dialog asks for a password that could not be typed).
+     */
+    private fun openSecretDialog(message: WebMessage.KeyboardSecret) {
+        val error = KeyboardLogic.precheck(KeyboardRuntime.status.value, 0)
+        if (error != null) {
+            KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(message.id, error))
+            return
+        }
+        startActivity(SecretTypeActivity.intent(this, message.id, message.label, message.enter))
     }
 
     /**

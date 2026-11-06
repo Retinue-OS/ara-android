@@ -109,6 +109,7 @@ function render() {
   renderSplit();
   renderWake();
   renderLauncher();
+  renderKeyboard();
   renderUpdates();
   $('[data-version]').textContent = state.version ? `Ara shell ${state.version}` : '';
   renderEndpointSection();
@@ -200,6 +201,10 @@ function renderLauncher() {
   const note = L.usageAccessNote(state.launcher);
   $('[data-launcher-usage]').textContent = note.text;
   $('[data-launcher-usage-access]').textContent = note.label;
+}
+
+function renderKeyboard() {
+  $('[data-keyboard-line]').textContent = L.keyboardLine(state.keyboard);
 }
 
 function renderUpdates() {
@@ -498,6 +503,7 @@ $('[data-wake-phrase]').addEventListener('click', () => {
 $('[data-wake-pick]').addEventListener('click', () => send({ type: 'wake.pick' }));
 
 $('[data-launcher-edit]').addEventListener('click', () => send({ type: 'launcher.edit' }));
+$('[data-keyboard-open]').addEventListener('click', () => send({ type: 'keyboard.open' }));
 $('[data-launcher-usage-access]').addEventListener('click', () => send({ type: 'launcher.usageAccess' }));
 
 $('[data-update-auto]').addEventListener('change', (e) => send({ type: 'update.auto', on: e.target.checked }));
