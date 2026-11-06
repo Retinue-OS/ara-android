@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -20,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -206,8 +206,9 @@ private fun SectionTitle(res: Int) {
 
 /**
  * The endpoints: each under the name its server gives itself (EndpointLabels),
- * with its address and what is set up for it; tap one to edit it, Use to show
- * it. The web app's Settings page switches between them as well.
+ * with its address and what is set up for it. The one shown is marked Active
+ * (a status, not a control); Use shows another; the pencil edits one. The web
+ * app's Settings page switches between them as well.
  */
 @Composable
 private fun EndpointsSection(state: SettingsState, actions: SettingsActions) {
@@ -221,10 +222,7 @@ private fun EndpointsSection(state: SettingsState, actions: SettingsActions) {
     }
     endpoints.forEach { endpoint ->
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClickLabel = stringResource(R.string.settings_endpoint_edit)) { actions.editEndpoint(endpoint.id) }
-                .padding(vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
@@ -233,7 +231,7 @@ private fun EndpointsSection(state: SettingsState, actions: SettingsActions) {
                 Text(endpointSummary(endpoint), style = MaterialTheme.typography.bodySmall)
             }
             if (endpoint.id == current?.id) {
-                Text(stringResource(R.string.settings_endpoint_current), style = MaterialTheme.typography.labelMedium)
+                ActiveMark()
             } else {
                 OutlinedButton(onClick = { actions.useEndpoint(endpoint.id) }) { Text(stringResource(R.string.settings_endpoint_use)) }
             }
@@ -243,6 +241,28 @@ private fun EndpointsSection(state: SettingsState, actions: SettingsActions) {
         }
     }
     OutlinedButton(onClick = actions::addEndpoint) { Text(stringResource(R.string.settings_endpoint_add)) }
+}
+
+/** The mark of the endpoint shown now: a check and "Active", in the accent colour, with nothing to tap. */
+@Composable
+private fun ActiveMark() {
+    Row(
+        modifier = Modifier.padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            stringResource(R.string.settings_endpoint_current),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
 }
 
 /** One line on what is set up for an endpoint: certificate, sign-in, health data. */

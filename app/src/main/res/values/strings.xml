@@ -142,7 +142,7 @@
     <string name="settings_endpoint_add">Add endpoint</string>
     <string name="settings_endpoint_edit">Edit endpoint</string>
     <string name="settings_endpoint_use">Use</string>
-    <string name="settings_endpoint_current">Shown now</string>
+    <string name="settings_endpoint_current">Active</string>
     <string name="settings_endpoint_summary">Certificate: %1$s · Sign-in: %2$s · Health data: %3$s</string>
     <string name="settings_endpoint_summary_none">none</string>
     <string name="settings_endpoint_summary_on">on</string>
@@ -151,6 +151,13 @@
     <string name="settings_endpoint_remove_title">Remove %1$s?</string>
     <string name="settings_endpoint_remove_body">Its address, certificate choice and stored password are forgotten on this phone. Nothing changes on the server.</string>
     <string name="settings_endpoint_remove_confirm">Remove</string>
+    <!-- Back from the endpoint editor saves the changes; only these, which cannot be saved, are asked about. -->
+    <string name="settings_endpoint_discard_title">Discard your changes?</string>
+    <string name="settings_endpoint_problem_address">They cannot be saved: the address is missing or is not an https URL.</string>
+    <string name="settings_endpoint_problem_password">They cannot be saved: a user name needs a password.</string>
+    <string name="settings_endpoint_problem_user">They cannot be saved: a password needs a user name.</string>
+    <string name="settings_endpoint_discard">Discard</string>
+    <string name="settings_endpoint_keep_editing">Keep editing</string>
     <string name="settings_endpoint_signin">Sign-in</string>
     <string name="settings_endpoint_signin_hint">Only where the Retinue edge asks for a password instead of a certificate. Stored encrypted on this phone, and used for the dashboard and the health data upload alike.</string>
     <string name="settings_endpoint_password_stored">A password is stored. Leave the field empty to keep it.</string>

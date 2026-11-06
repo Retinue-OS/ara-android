@@ -197,6 +197,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     /** An endpoint the user asked to remove: confirmed first. */
     private var confirmRemoveEndpoint by mutableStateOf<Endpoint?>(null)
 
+    /** The editor was closed with changes that cannot be saved: why, while the user decides (see [closeEndpointEditor]). */
+    private var endpointDiscard by mutableStateOf<EndpointDraft.Problem?>(null)
+
     /** A `retinue-shell:` link for another configured endpoint, waiting for the user to agree to the switch. */
     private var linkSwitch by mutableStateOf<LinkSwitch?>(null)
 
@@ -424,9 +427,19 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
                                 onSelectCertificate = { chooseCertificateFor(draft) },
                                 onClearCertificate = { endpointEditor = draft.copy(certificateAlias = null) },
                                 onRemove = if (draft.isNew) null else ({ askRemoveEndpoint(draft.id) }),
-                                onDismiss = { endpointEditor = null },
+                                onDismiss = ::closeEndpointEditor,
                             )
                         }
+                    }
+                    endpointDiscard?.let { problem ->
+                        EndpointDiscardDialog(
+                            problem = problem,
+                            onDiscard = {
+                                endpointDiscard = null
+                                endpointEditor = null
+                            },
+                            onKeepEditing = { endpointDiscard = null },
+                        )
                     }
                     confirmRemoveEndpoint?.let { endpoint ->
                         EndpointRemoveDialog(
@@ -1164,6 +1177,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         confirmRemove = null
         endpointEditor = null
         confirmRemoveEndpoint = null
+        endpointDiscard = null
         if (settings.base != null) showSettings = false
     }
 
@@ -1171,15 +1185,16 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
         override fun handleOnBackPressed() {
             val overlay = showSettings || showDrawer || editing != null || authPrompt != null ||
                 openFolderId != null || folderEditor != null || confirmRemove != null ||
-                endpointEditor != null || confirmRemoveEndpoint != null || linkSwitch != null
+                endpointEditor != null || confirmRemoveEndpoint != null || linkSwitch != null || endpointDiscard != null
             // The split-screen window is a plain app: at the root, Back leaves it.
             val webCanGoBack = showsPage && webView?.canGoBack() == true
             when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
                     linkSwitch != null -> linkSwitch = null
+                    endpointDiscard != null -> endpointDiscard = null
                     confirmRemoveEndpoint != null -> confirmRemoveEndpoint = null
-                    endpointEditor != null -> endpointEditor = null
+                    endpointEditor != null -> closeEndpointEditor()
                     confirmRemove != null -> confirmRemove = null
                     editing != null -> editing = null
                     folderEditor != null -> folderEditor = null
@@ -1213,6 +1228,21 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware {
     private fun editEndpoint(id: String) {
         val endpoint = settings.endpoints.firstOrNull { it.id == id } ?: return
         endpointEditor = EndpointDraft.of(endpoint)
+    }
+
+    /**
+     * Back, or the arrow in the editor's bar: changes are saved on the way out,
+     * as Android editors do; changes that cannot be saved as they are (no https
+     * address, a user name without a password or the reverse) are asked about
+     * ([EndpointDiscardDialog]) rather than dropped. Nothing changed: it closes.
+     */
+    private fun closeEndpointEditor() {
+        val draft = endpointEditor ?: return
+        when (val close = draft.onClose()) {
+            EndpointDraft.Close.Unchanged -> endpointEditor = null
+            EndpointDraft.Close.Save -> saveEndpoint(draft)
+            is EndpointDraft.Close.Ask -> endpointDiscard = close.problem
+        }
     }
 
     private fun saveEndpoint(draft: EndpointDraft) {
