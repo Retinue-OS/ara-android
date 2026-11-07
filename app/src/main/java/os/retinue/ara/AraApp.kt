@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.health.HealthSyncRuntime
+import os.retinue.ara.keyboard.KeyboardRuntime
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.wake.WakeRuntime
 
@@ -26,6 +27,7 @@ class AraApp : Application() {
         WakeRuntime.init(this)
         UpdateRuntime.init(this)
         HealthSyncRuntime.init(this)
+        KeyboardRuntime.init(this)
         scope.launch {
             AraStore(this@AraApp).settings
                 .map { it.wakeMode to it.wakeThreshold }

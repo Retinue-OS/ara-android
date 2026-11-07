@@ -9,6 +9,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.keyboard.KeyboardListener
+import os.retinue.ara.keyboard.KeyboardRuntime
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncListener
 import os.retinue.ara.health.HealthSyncRuntime
@@ -137,6 +139,11 @@ object ShellPage {
         }
     }
 
+    /** Keyboard events (and the status before them) go to the page, whichever window shows it. */
+    private val keyboardListener = KeyboardListener { event ->
+        if (webView != null) bridge.keyboardEvent(event)
+    }
+
     /** [window] was created: the first one creates the page and shows it. */
     fun open(window: MainActivity) {
         windows += window
@@ -144,6 +151,7 @@ object ShellPage {
         if (webView == null) create(window)
         WakeRuntime.onWake = onWake
         HealthSyncRuntime.listener = healthListener
+        KeyboardRuntime.listener = keyboardListener
     }
 
     /**
@@ -157,6 +165,7 @@ object ShellPage {
         if (windows.isEmpty()) {
             if (WakeRuntime.onWake === onWake) WakeRuntime.onWake = null
             if (HealthSyncRuntime.listener === healthListener) HealthSyncRuntime.listener = null
+            if (KeyboardRuntime.listener === keyboardListener) KeyboardRuntime.listener = null
             speech?.shutdown()
             speech = null
             webView?.let(::destroy)
@@ -257,7 +266,7 @@ object ShellPage {
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         bind(view, window)
-        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }, { settings.deviceWebSettings }) { message ->
+        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }, { settings.deviceWebSettings }, { KeyboardRuntime.status.value }) { message ->
             owner?.onWebMessage(message)
         }
         owner = window

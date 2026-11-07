@@ -2,6 +2,7 @@ package os.retinue.ara.ui
 
 import android.content.Context
 import android.text.format.DateUtils
+import os.retinue.ara.keyboard.KeyboardStatus
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
@@ -46,6 +47,7 @@ internal fun settingsPageState(
     update: UpdateState,
     installAllowed: Boolean,
     usageAccess: Boolean,
+    keyboard: KeyboardStatus = KeyboardStatus(),
 ): SettingsPageState = SettingsPageState(
     version = BuildConfig.VERSION_NAME,
     endpoints = SettingsPageState.endpointRows(settings),
@@ -91,6 +93,7 @@ internal fun settingsPageState(
     ),
     device = settings.deviceWebSettings,
     usageAccess = usageAccess,
+    keyboard = keyboard,
 )
 
 private fun wakeStatusText(context: Context, status: WakeStatus): String = when (status) {

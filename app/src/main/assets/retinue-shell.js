@@ -9,7 +9,10 @@
 //     endpoints(), selectEndpoint(id), and (RetinueShell/4) the app's own
 //     settings page (settingsPage) and the dashboard's per-device
 //     preferences the app holds for every endpoint: deviceSettings(),
-//     setDeviceSetting(key, value). Shell -> web events arrive as
+//     setDeviceSetting(key, value), and (RetinueShell/5) the keyboard for
+//     other devices: keyboardStatus(), keyboardType(text, opts),
+//     keyboardKey(name), keyboardSecret(opts), keyboardOpen(). Shell -> web
+//     events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
 //
@@ -120,6 +123,35 @@
   }
   try { takeDevice(JSON.parse("__RETINUE_DEVICE_SETTINGS__")); } catch (_) { /* the bare asset: none */ }
 
+  // ---- Keyboard for other devices (RetinueShell/5) -------------------------
+  //
+  // The phone as a Bluetooth keyboard for a device that cannot run Retinue
+  // itself. keyboardStatus() answers at once from a copy the shell baked in
+  // and replaces with its `keyboard.status` messages (sent before each
+  // `keyboard` event). Typing is the shell's: the page hands over text, a key
+  // name, or asks for the native secret dialog — and hears the outcome as
+  // `keyboard` events. A secret never passes through the page.
+  var keyboard = { available: false, enabled: false, connected: false, host: null, layout: 'us' };
+  function takeKeyboard(s) {
+    if (!s || typeof s !== 'object') return;
+    keyboard = {
+      available: !!s.available,
+      enabled: !!s.enabled,
+      connected: !!s.connected,
+      host: s.host && typeof s.host === 'object' && typeof s.host.address === 'string'
+        ? { name: typeof s.host.name === 'string' ? s.host.name : s.host.address, address: s.host.address }
+        : null,
+      layout: typeof s.layout === 'string' ? s.layout : 'us',
+    };
+  }
+  try { takeKeyboard(JSON.parse("__RETINUE_KEYBOARD_STATUS__")); } catch (_) { /* the bare asset: off */ }
+  var KEYBOARD_KEYS = ['enter', 'tab', 'backspace', 'escape', 'up', 'down', 'left', 'right', 'home', 'end', 'delete', 'space'];
+  function keyboardOpts(opts) {
+    if (typeof opts === 'string') { try { opts = JSON.parse(opts); } catch (_) { opts = null; } }
+    return opts && typeof opts === 'object' ? opts : {};
+  }
+  function keyboardId(o) { return typeof o.id === 'string' && o.id ? o.id : undefined; }
+
   var shell = {
     platform: 'android',
     version: '__RETINUE_SHELL_VERSION__',
@@ -175,6 +207,28 @@
       health.auto_on_resume = !!on;
       post({ type: 'health.auto', on: !!on });
     },
+    // {available, enabled, connected, host: {name, address}|null, layout} as a JSON string.
+    keyboardStatus: function () { return JSON.stringify(keyboard); },
+    // Type `text` into the connected device; opts {id, enter} (an object or
+    // its JSON). Returns at once; a `keyboard` event says `typed` or `error`.
+    keyboardType: function (text, opts) {
+      if (typeof text !== 'string') return;
+      var o = keyboardOpts(opts);
+      post({ type: 'keyboard.type', text: text, enter: !!o.enter, id: keyboardId(o) });
+    },
+    // Press one key: enter, tab, backspace, escape, up, down, left, right, home, end, delete, space.
+    keyboardKey: function (name) {
+      if (KEYBOARD_KEYS.indexOf(name) < 0) return;
+      post({ type: 'keyboard.key', name: name });
+    },
+    // The native secret dialog; opts {id, label, enter}. The page hears only
+    // `secret-typed` or `secret-cancelled` (or an `error`), never the secret.
+    keyboardSecret: function (opts) {
+      var o = keyboardOpts(opts);
+      post({ type: 'keyboard.secret', label: typeof o.label === 'string' ? o.label : undefined, enter: !!o.enter, id: keyboardId(o) });
+    },
+    // The native keyboard screen: switch on, pair, layout, live typing.
+    keyboardOpen: function () { post({ type: 'keyboard.open' }); },
   };
   try {
     Object.defineProperty(window, 'RetinueShell', { value: shell, configurable: true, enumerable: true, writable: false });
@@ -258,6 +312,7 @@
     if (!msg) return;
     if (msg.type === 'health.status') takeHealth(msg.status);
     else if (msg.type === 'endpoints.status') takeEndpoints(msg.endpoints);
+    else if (msg.type === 'keyboard.status') takeKeyboard(msg.status);
     else if (msg.type === 'device.status') {
       var changed = takeDevice(msg.settings);
       if (changed.length) {

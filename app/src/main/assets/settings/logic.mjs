@@ -251,6 +251,16 @@ export function usageAccessNote(launcher) {
     };
 }
 
+// ── Keyboard for other devices ──────────────────────────────────────────────
+// One line for the card: off, on and waiting, or which device it types into.
+export function keyboardLine(k) {
+  if (!k || !k.available) return 'This phone has no Bluetooth.';
+  if (!k.enabled) return 'Off.';
+  if (k.connected && k.host) return `Connected to ${k.host} (${k.layout}).`;
+  if (k.host) return `On; ${k.host} is not connected.`;
+  return 'On; no device paired yet.';
+}
+
 export function wakeModelsLine(w) {
   if (!w) return '';
   const yes = (b) => (b ? 'present' : 'missing');

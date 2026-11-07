@@ -57,11 +57,12 @@ interface ShellHost {
 }
 
 /**
- * The user agent suffix of the contract (plan §4); 4: the app has a settings
+ * The user agent suffix of the contract (plan §4); 5: the keyboard for other
+ * devices (keyboardStatus/Type/Key/Secret/Open); 4: the app has a settings
  * page of its own and holds the dashboard's per-device preferences; 3: the
  * endpoint members of the bridge exist.
  */
-const val SHELL_UA_SUFFIX = " RetinueShell/4 (Android)"
+const val SHELL_UA_SUFFIX = " RetinueShell/5 (Android)"
 
 /** WebView configuration for the shell (plan §1). */
 @SuppressLint("SetJavaScriptEnabled")
