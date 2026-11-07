@@ -21,6 +21,7 @@ import java.util.concurrent.Executor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -284,7 +285,11 @@ object KeyboardRuntime {
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         }
-        ContextCompat.registerReceiver(app, btReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        // Exported: these broadcasts come from the Bluetooth stack's own
+        // process (its uid is not the system's), which a not-exported
+        // receiver does not hear. All three are protected broadcasts that
+        // only the system may send, so exporting opens nothing.
+        ContextCompat.registerReceiver(app, btReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
         receiverRegistered = true
     }
 
@@ -298,12 +303,12 @@ object KeyboardRuntime {
         }
     }
 
-    /** Press one named key (HidKeys.NAMED). */
+    /** Press one named key (HidKeys.NAMED); the outcome comes as a `keyboard` event with [id]. */
     fun key(name: String, id: String? = null) {
         val code = HidKeys.NAMED[name] ?: return
         scope.launch {
             val error = send(listOf(HidKeys.Stroke(HidKeys.MOD_NONE, code)), 0)
-            if (error != null) emit(KeyboardEvent.error(id, error))
+            emit(if (error == null) KeyboardEvent.typed(id, 1) else KeyboardEvent.error(id, error))
         }
     }
 
@@ -326,14 +331,32 @@ object KeyboardRuntime {
         }
     }
 
-    /** Live mode: [backspaces] deletions, then [text]. */
+    /**
+     * Live mode: [backspaces] deletions, then [text]. Edits are queued and
+     * sent one after the other, each waiting for the one before (and for any
+     * typing going on) rather than being refused as busy: the live field
+     * assumes the device has everything it sent, so none may be dropped. The
+     * field only takes characters the layout can type ([KeyLayouts.typeable]).
+     */
     fun live(backspaces: Int, text: String) {
-        scope.launch {
-            val strokes = ArrayList<HidKeys.Stroke>()
-            repeat(backspaces.coerceAtMost(KeyboardLogic.MAX_TEXT)) { strokes += HidKeys.Stroke(HidKeys.MOD_NONE, HidKeys.KEY_BACKSPACE) }
-            val layout = KeyLayouts.byId(_status.value.layout) ?: return@launch
-            for (c in text) layout.strokesFor(c)?.let { strokes += it }
-            send(strokes, 0)
+        if (liveConsumer == null) {
+            liveConsumer = scope.launch { for (edit in liveEdits) sendLive(edit.first, edit.second) }
+        }
+        liveEdits.trySend(backspaces to text)
+    }
+
+    private val liveEdits = Channel<Pair<Int, String>>(Channel.UNLIMITED)
+    private var liveConsumer: kotlinx.coroutines.Job? = null
+
+    private suspend fun sendLive(backspaces: Int, text: String) {
+        val layout = KeyLayouts.byId(_status.value.layout) ?: return
+        val strokes = ArrayList<HidKeys.Stroke>()
+        repeat(backspaces.coerceAtMost(KeyboardLogic.MAX_TEXT)) { strokes += HidKeys.Stroke(HidKeys.MOD_NONE, HidKeys.KEY_BACKSPACE) }
+        strokes += KeyLayouts.typeableStrokes(text, layout)
+        if (strokes.isEmpty()) return
+        typing.withLock {
+            if (KeyboardLogic.precheck(_status.value.copy(busy = false), 0) != null) return
+            transmit(strokes)
         }
     }
 
@@ -354,6 +377,15 @@ object KeyboardRuntime {
         KeyboardLogic.precheck(_status.value, length)?.let { return it }
         if (!typing.tryLock()) return KeyboardError.Busy
         try {
+            return transmit(strokes)
+        } finally {
+            typing.unlock()
+        }
+    }
+
+    /** Send [strokes] to the connected device; the caller holds [typing]. */
+    private suspend fun transmit(strokes: List<HidKeys.Stroke>): KeyboardError? {
+        try {
             setBusy(true)
             val h = hid ?: return KeyboardError.NotConnected
             val device = connected ?: return KeyboardError.NotConnected
@@ -369,7 +401,6 @@ object KeyboardRuntime {
             return if (sent == strokes.size) null else KeyboardError.Failed
         } finally {
             setBusy(false)
-            typing.unlock()
         }
     }
 

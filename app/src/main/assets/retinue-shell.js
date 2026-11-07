@@ -11,7 +11,7 @@
 //     preferences the app holds for every endpoint: deviceSettings(),
 //     setDeviceSetting(key, value), and (RetinueShell/5) the keyboard for
 //     other devices: keyboardStatus(), keyboardType(text, opts),
-//     keyboardKey(name), keyboardSecret(opts), keyboardOpen(). Shell -> web
+//     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(). Shell -> web
 //     events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
@@ -211,15 +211,18 @@
     keyboardStatus: function () { return JSON.stringify(keyboard); },
     // Type `text` into the connected device; opts {id, enter} (an object or
     // its JSON). Returns at once; a `keyboard` event says `typed` or `error`.
+    // A line break is typed as Shift+Enter (a new line in chat apps and text
+    // areas, but a submit in a terminal or a one-line field), a tab as Tab.
     keyboardType: function (text, opts) {
       if (typeof text !== 'string') return;
       var o = keyboardOpts(opts);
       post({ type: 'keyboard.type', text: text, enter: !!o.enter, id: keyboardId(o) });
     },
-    // Press one key: enter, tab, backspace, escape, up, down, left, right, home, end, delete, space.
-    keyboardKey: function (name) {
+    // Press one key: enter, tab, backspace, escape, up, down, left, right, home, end, delete, space;
+    // opts {id} (an object or its JSON). A `keyboard` event says `typed` or `error`.
+    keyboardKey: function (name, opts) {
       if (KEYBOARD_KEYS.indexOf(name) < 0) return;
-      post({ type: 'keyboard.key', name: name });
+      post({ type: 'keyboard.key', name: name, id: keyboardId(keyboardOpts(opts)) });
     },
     // The native secret dialog; opts {id, label, enter}. The page hears only
     // `secret-typed` or `secret-cancelled` (or an `error`), never the secret.

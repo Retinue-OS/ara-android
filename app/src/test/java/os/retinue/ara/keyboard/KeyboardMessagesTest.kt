@@ -21,6 +21,14 @@ class KeyboardMessagesTest {
         )
         assertNull(ShellMessages.parse("""{"type":"keyboard.type","text":5}"""))
         assertEquals(WebMessage.KeyboardKey("enter"), ShellMessages.parse("""{"type":"keyboard.key","name":"enter"}"""))
+        assertEquals(
+            WebMessage.KeyboardKey("tab", "k1"),
+            ShellMessages.parse("""{"type":"keyboard.key","name":"tab","id":"k1"}"""),
+        )
+        assertEquals(
+            WebMessage.KeyboardKey("tab", null),
+            ShellMessages.parse("""{"type":"keyboard.key","name":"tab","id":"bad id"}"""),
+        )
         assertNull(ShellMessages.parse("""{"type":"keyboard.key","name":"F13"}"""))
         assertEquals(
             WebMessage.KeyboardSecret("Meta account", true, "s1"),

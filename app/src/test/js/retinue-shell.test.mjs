@@ -353,6 +353,8 @@ console.log('device settings bridge tests passed');
   shell.keyboardType('two', '{"id":"m2"}');   // opts as JSON, as the contract writes it
   shell.keyboardType(42, {});                  // not text: ignored
   shell.keyboardKey('enter');
+  shell.keyboardKey('tab', { id: 'k1' });
+  shell.keyboardKey('escape', '{"id":"k2"}');  // opts as JSON
   shell.keyboardKey('format-disk');            // not a key: ignored
   shell.keyboardSecret({ id: 's1', label: 'Meta account', enter: true });
   shell.keyboardSecret('nonsense');            // unreadable opts: a plain dialog
@@ -361,6 +363,8 @@ console.log('device settings bridge tests passed');
     { type: 'keyboard.type', text: 'Grüezi', enter: true, id: 'm1' },
     { type: 'keyboard.type', text: 'two', enter: false, id: 'm2' },
     { type: 'keyboard.key', name: 'enter' },
+    { type: 'keyboard.key', name: 'tab', id: 'k1' },
+    { type: 'keyboard.key', name: 'escape', id: 'k2' },
     { type: 'keyboard.secret', label: 'Meta account', enter: true, id: 's1' },
     { type: 'keyboard.secret', enter: false },
     { type: 'keyboard.open' },

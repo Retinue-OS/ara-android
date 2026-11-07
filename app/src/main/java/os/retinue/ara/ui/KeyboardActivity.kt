@@ -38,6 +38,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.widget.EditText
 import android.text.Editable
+import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import os.retinue.ara.R
@@ -164,7 +165,9 @@ class KeyboardActivity : ComponentActivity() {
      * learning) whose every change is sent as the difference — Backspace for
      * what went, the new characters typed. Edits are assumed at the end of
      * the text (where typing happens); a change elsewhere in the field is
-     * sent as deleting back to it and retyping the rest.
+     * sent as deleting back to it and retyping the rest. The field takes only
+     * what the device's layout can type, so it always holds what the device
+     * was sent; a line break goes as Shift+Enter, like any typed text.
      */
     @Composable
     private fun LiveField() {
@@ -178,6 +181,22 @@ class KeyboardActivity : ComponentActivity() {
                     importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO
                     hint = ctx.getString(R.string.keyboard_live_field)
                     minLines = 3
+                    // Characters the layout lacks never enter the field: the
+                    // device could not get them, and the next diff would be
+                    // computed against text it never had.
+                    filters = arrayOf(
+                        InputFilter { source, start, end, _, _, _ ->
+                            val layout = KeyLayouts.byId(KeyboardRuntime.status.value.layout)
+                                ?: return@InputFilter null
+                            if ((start until end).all { KeyLayouts.typeable(source[it], layout) }) {
+                                null
+                            } else {
+                                (start until end).map { source[it] }
+                                    .filter { KeyLayouts.typeable(it, layout) }
+                                    .joinToString("")
+                            }
+                        },
+                    )
                     addTextChangedListener(object : TextWatcher {
                         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit

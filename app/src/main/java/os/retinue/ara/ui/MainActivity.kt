@@ -1560,7 +1560,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
             is WebMessage.KeyboardType -> KeyboardRuntime.type(message.text, message.enter, message.id)
-            is WebMessage.KeyboardKey -> KeyboardRuntime.key(message.name)
+            is WebMessage.KeyboardKey -> KeyboardRuntime.key(message.name, message.id)
             is WebMessage.KeyboardSecret -> openSecretDialog(message)
             WebMessage.KeyboardOpen -> openKeyboard()
         }

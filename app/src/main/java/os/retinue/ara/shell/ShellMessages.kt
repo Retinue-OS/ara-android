@@ -73,8 +73,8 @@ sealed class WebMessage {
     /** `keyboardType(text, opts)`: type [text] into the connected device (RetinueShell/5). */
     data class KeyboardType(val text: String, val enter: Boolean, val id: String?) : WebMessage()
 
-    /** `keyboardKey(name)`: press one named key (HidKeys.NAMED). */
-    data class KeyboardKey(val name: String) : WebMessage()
+    /** `keyboardKey(name, opts)`: press one named key (HidKeys.NAMED); [id] is echoed in its event. */
+    data class KeyboardKey(val name: String, val id: String? = null) : WebMessage()
 
     /**
      * `keyboardSecret(opts)`: open the native secret dialog. The page names
@@ -161,7 +161,10 @@ object ShellMessages {
                 val text = obj.str("text") ?: return null
                 WebMessage.KeyboardType(text, obj.bool("enter") ?: false, KeyboardLogic.cleanId(obj.str("id")))
             }
-            "keyboard.key" -> WebMessage.KeyboardKey(obj.str("name")?.takeIf { it in HidKeys.NAMED } ?: return null)
+            "keyboard.key" -> WebMessage.KeyboardKey(
+                obj.str("name")?.takeIf { it in HidKeys.NAMED } ?: return null,
+                KeyboardLogic.cleanId(obj.str("id")),
+            )
             "keyboard.secret" -> WebMessage.KeyboardSecret(
                 label = KeyboardLogic.cleanLabel(obj.str("label")),
                 enter = obj.bool("enter") ?: false,

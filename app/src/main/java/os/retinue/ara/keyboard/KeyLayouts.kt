@@ -109,17 +109,40 @@ object KeyLayouts {
         var i = 0
         while (i < text.length) {
             val c = text[i]
-            val strokes = when (c) {
-                '\r', '\n' -> listOf(Stroke(MOD_LSHIFT, KEY_ENTER))
-                '\t' -> listOf(Stroke(MOD_NONE, KEY_TAB))
-                else -> layout.strokesFor(c)
-            } ?: return Mapped.Unsupported(i, c)
-            out += strokes
-            // \r\n is one line break.
-            i += if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') 2 else 1
+            out += charStrokes(c, layout) ?: return Mapped.Unsupported(i, c)
+            i += step(text, i)
         }
         return Mapped.Ok(out)
     }
+
+    /** Whether [layout] can type [c]; a line break and a tab always. */
+    fun typeable(c: Char, layout: KeyLayout): Boolean = charStrokes(c, layout) != null
+
+    /**
+     * The presses for [text], leaving out what [layout] cannot type. For the
+     * live field, which takes only typeable characters ([typeable]) but may
+     * meet a layout changed under it; everything else uses [map], which
+     * refuses the whole text instead.
+     */
+    fun typeableStrokes(text: CharSequence, layout: KeyLayout): List<Stroke> {
+        val out = ArrayList<Stroke>(text.length + 8)
+        var i = 0
+        while (i < text.length) {
+            charStrokes(text[i], layout)?.let { out += it }
+            i += step(text, i)
+        }
+        return out
+    }
+
+    private fun charStrokes(c: Char, layout: KeyLayout): List<Stroke>? = when (c) {
+        '\r', '\n' -> listOf(Stroke(MOD_LSHIFT, KEY_ENTER))
+        '\t' -> listOf(Stroke(MOD_NONE, KEY_TAB))
+        else -> layout.strokesFor(c)
+    }
+
+    /** \r\n is one line break. */
+    private fun step(text: CharSequence, i: Int): Int =
+        if (text[i] == '\r' && i + 1 < text.length && text[i + 1] == '\n') 2 else 1
 
     // ── Tables ─────────────────────────────────────────────────────────────
 

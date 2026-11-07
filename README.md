@@ -169,8 +169,9 @@ The web app detects the shell and talks to it through:
   `keyboardStatus()` → a JSON string `{available, enabled, connected,
   host: {name, address}|null, layout}`; `keyboardType(text, opts)` with `opts`
   `{id, enter}` (an object or its JSON; at most 4000 characters, returns at
-  once); `keyboardKey(name)` — `enter`, `tab`, `backspace`, `escape`, `up`,
-  `down`, `left`, `right`, `home`, `end`, `delete`, `space`;
+  once; a line break is typed as Shift+Enter, a tab as Tab);
+  `keyboardKey(name, opts)` with `opts` `{id}` — `enter`, `tab`, `backspace`,
+  `escape`, `up`, `down`, `left`, `right`, `home`, `end`, `delete`, `space`;
   `keyboardSecret(opts)` with `{id, label, enter}` (opens the native secret
   dialog); `keyboardOpen()` (the native keyboard screen).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
@@ -844,8 +845,13 @@ from the phone's language. Characters a layout makes with a dead key (`É`,
 letter. A text is mapped whole before anything is sent: a character the
 layout cannot type is reported (`unsupported-char`) and nothing is typed, so
 no half text is left on the other device. A line break is typed as Shift+Enter
-(a new line, not "send", in chat apps and text areas); Enter after the text is
-an explicit option.
+(a new line, not "send", in chat apps and text areas — but in a terminal, a
+URL bar or a one-line field Shift+Enter submits like Enter, which is why the
+dashboard never types a line break without a tap); Enter after the text is an
+explicit option. On a Mac with an ISO keyboard, macOS may swap the key left of
+`1` (`§`/`^`) with the one left of `Y`/`Z` (`<`/`>`) for a keyboard it takes
+for ANSI; if those two come out swapped, set the keyboard type in macOS's
+Keyboard settings.
 
 **Pacing.** Every key is pressed and released on its own (so `ll` is two
 presses), modifiers are pressed a report ahead of their key, and there is a
@@ -855,7 +861,8 @@ running is refused as `busy`. If the device goes away mid-text, Ara releases
 all keys and reports `failed`.
 
 **From the dashboard.** The page asks with `keyboardType(text, {id, enter})`
-and `keyboardKey(name)` and hears the outcome as `keyboard` events (see the
+and `keyboardKey(name, {id})` and hears the outcome — `typed` or `error`, with
+the request's `id` — as `keyboard` events (see the
 [contract](#shell--web-contract)). The app types only what a page of the
 configured origin hands over, through the same origin-restricted bridge as
 everything else; when to type is the dashboard's and the user's business.
@@ -882,9 +889,13 @@ user can also type. *Type* sends it to the connected device. What holds:
 
 **Live mode.** The keyboard screen's *Type live* field sends every change at
 once: new characters typed, deletions as Backspace (an edit in the middle of
-the field is sent as deleting back to it and retyping the rest). Buttons
-below press Enter, Tab, Backspace, Esc and the arrows. The field takes no
-suggestions and no personalised learning, and takes part in no autofill.
+the field is sent as deleting back to it and retyping the rest). Changes are
+queued and sent in order — none is dropped while an earlier one is still
+being typed — and the field takes only characters the device's layout can
+type, so it always holds what the device was sent; a line break goes as
+Shift+Enter. Buttons below press Enter, Tab, Backspace, Esc and the arrows.
+The field takes no suggestions and no personalised learning, and takes part
+in no autofill.
 
 **Limits.** The other device treats the input as it would from any keyboard:
 a password typed into a field that does not mask it is visible there, and a

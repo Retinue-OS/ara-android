@@ -242,12 +242,14 @@
 
         <!-- The secret path: a password typed into the connected device, never
              shown to the page. FLAG_SECURE is set in code; excluded from
-             recents, its own affinity so it never brings the shell's task. -->
+             recents, its own affinity so it never brings the shell's task.
+             Not noHistory: a locked password manager shows its unlock screen
+             over the dialog and hands the fill back to it afterwards, which
+             a noHistory activity, finished once covered, would never get. -->
         <activity
             android:name=".ui.SecretTypeActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:taskAffinity=""
             android:theme="@style/Theme.Ara.Translucent"
             android:windowSoftInputMode="stateAlwaysVisible" />

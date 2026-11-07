@@ -84,6 +84,23 @@ class KeyLayoutsTest {
     }
 
     @Test
+    fun liveTypingSkipsOnlyWhatTheLayoutLacks() {
+        assertTrue(KeyLayouts.typeable('\n', us) && KeyLayouts.typeable('\t', us))
+        assertTrue(KeyLayouts.typeable('ü', ch) && !KeyLayouts.typeable('ü', us))
+        assertTrue(!KeyLayouts.typeable('✓', de))
+        // The live field gets line breaks as Shift+Enter, like a typed text.
+        assertEquals(
+            (KeyLayouts.map("a\nb", us) as Mapped.Ok).strokes,
+            KeyLayouts.typeableStrokes("a\nb", us),
+        )
+        assertEquals(
+            (KeyLayouts.map("ab", us) as Mapped.Ok).strokes,
+            KeyLayouts.typeableStrokes("a✓b", us),
+        )
+        assertEquals(1, KeyLayouts.typeableStrokes("\r\n", us).size)
+    }
+
+    @Test
     fun defaultLayoutFollowsThePhone() {
         assertEquals(KeyLayouts.DE_CH, KeyLayouts.defaultFor(Locale("de", "CH")))
         assertEquals(KeyLayouts.DE_DE, KeyLayouts.defaultFor(Locale("de", "AT")))

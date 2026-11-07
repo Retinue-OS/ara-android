@@ -114,6 +114,7 @@ class SecretTypeActivity : Activity() {
 
     override fun onDestroy() {
         // Left by any other way (the task removed): nothing typed, and the page hears so.
+        // Covered alone it stays: a password manager's unlock screen returns to it.
         if (!settled) cancelAndFinish()
         field?.text?.clear()
         super.onDestroy()
