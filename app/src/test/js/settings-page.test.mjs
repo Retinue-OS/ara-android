@@ -1,7 +1,7 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
-// endpoint draft rules and what closing the editor does, the per-device values
-// with the dashboard's bounds, the health and wake lines, and the instance
-// frame's message. No dependencies:
+// endpoint draft rules and what closing the editor does, the certificate
+// import's notes, the per-device values with the dashboard's bounds, the
+// health and wake lines, and the instance frame's message. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
 import assert from 'node:assert/strict';
 import * as L from '../../main/assets/settings/logic.mjs';
@@ -79,6 +79,31 @@ ok('a draft goes to the app without what the app decides itself', () => {
   });
   assert.equal(L.endpointSummary(home), 'Certificate: ara-phone · Sign-in: reto · Health data: on');
   assert.equal(L.endpointSummary({ healthUpload: false }), 'Certificate: none · Sign-in: none · Health data: off');
+});
+
+ok('an import says how it ended, and errors read as errors', () => {
+  // The keys the app sends (CertificateImport.Outcome), and the two the chooser's answer makes.
+  for (const key of ['installed', 'cancelled', 'not-pkcs12', 'too-large', 'unreadable', 'unavailable', 'blocked', 'no-picker', 'selected', 'unselected']) {
+    const note = L.importNote(key);
+    assert.ok(note && note.text, key);
+  }
+  for (const quiet of ['none', null, undefined, 42, 'toString', 'unknown']) assert.equal(L.importNote(quiet), null, String(quiet));
+  assert.equal(L.importNote('installed').error, false);
+  assert.equal(L.importNote('cancelled').error, false, 'leaving the installer is no error');
+  assert.equal(L.importNote('not-pkcs12').error, true);
+  assert.equal(L.importNote('blocked').error, true);
+  assert.match(L.importNote('not-pkcs12').text, /\.p12 or \.pfx/);
+  assert.match(L.importNote('blocked').text, /turned off on this device/);
+  assert.match(L.importNote('unavailable').text, /no certificate installer/);
+});
+
+ok("after an install, the chooser's answer decides what the note says", () => {
+  assert.equal(L.importChosen('installed', 'reto-quest'), 'selected');
+  assert.equal(L.importChosen('installed', null), 'unselected');
+  // Select certificate on its own, or after an import that ended otherwise: nothing changes.
+  assert.equal(L.importChosen(null, 'ara-phone'), null);
+  assert.equal(L.importChosen('cancelled', 'ara-phone'), 'cancelled');
+  assert.match(L.importNote('unselected').text, /Select certificate/);
 });
 
 ok('per-device values read with the dashboard bounds and defaults', () => {
