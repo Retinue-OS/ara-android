@@ -596,10 +596,12 @@ certificate*. There are two ways to put it there:
   editor, **Select certificate** and pick its alias.
 
 Ara keeps no key store of its own. An imported file is read into memory only,
-checked to be a PKCS#12 store of at most 256 KB (`net/CertificateImport.kt`),
-handed to the installer in its intent (`KeyChain.createInstallIntent()` with
-`EXTRA_PKCS12`, and the file's name as `EXTRA_NAME`) and wiped
-(`net/CertificateInstaller.kt`); the key is Android's from then on.
+checked to look like a PKCS#12 store of at most 256 KB
+(`net/CertificateImport.kt`; the installer, which has the password, reads the
+whole store), handed to the installer in its intent
+(`KeyChain.createInstallIntent()` with `EXTRA_PKCS12`, and the file's name as
+`EXTRA_NAME`) and wiped (`net/CertificateInstaller.kt`); the key is Android's
+from then on.
 Installing does not give Ara the key: Android grants it only through its
 chooser, which is why the import ends there. The editor says how an import
 ended: not a PKCS#12 file, unreadable or too large; installing certificates

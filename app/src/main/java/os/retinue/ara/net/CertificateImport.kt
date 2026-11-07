@@ -81,11 +81,13 @@ object CertificateImport {
     /**
      * Whether [bytes] begin as a PKCS#12 key store does (RFC 7292):
      * `PFX ::= SEQUENCE { version INTEGER (3), authSafe ContentInfo, … }` —
-     * a SEQUENCE (DER, or BER of indefinite length as some tools write it)
-     * that is not cut short, holding version 3 and then the ContentInfo, a
-     * SEQUENCE. The password is the installer's to ask, so this is all that
-     * can be known here; it tells a key store from a certificate (`.crt`,
-     * `.pem`, `.der`), a Java key store or any other file.
+     * a SEQUENCE that holds version 3 and then the start of the ContentInfo,
+     * a SEQUENCE. In DER the SEQUENCE's length must fit the file (not cut
+     * short) and hold both; BER of indefinite length, as some tools write it,
+     * is taken as far as both. A quick look at the kind of file, not a
+     * validation: the installer, which has the password, reads the whole
+     * store. It tells a key store from a certificate (`.crt`, `.pem`,
+     * `.der`), a Java key store or any other file.
      */
     fun isPkcs12(bytes: ByteArray): Boolean {
         if (bytes.size < 8 || bytes[0] != SEQUENCE) return false
@@ -103,9 +105,10 @@ object CertificateImport {
             }
             else -> return false
         }
-        if (length != null && i + length > bytes.size) return false
-        return i + 4 <= bytes.size &&
-            bytes[i] == INTEGER && bytes[i + 1] == 1.toByte() && bytes[i + 2] == 3.toByte() &&
+        // Where the SEQUENCE's contents end: the version and the ContentInfo's tag and length start inside.
+        val end = if (length == null) bytes.size.toLong() else i + length
+        if (end > bytes.size || i + 5 > end) return false
+        return bytes[i] == INTEGER && bytes[i + 1] == 1.toByte() && bytes[i + 2] == 3.toByte() &&
             bytes[i + 3] == SEQUENCE
     }
 
