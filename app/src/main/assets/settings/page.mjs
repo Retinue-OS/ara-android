@@ -8,8 +8,9 @@
 // and one message per setting (SettingsMessages in the app lists them all).
 // From the app: 'state' (the whole page, whenever anything in it changes),
 // 'saved' (the answer to an endpoint save), 'certificate' (the chooser's
-// answer) and 'health' (a health sync's events). The decisions live in
-// logic.mjs; this module only reads and writes the page.
+// answer), 'certificateImport' (how an import ended) and 'health' (a health
+// sync's events). The decisions live in logic.mjs; this module only reads and
+// writes the page.
 
 import * as L from './logic.mjs';
 
@@ -22,7 +23,7 @@ const HEALTH_EVENT_MS = 8000;
 
 let state = null;
 let firstState = true;
-let editor = null;        // {draft, saving: request id | null, certRequest: request id | null}
+let editor = null;        // {draft, saving: request id | null, certRequest: request id | null, importOutcome: key | null}
 let dialogDone = null;    // (confirmed) => void, while the dialog is up
 let requestSeq = 0;
 let instanceFor = null;   // what the instance frame was loaded for
@@ -80,6 +81,8 @@ function onMessage(raw) {
     onSaved(msg);
   } else if (msg.type === 'certificate') {
     onCertificate(msg);
+  } else if (msg.type === 'certificateImport') {
+    onCertificateImport(msg);
   } else if (msg.type === 'health') {
     onHealthEvent(msg.event);
   }
@@ -288,7 +291,7 @@ window.addEventListener('message', (e) => {
 // ── The endpoint editor ──────────────────────────────────────────────────────
 
 function openEditor(draft) {
-  editor = { draft, saving: null, certRequest: null };
+  editor = { draft, saving: null, certRequest: null, importOutcome: null };
   $('[data-view="main"]').hidden = true;
   $('[data-view="editor"]').hidden = false;
   fillEditor();
@@ -319,6 +322,11 @@ function renderEditorState() {
   const d = editor.draft;
   $('[data-draft-cert]').textContent = d.certificateAlias || 'None selected';
   $('[data-draft-cert-clear]').hidden = !d.certificateAlias;
+  const note = L.importNote(editor.importOutcome);
+  const noteEl = $('[data-draft-cert-note]');
+  noteEl.hidden = !note;
+  noteEl.textContent = note ? note.text : '';
+  noteEl.className = note && note.error ? 'error' : 'hint';
   const urlBad = String(d.baseUrl).trim() !== '' && !L.normalizeBase(d.baseUrl);
   const urlError = $('[data-draft-url-error]');
   urlError.hidden = !urlBad;
@@ -357,10 +365,18 @@ function onSaved(msg) {
 function onCertificate(msg) {
   if (!editor || msg.request !== editor.certRequest) return;
   editor.certRequest = null;
-  if (msg.alias) {
-    editor.draft.certificateAlias = String(msg.alias);
-    renderEditorState();
-  }
+  if (msg.alias) editor.draft.certificateAlias = String(msg.alias);
+  editor.importOutcome = L.importChosen(editor.importOutcome, msg.alias);
+  renderEditorState();
+}
+
+// How an import ended. Once installed, the chooser's answer follows with the
+// same request (onCertificate); any other outcome ends the request.
+function onCertificateImport(msg) {
+  if (!editor || msg.request !== editor.certRequest) return;
+  editor.importOutcome = typeof msg.outcome === 'string' ? msg.outcome : null;
+  if (editor.importOutcome !== 'installed') editor.certRequest = null;
+  renderEditorState();
 }
 
 // Back, or the arrow in the editor's bar: an untouched draft closes, changes
@@ -402,9 +418,21 @@ $('[data-draft-forget]').addEventListener('click', () => {
 $('[data-draft-cert-select]').addEventListener('click', () => {
   const d = editor.draft;
   editor.certRequest = nextRequest();
+  editor.importOutcome = null;
+  renderEditorState();
   send({ type: 'endpoint.certificate', request: editor.certRequest, baseUrl: String(d.baseUrl).trim(), current: d.certificateAlias });
 });
-$('[data-draft-cert-clear]').addEventListener('click', () => { editor.draft.certificateAlias = null; renderEditorState(); });
+$('[data-draft-cert-import]').addEventListener('click', () => {
+  editor.certRequest = nextRequest();
+  editor.importOutcome = null;
+  renderEditorState();
+  send({ type: 'endpoint.certificateImport', request: editor.certRequest, baseUrl: String(editor.draft.baseUrl).trim() });
+});
+$('[data-draft-cert-clear]').addEventListener('click', () => {
+  editor.draft.certificateAlias = null;
+  editor.importOutcome = null;
+  renderEditorState();
+});
 $('[data-draft-remove]').addEventListener('click', () => {
   const d = editor.draft;
   const label = d.name || L.normalizeBase(d.baseUrl) || 'this endpoint';

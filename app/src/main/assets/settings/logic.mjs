@@ -1,10 +1,11 @@
 // The settings page's decisions, without a page: what an endpoint draft may
-// be saved as and what closing the editor does with it, the values the page
-// shows for the dashboard's per-device preferences (with the same bounds and
-// defaults the dashboard applies), the health line, and the wake phrase's
-// notes. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs runs
-// it under Node. The page itself is page.mjs; the app's side is
-// os.retinue.ara.settings (SettingsBridge, SettingsMessages, SettingsState).
+// be saved as and what closing the editor does with it, what a certificate
+// import says, the values the page shows for the dashboard's per-device
+// preferences (with the same bounds and defaults the dashboard applies), the
+// health line, and the wake phrase's notes. Kept free of DOM work, so
+// app/src/test/js/settings-page.test.mjs runs it under Node. The page itself
+// is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
+// SettingsMessages, SettingsState).
 
 // ── The dashboard's per-device preferences ──────────────────────────────────
 // Held by the app for every endpoint (DeviceWebSettings), under the
@@ -165,6 +166,38 @@ export function endpointSummary(row) {
   const cert = row.certificateAlias || 'none';
   const user = row.username || 'none';
   return `Certificate: ${cert} · Sign-in: ${user} · Health data: ${row.healthUpload ? 'on' : 'off'}`;
+}
+
+// ── Importing a client certificate ──────────────────────────────────────────
+// How an import ended, as the app reports it (CertificateImport.Outcome), and
+// what the editor says about it. 'installed' is followed by Android's chooser,
+// whose answer makes it 'selected' or 'unselected'; 'none' (no file picked)
+// says nothing.
+export const IMPORT_TEXT = {
+  installed: 'Certificate installed. Select it in the list Android shows: only then may Ara use it.',
+  selected: 'Certificate installed and selected.',
+  unselected: 'Certificate installed, not selected yet. Android lets Ara use it once you select it: Select certificate.',
+  cancelled: 'No certificate was installed. If Android’s installer did not open, this device does not let apps install certificates: install it in the device’s own settings or through its management.',
+  'not-pkcs12': 'This is not a PKCS#12 file (.p12 or .pfx). Import one that holds the certificate together with its private key.',
+  'too-large': 'This file is too large to be a certificate file.',
+  unreadable: 'The file could not be read.',
+  unavailable: 'This device has no certificate installer that Ara can open: install the certificate in the device’s own settings or through its management.',
+  blocked: 'Installing certificates is turned off on this device, by its administrator or a device policy.',
+  'no-picker': 'This device has no file picker to choose the certificate file with.',
+};
+
+const IMPORT_ERRORS = new Set(['not-pkcs12', 'too-large', 'unreadable', 'unavailable', 'blocked', 'no-picker']);
+
+// The editor's note for an import outcome: {text, error}, or null for none.
+export function importNote(outcome) {
+  if (typeof outcome !== 'string' || !Object.prototype.hasOwnProperty.call(IMPORT_TEXT, outcome)) return null;
+  return { text: IMPORT_TEXT[outcome], error: IMPORT_ERRORS.has(outcome) };
+}
+
+// The outcome once the chooser has answered (with the alias picked, or none).
+export function importChosen(outcome, alias) {
+  if (outcome !== 'installed') return outcome || null;
+  return alias ? 'selected' : 'unselected';
 }
 
 // ── Health data ─────────────────────────────────────────────────────────────

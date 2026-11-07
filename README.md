@@ -84,7 +84,7 @@ On first start there is no endpoint yet, so the page opens at a new one.
 
 | Setting | Meaning |
 |---|---|
-| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) and the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint). The endpoint shown is marked *Active*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
+| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS; the editor also imports one from a `.p12` or `.pfx` file, see [Client certificate](#client-certificate-mutual-tls-and-sign-in)), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) and the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint). The endpoint shown is marked *Active*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
 | **Voice** | When speech recognition ends in a continuous conversation: the pause that ends a take, and how long the mic waits for speech at all. For every endpoint (see [Per-device preferences](#per-device-preferences)). |
 | **Shelf** | How many minimized threads, chats and projects the dashboard's shelf keeps. For every endpoint, as above. |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
@@ -221,8 +221,8 @@ The page talks to the app through `window.AraSettingsNative`, injected by
 nothing. The page sends `hello` once loaded and one message per action
 (`settings/SettingsMessages.kt` lists them); the app answers with the whole
 `state` whenever anything in it changes (`settings/SettingsState.kt`), plus
-the answers to an endpoint save and to the certificate chooser, and health
-sync events. Unlike a dashboard page, it may change the endpoints, their
+the answers to an endpoint save, to the certificate chooser and to a
+certificate import, and health sync events. Unlike a dashboard page, it may change the endpoints, their
 certificates and passwords and the health switch; the app still checks every
 endpoint it saves, and what is stored already (a password) never goes to the
 page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
@@ -578,10 +578,37 @@ remembered by the system, so later apps open on the other side.
 
 ## Client certificate (mutual TLS) and sign-in
 
-1. Install the certificate as a *VPN & app user certificate* (Settings →
-   Security → Encryption & credentials → Install a certificate), or via MDM.
-2. In the endpoint's editor (Settings → the endpoint's *Edit*), **Select
-   certificate** and pick its alias.
+The certificate lives in the Android KeyChain, as a *VPN & app user
+certificate*. There are two ways to put it there:
+
+- **Import it in Ara.** In the endpoint's editor (Settings → the endpoint's
+  *Edit*, or *Add endpoint*), **Import certificate…** and pick a PKCS#12 file
+  (`.p12` or `.pfx`) that holds the certificate and its private key, copied
+  to the device in any way (Syncthing, a download, a USB transfer). Android's
+  own certificate installer asks for the file's password and a name for the
+  certificate (where it asks what the certificate is for: *VPN and apps*).
+  Android's chooser then opens on it; picking it there selects it for the
+  endpoint, saved with the endpoint as always. This needs no developer mode,
+  adb or system settings page, so it also works on devices whose settings
+  offer no *Install a certificate*, such as a Meta Quest.
+- **Install it in Android's settings** (Settings → Security → Encryption &
+  credentials → Install a certificate), or via MDM; then, in the endpoint's
+  editor, **Select certificate** and pick its alias.
+
+Ara keeps no key store of its own. An imported file is read into memory only,
+checked to look like a PKCS#12 store of at most 256 KB
+(`net/CertificateImport.kt`; the installer, which has the password, reads the
+whole store), handed to the installer in its intent
+(`KeyChain.createInstallIntent()` with `EXTRA_PKCS12`, and the file's name as
+`EXTRA_NAME`) and wiped (`net/CertificateInstaller.kt`); the key is Android's
+from then on.
+Installing does not give Ara the key: Android grants it only through its
+chooser, which is why the import ends there. The editor says how an import
+ended: not a PKCS#12 file, unreadable or too large; installing certificates
+turned off on the device (a device policy, `DISALLOW_CONFIG_CREDENTIALS`); no
+certificate installer Ara can open; or nothing installed, when the installer
+was left, or closed at once on a device that withholds it from apps. Whether
+Meta Quest OS lets apps open the installer has not been verified yet.
 
 Ara stores only the **alias**, per endpoint. When the configured origin asks
 for a client certificate (`onReceivedClientCertRequest`), the key and chain are
@@ -842,6 +869,8 @@ web/       ShellWebView, ShellWebClients,           — the WebView, its setup a
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
 data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
+           CertificateImport                        — pure: which file goes to the installer, its name (unit-tested)
+           CertificateInstaller                     — reading the picked file, Android's certificate installer
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
            LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor),

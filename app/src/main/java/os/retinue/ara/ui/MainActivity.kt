@@ -85,8 +85,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import os.retinue.ara.R
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
@@ -104,6 +106,8 @@ import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.launcher.TrayLogic
 import os.retinue.ara.net.BasicCredentials
+import os.retinue.ara.net.CertificateImport
+import os.retinue.ara.net.CertificateInstaller
 import os.retinue.ara.settings.AppPage
 import os.retinue.ara.settings.SettingsAction
 import os.retinue.ara.settings.SettingsMessages
@@ -348,6 +352,17 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     private val phraseModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.importPhraseModel(uri)
+    }
+
+    /** The settings page's certificate import under way (one at a time; see [importCertificateFor]). */
+    private var certificateImport: CertificateImportRun? = null
+
+    private val certificateFilePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onCertificateFile(uri)
+    }
+
+    private val certificateInstaller = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        onCertificateInstalled(result.resultCode == RESULT_OK)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -768,6 +783,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is SettingsAction.SaveEndpoint -> saveEndpoint(action)
             is SettingsAction.RemoveEndpoint -> viewModel.removeEndpoint(action.id)
             is SettingsAction.ChooseCertificate -> chooseCertificateFor(action)
+            is SettingsAction.ImportCertificate -> importCertificateFor(action)
             is SettingsAction.HealthUpload -> settings.current?.let { viewModel.setHealthUpload(it.id, action.on) }
             SettingsAction.HealthSync -> HealthSyncRuntime.syncNow(HealthTrigger.Manual, healthPermissionRequester)
             is SettingsAction.HealthAuto -> HealthSyncRuntime.setAutoSync(action.on)
@@ -1535,6 +1551,84 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             host?.port ?: -1,
             action.current,
         )
+    }
+
+    /** A certificate import for the page's [request], for the endpoint at [baseUrl]; [name] as suggested to the installer. */
+    private data class CertificateImportRun(val request: String, val baseUrl: String, val name: String? = null)
+
+    /**
+     * The page's "Import certificate": a PKCS#12 file from the picker goes to
+     * Android's certificate installer ([CertificateInstaller]), and once it is
+     * installed Android's chooser opens on it, as "Select certificate" does —
+     * installing gives Ara no access to the key, the user's choice there does.
+     * Each way the import ends is told to the page ([SettingsMessages.certificateImport]),
+     * the chooser's answer as for "Select certificate".
+     */
+    private fun importCertificateFor(action: SettingsAction.ImportCertificate) {
+        if (CertificateInstaller.blockedByPolicy(this)) {
+            return answerImport(action.request, CertificateImport.Outcome.Blocked)
+        }
+        val run = CertificateImportRun(action.request, action.baseUrl)
+        certificateImport = run
+        try {
+            certificateFilePicker.launch(CertificateImport.PICKER_TYPES)
+        } catch (_: ActivityNotFoundException) {
+            certificateImport = null
+            answerImport(run.request, CertificateImport.Outcome.NoPicker)
+        }
+    }
+
+    private fun onCertificateFile(uri: Uri?) {
+        val run = certificateImport ?: return
+        if (uri == null) {
+            certificateImport = null
+            return answerImport(run.request, CertificateImport.Outcome.NoFile)
+        }
+        lifecycleScope.launch {
+            val read = withContext(Dispatchers.IO) { CertificateInstaller.read(this@MainActivity, uri) }
+            if (certificateImport !== run) {
+                // Another import started meanwhile: this one is dropped.
+                if (read is CertificateInstaller.Read.Picked) read.file.bytes.fill(0)
+                return@launch
+            }
+            when (read) {
+                is CertificateInstaller.Read.Refused -> {
+                    certificateImport = null
+                    answerImport(run.request, read.outcome)
+                }
+                is CertificateInstaller.Read.Picked -> installCertificate(run, read.file)
+            }
+        }
+    }
+
+    private fun installCertificate(run: CertificateImportRun, file: CertificateInstaller.File) {
+        val host = ShellUrls.origin(ShellUrls.normalizeBase(run.baseUrl))?.host
+        val name = CertificateImport.suggestedName(file.displayName, host)
+        certificateImport = run.copy(name = name)
+        try {
+            certificateInstaller.launch(CertificateInstaller.installIntent(file, name))
+        } catch (e: Exception) {
+            // ActivityNotFoundException: no installer on this device (or firmware
+            // without it); SecurityException: one Ara may not start.
+            Log.w(TAG, "certificate installer unavailable", e)
+            certificateImport = null
+            answerImport(run.request, CertificateImport.Outcome.NoInstaller)
+        } finally {
+            // The intent has gone to Android (or nowhere): Ara's copy is wiped.
+            file.bytes.fill(0)
+        }
+    }
+
+    private fun onCertificateInstalled(installed: Boolean) {
+        val run = certificateImport ?: return
+        certificateImport = null
+        if (!installed) return answerImport(run.request, CertificateImport.Outcome.NotInstalled)
+        answerImport(run.request, CertificateImport.Outcome.Installed)
+        chooseCertificateFor(SettingsAction.ChooseCertificate(run.request, run.baseUrl, run.name))
+    }
+
+    private fun answerImport(request: String, outcome: CertificateImport.Outcome) {
+        settingsPage?.bridge?.send(SettingsMessages.certificateImport(request, outcome))
     }
 
     // --- WebView -------------------------------------------------------------

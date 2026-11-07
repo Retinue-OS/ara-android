@@ -235,8 +235,14 @@
         <p data-draft-cert></p>
         <div class="actions">
           <button type="button" class="btn" data-draft-cert-select>Select certificate</button>
+          <button type="button" class="btn" data-draft-cert-import>Import certificate…</button>
           <button type="button" class="btn" data-draft-cert-clear>Clear</button>
         </div>
+        <p class="hint" data-draft-cert-note aria-live="polite" hidden></p>
+        <p class="hint">Import takes a .p12 or .pfx file on this device that
+          holds the certificate and its private key. Android's own installer
+          asks for its password and keeps the key; Ara keeps no copy of the
+          file. Select it afterwards in the list Android shows.</p>
       </section>
       <section class="card">
         <h3>Sign-in</h3>

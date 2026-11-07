@@ -11,6 +11,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import os.retinue.ara.data.Endpoint
+import os.retinue.ara.net.CertificateImport
 import os.retinue.ara.ui.EndpointDraft
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
@@ -44,6 +45,13 @@ sealed class SettingsAction {
 
     /** The KeyChain chooser, for the endpoint at [baseUrl]; the answer goes back with [request]. */
     data class ChooseCertificate(val request: String, val baseUrl: String, val current: String?) : SettingsAction()
+
+    /**
+     * Import a PKCS#12 file through Android's certificate installer, for the
+     * endpoint at [baseUrl]: the outcome goes back with [request], and once it
+     * is installed the chooser's answer too, as for [ChooseCertificate].
+     */
+    data class ImportCertificate(val request: String, val baseUrl: String) : SettingsAction()
 
     /** The current endpoint's health switch. */
     data class HealthUpload(val on: Boolean) : SettingsAction()
@@ -127,6 +135,10 @@ object SettingsMessages {
                 request = obj.request() ?: return null,
                 baseUrl = obj.text("baseUrl", MAX_URL) ?: "",
                 current = obj.text("current", MAX_TEXT)?.takeIf { it.isNotBlank() },
+            )
+            "endpoint.certificateImport" -> SettingsAction.ImportCertificate(
+                request = obj.request() ?: return null,
+                baseUrl = obj.text("baseUrl", MAX_URL) ?: "",
             )
             "health.upload" -> SettingsAction.HealthUpload(obj.bool("on") ?: return null)
             "health.sync" -> SettingsAction.HealthSync
@@ -221,6 +233,13 @@ object SettingsMessages {
         put("type", "certificate")
         put("request", request)
         put("alias", alias?.let { JsonPrimitive(it) } ?: JsonNull)
+    }.toString()
+
+    /** How a certificate import ended (see [CertificateImport.Outcome]); after `installed` the chooser's answer follows. */
+    fun certificateImport(request: String, outcome: CertificateImport.Outcome): String = buildJsonObject {
+        put("type", "certificateImport")
+        put("request", request)
+        put("outcome", outcome.key)
     }.toString()
 
     /** A health sync's event ([detail] as the dashboard receives it too). */

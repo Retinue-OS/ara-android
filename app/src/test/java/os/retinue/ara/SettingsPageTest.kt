@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.net.CertificateImport
 import os.retinue.ara.settings.AppPage
 import os.retinue.ara.settings.CurrentEndpoint
 import os.retinue.ara.settings.PageDraft
@@ -85,6 +86,8 @@ class SettingsPageTest {
         assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
         assertEquals(SettingsAction.LauncherUsageAccess, p("""{"type":"launcher.usageAccess"}"""))
         assertEquals(SettingsAction.ChooseCertificate("r3", "https://agents.example.com", null), p("""{"type":"endpoint.certificate","request":"r3","baseUrl":"https://agents.example.com","current":null}"""))
+        assertEquals(SettingsAction.ImportCertificate("r4", "https://agents.example.com"), p("""{"type":"endpoint.certificateImport","request":"r4","baseUrl":"https://agents.example.com"}"""))
+        assertEquals(SettingsAction.ImportCertificate("r5", ""), p("""{"type":"endpoint.certificateImport","request":"r5"}"""), "a new endpoint without an address yet")
         assertEquals(
             SettingsAction.SaveEndpoint("r1", PageDraft("ep-1", true, "admin.example.com", null, "reto", "pw", false, true)),
             p("""{"type":"endpoint.save","request":"r1","draft":{"id":"ep-1","isNew":true,"baseUrl":"admin.example.com","certificateAlias":null,"username":"reto","password":"pw","forgetPassword":false,"healthUpload":true}}"""),
@@ -96,6 +99,7 @@ class SettingsPageTest {
             """{"type":"health.upload","on":"true"}""", """{"type":"wake.mode","mode":"sometimes"}""",
             """{"type":"update.channel","channel":"beta"}""", """{"type":"device.set","key":"k","value":3}""",
             """{"type":"endpoint.save","request":"r 1","draft":{"id":"x"}}""", """{"type":"endpoint.save","request":"r1"}""",
+            """{"type":"endpoint.certificateImport"}""", """{"type":"endpoint.certificateImport","request":"r 4"}""",
         )) {
             assertNull(p(bad), bad.toString())
         }
@@ -116,6 +120,10 @@ class SettingsPageTest {
         assertEquals("""{"type":"saved","request":"r1","ok":true}""", SettingsMessages.saved("r1", null))
         assertEquals("""{"type":"saved","request":"r2","ok":false,"problem":"user"}""", SettingsMessages.saved("r2", EndpointDraft.Problem.UserName))
         assertEquals("""{"type":"certificate","request":"r3","alias":null}""", SettingsMessages.certificate("r3", null))
+        assertEquals(
+            """{"type":"certificateImport","request":"r4","outcome":"not-pkcs12"}""",
+            SettingsMessages.certificateImport("r4", CertificateImport.Outcome.NotPkcs12),
+        )
     }
 
     @Test
