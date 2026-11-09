@@ -130,6 +130,40 @@ ok('health lines mirror the dashboard', () => {
   assert.equal(L.describeHealthSyncEvent({ state: 'other' }), '');
 });
 
+ok('a phrase model is downloaded before it can be used, and stays listed after another is chosen', () => {
+  const jarvis = { id: 'oww:hey_jarvis_v0.1', name: 'Hey Jarvis', source: 'builtin', url: 'https://x/hey_jarvis.onnx', downloaded: false, active: false, removable: false };
+  const types = (r) => r.actions.map((a) => a.msg.type);
+  let row = L.wakeModelRow(jarvis, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.download'], 'no Use before the download');
+  assert.equal(row.detail, 'openWakeWord · not downloaded');
+  row = L.wakeModelRow({ ...jarvis, downloaded: true }, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.use', 'wake.model.remove']);
+  assert.equal(row.actions[0].label, 'Use this model');
+  assert.equal(row.actions[1].label, 'Delete download');
+  row = L.wakeModelRow({ ...jarvis, downloaded: true, active: true }, { busy: false });
+  assert.ok(row.active);
+  assert.deepEqual(types(row), ['wake.model.none'], 'the model in use is not deleted from under the listener');
+
+  const mine = { id: 'user:1', name: 'hey_retinue.onnx', source: 'file', url: null, downloaded: true, active: false, removable: true };
+  row = L.wakeModelRow(mine, { busy: false });
+  assert.equal(row.name, 'hey_retinue.onnx', 'an upload is listed under its file name');
+  assert.deepEqual(types(row), ['wake.model.use', 'wake.model.remove']);
+  assert.ok(row.actions[1].confirm && row.actions[1].danger);
+  assert.equal(row.detail, 'Your file');
+
+  // While a job runs, choosing stays possible; downloads and removals wait.
+  row = L.wakeModelRow(jarvis, { busy: true, busyId: jarvis.id });
+  assert.equal(row.detail, 'openWakeWord · downloading…');
+  assert.ok(row.actions[0].disabled);
+  row = L.wakeModelRow(mine, { busy: true, busyId: 'other' });
+  assert.ok(!row.actions[0].disabled);
+  assert.ok(row.actions[1].disabled);
+
+  assert.equal(L.wakeActiveLine({ models: [jarvis, { ...mine, active: true }] }), 'In use: hey_retinue.onnx');
+  assert.equal(L.wakeActiveLine({ models: [jarvis] }), 'No phrase model in use.');
+  assert.equal(L.wakeActiveLine(undefined), 'No phrase model in use.');
+});
+
 ok('the wake notes follow the mode, with the action that fixes each', () => {
   assert.deepEqual(L.wakeNotes({ mode: 'off', micGranted: false, modelsReady: false }), []);
   const visible = L.wakeNotes({ mode: 'visible', micGranted: false, modelsReady: false, notificationsAllowed: false });
@@ -137,7 +171,8 @@ ok('the wake notes follow the mode, with the action that fixes each', () => {
   assert.ok(visible.every((n) => !n.action), 'nothing to open for these');
   const always = L.wakeNotes({ mode: 'always', micGranted: true, modelsReady: true, notificationsAllowed: false, fullScreenAllowed: false, overlayAllowed: false });
   assert.deepEqual(always.map((n) => n.action), ['wake.notifications', 'wake.fullScreen', 'wake.overlay']);
-  assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false, phrase: true }), 'Melspectrogram: present · Embedding: missing · Phrase: present');
+  assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false }),
+    'Feature models: melspectrogram present · embedding missing. They are downloaded with the first phrase model.');
 });
 
 ok('the launcher card says whether the tray sees apps opened elsewhere', () => {

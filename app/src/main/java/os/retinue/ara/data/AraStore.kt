@@ -48,7 +48,7 @@ class AraStore(context: Context) {
             currentEndpointId = endpoints.currentId,
             wakeMode = WakeMode.fromKey(p[K.wakeMode]),
             wakeThreshold = p[K.wakeThreshold] ?: ShellSettings.DEFAULT_WAKE_THRESHOLD,
-            wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
+            wakeModelId = p[K.wakeModel]?.takeIf { it.isNotBlank() },
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
             splitLaunch = p[K.splitLaunch] ?: false,
@@ -117,7 +117,11 @@ class AraStore(context: Context) {
 
     suspend fun setWakeThreshold(value: Float) = edit { it[K.wakeThreshold] = value.coerceIn(0.05f, 0.99f) }
 
-    suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
+    /** Choose the phrase model to listen for (null: none). */
+    suspend fun setWakeModelId(id: String?) = edit { it.putOrRemove(K.wakeModel, id) }
+
+    /** Choose [id] unless a model is chosen already (the earlier build's model, moved into the library). */
+    suspend fun adoptWakeModelId(id: String) = edit { if (it[K.wakeModel] == null) it[K.wakeModel] = id }
 
     suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }
 
@@ -212,7 +216,8 @@ class AraStore(context: Context) {
         val currentEndpoint = stringPreferencesKey("current_endpoint")
         val wakeMode = stringPreferencesKey("wake_mode")
         val wakeThreshold = floatPreferencesKey("wake_threshold")
-        val wakeModelUrl = stringPreferencesKey("wake_model_url")
+        /** The chosen phrase model's id ([ShellSettings.wakeModelId]). */
+        val wakeModel = stringPreferencesKey("wake_model")
         val launcher = stringPreferencesKey("launcher_json")
         val launches = stringPreferencesKey("app_launches_json")
         val autoUpdate = booleanPreferencesKey("auto_update")

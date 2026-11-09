@@ -247,7 +247,7 @@ export function wakeNotes(w) {
   const notes = [];
   const on = w.mode && w.mode !== 'off';
   if (on && !w.micGranted) notes.push({ text: 'Microphone permission is needed. Ara asks for it when you choose a mode.' });
-  if (on && !w.modelsReady) notes.push({ text: 'Download the feature models and a phrase model first, under Advanced.' });
+  if (on && !w.modelsReady) notes.push({ text: 'No phrase model is in use yet: download one of the list and tap Use, or upload your own.' });
   if (w.mode === 'always') {
     if (!w.notificationsAllowed) {
       notes.push({
@@ -287,7 +287,40 @@ export function usageAccessNote(launcher) {
 export function wakeModelsLine(w) {
   if (!w) return '';
   const yes = (b) => (b ? 'present' : 'missing');
-  return `Melspectrogram: ${yes(w.melspectrogram)} · Embedding: ${yes(w.embedding)} · Phrase: ${yes(w.phrase)}`;
+  return `Feature models: melspectrogram ${yes(w.melspectrogram)} · embedding ${yes(w.embedding)}. They are downloaded with the first phrase model.`;
+}
+
+// One row of the phrase model list: what it is, whether it is the one in use,
+// and the buttons it offers. A model must be downloaded before it can be used;
+// the user's own stay on the list after another is chosen, to go back to.
+const SOURCE_TEXT = { builtin: 'openWakeWord', file: 'Your file', url: 'From a URL' };
+
+export function wakeModelRow(m, w) {
+  const busy = !!(w && w.busy);
+  const working = busy && w.busyId === m.id;
+  const parts = [SOURCE_TEXT[m.source] || ''];
+  if (working) parts.push(m.downloaded ? 'working…' : 'downloading…');
+  else if (!m.downloaded) parts.push('not downloaded');
+  const actions = [];
+  if (!m.downloaded) {
+    if (m.url) actions.push({ label: 'Download', msg: { type: 'wake.model.download', id: m.id }, primary: true });
+  } else if (m.active) {
+    actions.push({ label: 'Stop using', msg: { type: 'wake.model.none' } });
+  } else {
+    actions.push({ label: 'Use this model', msg: { type: 'wake.model.use', id: m.id }, primary: true });
+  }
+  if (m.removable) actions.push({ label: 'Remove', msg: { type: 'wake.model.remove', id: m.id }, danger: true, confirm: true });
+  else if (m.downloaded && !m.active) actions.push({ label: 'Delete download', msg: { type: 'wake.model.remove', id: m.id } });
+  // Choosing a model is instant; downloads and removals wait for the job under way.
+  for (const a of actions) a.disabled = busy && a.msg.type !== 'wake.model.use' && a.msg.type !== 'wake.model.none';
+  return { name: m.name, detail: parts.filter(Boolean).join(' · '), active: !!m.active, actions };
+}
+
+// The line under the card's title: which model is listened for.
+export function wakeActiveLine(w) {
+  const models = (w && Array.isArray(w.models)) ? w.models : [];
+  const active = models.find((m) => m.active);
+  return active ? `In use: ${active.name}` : 'No phrase model in use.';
 }
 
 // ── The instance's own section ──────────────────────────────────────────────

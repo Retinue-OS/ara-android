@@ -794,15 +794,25 @@ retried later with a growing delay). Detection pauses while the web app
 reports the mic in use. A microphone error stops detection for 30 s (doubling
 up to 10 min on repeated errors), or until Ara is opened again.
 
-**Models are not bundled** (licence and size). On the settings page, under the wake phrase's *Advanced*:
+**Models are not bundled** (licence and size). The wake phrase's card lists
+the phrase models, and marks the one in use as *Active*:
 
-1. **Download feature models** — `melspectrogram.onnx` and
-   `embedding_model.onnx` from openWakeWord's v0.5.1 release.
-2. **Phrase model** — download from a URL (default: the release's
-   `hey_jarvis_v0.1.onnx`, for testing) or **Choose file…** to import an
-   `.onnx` from the device.
+- **Downloadable models** — Hey Jarvis (the default, for testing), Hey
+  Mycroft, Hey Rhasspy and Alexa from openWakeWord's v0.5.1 release. Tap
+  **Download** first, then **Use this model**; a downloaded model can be
+  deleted again while another is in use.
+- **Your own** — **Upload a model file…** imports an `.onnx` from the phone;
+  it is listed under its file name and is in use at once. Under *Advanced*,
+  **Add from URL** does the same for a model on a server (a model on the
+  configured Retinue origin is fetched with the endpoint's client certificate).
+  Your models stay on the list when you choose another, so you can switch back;
+  **Remove** deletes one. **Stop using** leaves no model in use.
 
-A downloaded or imported model replaces the old one only after it loads.
+The feature models (`melspectrogram.onnx`, `embedding_model.onnx`) come with
+the first phrase model; *Advanced* can download them again. A downloaded or
+uploaded model is only added after it loads. The single phrase model of
+earlier builds is moved into the list on update (as Hey Jarvis when it is that
+file, otherwise as "Earlier model") and stays in use.
 
 ### Recommended phrase: "Hey Retinue"
 
@@ -819,7 +829,7 @@ To train it: open openWakeWord's
 thousands of variations with Piper TTS and trains the small classifier), and
 export the `.onnx`. Put the file somewhere the phone can reach — e.g. on the
 Retinue host, where the client certificate is used for the download — and enter
-its URL, or copy it to the phone and use **Choose file…**. Raise the threshold
+its URL under **Add from URL**, or copy it to the phone and use **Upload a model file…**. Raise the threshold
 if it wakes too easily, lower it if it is hard to trigger.
 
 ---

@@ -31,6 +31,7 @@ import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.net.EndpointNames
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
+import os.retinue.ara.wake.WakeModelEntry
 import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeRuntime
@@ -72,8 +73,17 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             trayItems(apps, shortcuts, bar, launches, usage)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _models = MutableStateFlow(WakeModelFiles.status(app))
+    /** The feature models' files (its `phrase` is not used: see [library]). */
+    private val _models = MutableStateFlow(WakeModelFiles.status(app, null))
     val models: StateFlow<WakeModelStatus> = _models.asStateFlow()
+
+    /** The phrase models of the list, with whether each is downloaded. */
+    private val _library = MutableStateFlow(WakeModelFiles.library(app))
+    val library: StateFlow<List<WakeModelEntry>> = _library.asStateFlow()
+
+    /** The list's model a job is working on (a download, a removal), for its row. */
+    private val _modelBusyId = MutableStateFlow<String?>(null)
+    val modelBusyId: StateFlow<String?> = _modelBusyId.asStateFlow()
 
     /** A model download or import in progress, or its last result (shown in settings). */
     private val _modelMessage = MutableStateFlow<String?>(null)
@@ -270,37 +280,69 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         return before to after
     }
 
-    fun downloadFeatureModels() = modelJob {
+    fun downloadFeatureModels() = modelJob(null) {
         WakeModelFiles.downloadFeatureModels(appCtx, store.settingsNow())
-        WakeModelFiles.validate(appCtx)
+        WakeModelFiles.validate(appCtx, store.settingsNow().wakeModelId)
+        appCtx.getString(R.string.wake_models_done)
     }
 
-    fun downloadPhraseModel(url: String) = modelJob {
-        store.setWakeModelUrl(url)
-        WakeModelFiles.downloadPhraseModel(appCtx, store.settingsNow(), url)
+    /** Download the list's model [id]; using it is a choice of its own ([useModel]). */
+    fun downloadModel(id: String) = modelJob(id) {
+        WakeModelFiles.downloadModel(appCtx, store.settingsNow(), id)
+        appCtx.getString(R.string.wake_model_downloaded, nameOf(id))
     }
 
-    fun importPhraseModel(uri: Uri) = modelJob {
-        WakeModelFiles.importPhraseModel(appCtx, uri)
+    /** Add a model from [url] to the list, download it and use it. */
+    fun addModelFromUrl(url: String) = modelJob(null) {
+        val id = WakeModelFiles.addFromUrl(appCtx, store.settingsNow(), url)
+        store.setWakeModelId(id)
+        appCtx.getString(R.string.wake_model_added, nameOf(id))
     }
+
+    /** Add the picked file to the list, under its name, and use it. */
+    fun importModel(uri: Uri) = modelJob(null) {
+        val id = WakeModelFiles.importModel(appCtx, store.settingsNow(), uri)
+        store.setWakeModelId(id)
+        appCtx.getString(R.string.wake_model_added, nameOf(id))
+    }
+
+    /** Listen for the downloaded model [id], or for none (null). */
+    fun useModel(id: String?) {
+        if (id != null && _library.value.none { it.model.id == id && it.downloaded }) return
+        _modelMessage.value = null
+        viewModelScope.launch { store.setWakeModelId(id) }
+    }
+
+    /** Delete model [id]'s file; the user's own leave the list. A model in use is let go first. */
+    fun removeModel(id: String) = modelJob(id) {
+        val name = nameOf(id)
+        if (store.settingsNow().wakeModelId == id) store.setWakeModelId(null)
+        WakeModelFiles.remove(appCtx, id)
+        appCtx.getString(R.string.wake_model_removed, name)
+    }
+
+    private fun nameOf(id: String) = WakeModelFiles.model(appCtx, id)?.name ?: id
 
     fun refreshModels() {
-        _models.value = WakeModelFiles.status(appCtx)
+        _models.value = WakeModelFiles.status(appCtx, null)
+        _library.value = WakeModelFiles.library(appCtx)
     }
 
-    private fun modelJob(block: suspend () -> Unit) {
+    /** One model job at a time ([id]: the list's model it works on); [block] returns what to report. */
+    private fun modelJob(id: String?, block: suspend () -> String) {
         if (_modelBusy.value) return
         _modelBusy.value = true
+        _modelBusyId.value = id
         _modelMessage.value = null
         viewModelScope.launch {
             val app = appCtx
             _modelMessage.value = try {
                 block()
-                app.getString(R.string.wake_models_done)
             } catch (e: Exception) {
                 app.getString(R.string.wake_models_failed, e.message ?: e.javaClass.simpleName)
             } finally {
                 _modelBusy.value = false
+                _modelBusyId.value = null
                 refreshModels()
                 WakeRuntime.refresh()
             }

@@ -193,10 +193,39 @@ function renderWake() {
   const threshold = $('[data-wake-threshold]');
   if (document.activeElement !== threshold && Number.isFinite(w.threshold)) threshold.value = String(w.threshold);
   $('[data-wake-threshold-value]').textContent = Number(threshold.value).toFixed(2);
-  $('[data-wake-models]').textContent = L.wakeModelsLine(w);
-  setValue($('[data-wake-url]'), w.modelUrl || '');
+  $('[data-wake-models-line]').textContent = L.wakeModelsLine(w);
+  $('[data-wake-active]').textContent = L.wakeActiveLine(w);
+  const models = Array.isArray(w.models) ? w.models : [];
+  $('[data-wake-models]').replaceChildren(...models.map((m) => wakeModelItem(m, w)));
   for (const sel of ['[data-wake-features]', '[data-wake-phrase]', '[data-wake-pick]']) $(sel).disabled = !!w.busy;
   $('[data-wake-message]').textContent = w.busy ? 'Working…' : (w.message || '');
+}
+
+function wakeModelItem(m, w) {
+  const row = L.wakeModelRow(m, w);
+  const li = el('li', `endpoint model${row.active ? ' current' : ''}`);
+  const who = el('div', 'who');
+  who.append(el('div', 'name', row.name), el('div', 'summary', row.detail));
+  li.append(who);
+  if (row.active) li.append(el('span', 'active', 'Active'));
+  const actions = el('div', 'actions');
+  for (const a of row.actions) {
+    const b = button(a.label, () => {
+      if (!a.confirm) { send(a.msg); return; }
+      showDialog({
+        title: `Remove ${row.name}?`,
+        text: 'Its file is deleted from this phone. To use it again, upload it again.',
+        confirm: 'Remove',
+        cancel: 'Cancel',
+        onConfirm: () => send(a.msg),
+      });
+    }, `btn${a.primary ? ' primary' : ''}${a.danger ? ' danger' : ''}`);
+    b.disabled = !!a.disabled;
+    b.setAttribute('aria-label', `${a.label}: ${row.name}`);
+    actions.append(b);
+  }
+  li.append(actions);
+  return li;
 }
 
 function renderLauncher() {
@@ -521,7 +550,10 @@ $('[data-wake-threshold]').addEventListener('change', (e) => send({ type: 'wake.
 $('[data-wake-features]').addEventListener('click', () => send({ type: 'wake.features' }));
 $('[data-wake-phrase]').addEventListener('click', () => {
   const url = $('[data-wake-url]').value.trim();
-  if (url) send({ type: 'wake.phrase', url });
+  if (url) {
+    send({ type: 'wake.phrase', url });
+    $('[data-wake-url]').value = '';
+  }
 });
 $('[data-wake-pick]').addEventListener('click', () => send({ type: 'wake.pick' }));
 

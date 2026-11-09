@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.update.UpdateRuntime
+import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeRuntime
 
 /**
@@ -26,11 +27,15 @@ class AraApp : Application() {
         WakeRuntime.init(this)
         UpdateRuntime.init(this)
         HealthSyncRuntime.init(this)
+        val store = AraStore(this)
+        // The one phrase model of earlier builds joins the library first, and stays the one in use.
+        val migrated = WakeModelFiles.migrateLegacy(this)
         scope.launch {
-            AraStore(this@AraApp).settings
-                .map { it.wakeMode to it.wakeThreshold }
+            if (migrated != null) store.adoptWakeModelId(migrated)
+            store.settings
+                .map { Triple(it.wakeMode, it.wakeThreshold, it.wakeModelId) }
                 .distinctUntilChanged()
-                .collect { (mode, threshold) -> WakeRuntime.configure(mode, threshold) }
+                .collect { (mode, threshold, model) -> WakeRuntime.configure(mode, threshold, model) }
         }
     }
 }

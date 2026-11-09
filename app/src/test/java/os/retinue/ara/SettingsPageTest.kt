@@ -22,9 +22,14 @@ import os.retinue.ara.settings.SettingsMessages
 import os.retinue.ara.settings.SettingsPageState
 import os.retinue.ara.settings.UpdatesInfo
 import os.retinue.ara.settings.WakeInfo
+import os.retinue.ara.settings.wakeModelRows
 import os.retinue.ara.ui.EndpointDraft
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
+import os.retinue.ara.wake.WakeModelCatalog
+import os.retinue.ara.wake.WakeModelEntry
+import os.retinue.ara.wake.WakeModelSource
+import os.retinue.ara.wake.WakePhraseModel
 
 /** The app's settings page: its address and files, its messages and its state. */
 class SettingsPageTest {
@@ -81,6 +86,11 @@ class SettingsPageTest {
         assertEquals(SettingsAction.HealthInterval(15), p("""{"type":"health.interval","minutes":15}"""))
         assertEquals(SettingsAction.WakeModeSet(WakeMode.Always), p("""{"type":"wake.mode","mode":"always"}"""))
         assertEquals(SettingsAction.WakeThreshold(0.35f), p("""{"type":"wake.threshold","value":0.35}"""))
+        assertEquals(SettingsAction.WakeModelDownload("oww:hey_jarvis_v0.1"), p("""{"type":"wake.model.download","id":"oww:hey_jarvis_v0.1"}"""))
+        assertEquals(SettingsAction.WakeModelUse("user:1"), p("""{"type":"wake.model.use","id":"user:1"}"""))
+        assertEquals(SettingsAction.WakeModelUse(null), p("""{"type":"wake.model.none"}"""))
+        assertEquals(SettingsAction.WakeModelRemove("user:1"), p("""{"type":"wake.model.remove","id":"user:1"}"""))
+        assertEquals(SettingsAction.WakePhrase("https://x/hey.onnx"), p("""{"type":"wake.phrase","url":"https://x/hey.onnx"}"""))
         assertEquals(SettingsAction.UpdateChannelSet(UpdateChannel.Release), p("""{"type":"update.channel","channel":"release"}"""))
         assertEquals(SettingsAction.DeviceSet("retinue.shelf.size", "9"), p("""{"type":"device.set","key":"retinue.shelf.size","value":"9"}"""))
         assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
@@ -97,7 +107,7 @@ class SettingsPageTest {
             null, "", "nope", "[]", """{"type":"unknown"}""", """{"type":"endpoint.select","id":"a b"}""",
             """{"type":"health.interval","minutes":0}""", """{"type":"health.interval","minutes":"5"}""",
             """{"type":"health.upload","on":"true"}""", """{"type":"wake.mode","mode":"sometimes"}""",
-            """{"type":"update.channel","channel":"beta"}""", """{"type":"device.set","key":"k","value":3}""",
+            """{"type":"update.channel","channel":"beta"}""", """{"type":"wake.model.use"}""", """{"type":"wake.model.remove","id":""}""", """{"type":"device.set","key":"k","value":3}""",
             """{"type":"endpoint.save","request":"r 1","draft":{"id":"x"}}""", """{"type":"endpoint.save","request":"r1"}""",
             """{"type":"endpoint.certificateImport"}""", """{"type":"endpoint.certificateImport","request":"r 4"}""",
         )) {
@@ -157,7 +167,17 @@ class SettingsPageTest {
             isDefaultHome = true,
             splitLaunch = false,
             keepSplitInRecents = true,
-            wake = WakeInfo("off", 0.5f, "Not listening.", true, false, true, true, true, false, false, false, "https://x/hey.onnx", false, null),
+            wake = WakeInfo(
+                "off", 0.5f, "Not listening.", true, false, true, true, true, false, false,
+                wakeModelRows(
+                    listOf(
+                        WakeModelEntry(WakeModelCatalog.builtins.first(), downloaded = true),
+                        WakeModelEntry(WakePhraseModel("user:1", "hey_retinue.onnx", WakeModelSource.File), downloaded = true),
+                    ),
+                    activeId = "user:1",
+                ),
+                false, null, null,
+            ),
             updates = UpdatesInfo("Installed: a local build.", false, "nightly", "Not checked yet.", false, null, null, false, true, true),
             device = settings.deviceWebSettings,
             usageAccess = true,
@@ -168,6 +188,10 @@ class SettingsPageTest {
         assertEquals("7", json["device"]!!.jsonObject["retinue.shelf.size"]!!.jsonPrimitive.content)
         assertEquals("Admin", json["endpoints"]!!.jsonArray[1].jsonObject["label"]!!.jsonPrimitive.content)
         assertEquals("null", json["failure"].toString())
+        val models = json["wake"]!!.jsonObject["models"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("oww:hey_jarvis_v0.1", "user:1"), models.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals(listOf("false", "true"), models.map { it["active"].toString() }, "only the chosen model is active")
+        assertEquals(listOf("false", "true"), models.map { it["removable"].toString() })
         assertEquals("true", json["home"]!!.jsonObject["isDefault"].toString())
         assertEquals("true", json["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("false", state.copy(usageAccess = false).toJson()["launcher"]!!.jsonObject["usageAccess"].toString())

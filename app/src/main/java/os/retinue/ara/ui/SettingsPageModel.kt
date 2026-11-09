@@ -10,11 +10,13 @@ import os.retinue.ara.settings.FailureInfo
 import os.retinue.ara.settings.SettingsPageState
 import os.retinue.ara.settings.UpdatesInfo
 import os.retinue.ara.settings.WakeInfo
+import os.retinue.ara.settings.wakeModelRows
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatus
 import os.retinue.ara.update.InstalledBuild
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.update.UpdateState
+import os.retinue.ara.wake.WakeModelEntry
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeStatus
 
@@ -25,8 +27,11 @@ internal data class WakeConditions(
     val notificationsAllowed: Boolean,
     val fullScreenAllowed: Boolean,
     val overlayAllowed: Boolean,
+    /** The feature models' files. */
     val models: WakeModelStatus,
+    val library: List<WakeModelEntry>,
     val modelBusy: Boolean,
+    val modelBusyId: String?,
     val modelMessage: String?,
 )
 
@@ -66,15 +71,16 @@ internal fun settingsPageState(
         threshold = settings.wakeThreshold,
         status = wakeStatusText(context, wake.status),
         micGranted = wake.micGranted,
-        modelsReady = wake.models.ready,
+        modelsReady = wake.models.featuresReady &&
+            wake.library.any { it.downloaded && it.model.id == settings.wakeModelId },
         notificationsAllowed = wake.notificationsAllowed,
         fullScreenAllowed = wake.fullScreenAllowed,
         overlayAllowed = wake.overlayAllowed,
         melspectrogram = wake.models.melspectrogram,
         embedding = wake.models.embedding,
-        phrase = wake.models.phrase,
-        modelUrl = settings.wakeModelUrl,
+        models = wakeModelRows(wake.library, settings.wakeModelId),
         busy = wake.modelBusy,
+        busyId = wake.modelBusyId,
         message = wake.modelMessage,
     ),
     updates = UpdatesInfo(

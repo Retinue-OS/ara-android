@@ -19,6 +19,8 @@ import java.io.File
  */
 class WakeListener(
     context: Context,
+    /** The phrase model listened for ([os.retinue.ara.wake.WakePhraseModel.id]). */
+    modelId: String,
     private val threshold: Float,
     private var previous: WakeListener? = null,
     private val onDetected: () -> Unit,
@@ -32,7 +34,7 @@ class WakeListener(
 ) {
     private val melFile: File = WakeModelFiles.melFile(context)
     private val embeddingFile: File = WakeModelFiles.embeddingFile(context)
-    private val phraseFile: File = WakeModelFiles.phraseFile(context)
+    private val phraseFile: File = WakeModelFiles.phraseFile(context, modelId)
 
     @Volatile private var running = false
     @Volatile private var thread: Thread? = null

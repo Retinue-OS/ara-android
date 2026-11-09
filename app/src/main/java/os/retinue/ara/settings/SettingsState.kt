@@ -10,6 +10,7 @@ import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.wake.WakeModelEntry
 
 /** One endpoint in the page's list. */
 data class EndpointRow(
@@ -57,11 +58,41 @@ data class WakeInfo(
     val overlayAllowed: Boolean,
     val melspectrogram: Boolean,
     val embedding: Boolean,
-    val phrase: Boolean,
-    val modelUrl: String,
+    /** The phrase models of the list, in its order. */
+    val models: List<WakeModelRow>,
     val busy: Boolean,
+    /** The model a job works on, while [busy]. */
+    val busyId: String?,
     val message: String?,
 )
+
+/** One phrase model of the wake phrase's list. */
+data class WakeModelRow(
+    val id: String,
+    val name: String,
+    /** [os.retinue.ara.wake.WakeModelSource.key]. */
+    val source: String,
+    /** Where it downloads from (catalog and URL models). */
+    val url: String?,
+    val downloaded: Boolean,
+    /** The model listened for. */
+    val active: Boolean,
+    /** The user's own: taken off the list by removing it. */
+    val removable: Boolean,
+)
+
+/** The list's rows; [activeId] is the model listened for (its row is active only while downloaded). */
+fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeModelRow> = library.map { e ->
+    WakeModelRow(
+        id = e.model.id,
+        name = e.model.name,
+        source = e.model.source.key,
+        url = e.model.url,
+        downloaded = e.downloaded,
+        active = e.downloaded && e.model.id == activeId,
+        removable = e.model.removable,
+    )
+}
 
 data class UpdatesInfo(
     val installed: String,
@@ -170,9 +201,26 @@ data class SettingsPageState(
                 put("overlayAllowed", wake.overlayAllowed)
                 put("melspectrogram", wake.melspectrogram)
                 put("embedding", wake.embedding)
-                put("phrase", wake.phrase)
-                put("modelUrl", wake.modelUrl)
+                put(
+                    "models",
+                    buildJsonArray {
+                        wake.models.forEach { m ->
+                            add(
+                                buildJsonObject {
+                                    put("id", m.id)
+                                    put("name", m.name)
+                                    put("source", m.source)
+                                    put("url", m.url.json())
+                                    put("downloaded", m.downloaded)
+                                    put("active", m.active)
+                                    put("removable", m.removable)
+                                },
+                            )
+                        }
+                    },
+                )
                 put("busy", wake.busy)
+                put("busyId", wake.busyId.json())
                 put("message", wake.message.json())
             },
         )
