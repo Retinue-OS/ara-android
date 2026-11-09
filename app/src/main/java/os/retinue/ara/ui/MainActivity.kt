@@ -1151,15 +1151,17 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * page can open the mic ([tryDeliverWake]).
      */
     private fun acceptWake(fromIntent: Boolean, endpointId: String?) {
+        // A wake for an instance that was removed meanwhile is dropped: it must
+        // not open the page of the instance shown instead.
+        if (endpointId != null && settings.endpoints.none { it.id == endpointId }) return
         // The page answers in this window.
         page.take(this)
         closeOverlays()
         pendingWakeAt = SystemClock.elapsedRealtime()
         // A phrase of an instance working in the background brings that one to
         // the front; the wake goes to its page once that has loaded.
-        val target = endpointId?.takeIf { id -> settings.endpoints.any { it.id == id } }
-        pendingWakeEndpoint = target
-        if (target != null && target != settings.current?.id) viewModel.selectEndpoint(target)
+        pendingWakeEndpoint = endpointId
+        if (endpointId != null && endpointId != settings.current?.id) viewModel.selectEndpoint(endpointId)
         WakeRuntime.wakeAccepted()
         // A wake still waiting when its window ends is dropped then, not on the next event.
         window.decorView.removeCallbacks(wakeExpiry)
