@@ -195,6 +195,15 @@ object ShellDecisions {
         else -> PendingWake.Wait
     }
 
+    /**
+     * Whether a pending wake's instance is the one the window shows: always
+     * for a wake of the instance shown ([wakeEndpoint] null), otherwise once
+     * the switch to it has reached the window. Until then the wake waits, so
+     * it never goes to the page of the instance that was shown before.
+     */
+    fun wakeEndpointShown(wakeEndpoint: String?, currentEndpoint: String?): Boolean =
+        wakeEndpoint == null || wakeEndpoint == currentEndpoint
+
     enum class UnhandledEvent {
         /** Load the web app's start page (a Home press). */
         LoadStart,

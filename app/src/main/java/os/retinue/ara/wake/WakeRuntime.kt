@@ -30,12 +30,16 @@ sealed class WakeStatus {
 
 /**
  * Process-wide owner of wake detection. It gathers the inputs of [WakeGate]
- * (mode, shell visibility, service, the web app's voice-active flag, mic
- * permission, models) and opens or closes the mic accordingly; in
- * [WakeMode.Always] it also starts and stops [WakeService]. A wake reaches the
- * shell directly while it is visible, otherwise through [WakeAlert]; the wake
- * intent carries a one-time token ([consumePendingWake]). Everything runs on
- * the main thread except the listener's own audio thread.
+ * (each instance's mode, shell visibility, service, the web app's
+ * voice-active flag, mic permission, models) and opens or closes the mic
+ * accordingly; while any instance listens in [WakeMode.Always] it also starts
+ * and stops [WakeService]. The instances listened for are the [WakeTargets]:
+ * the one shown and those working in the background, each with its own
+ * phrase model and threshold, all in one listener. A wake reaches the shell
+ * directly while it is visible, otherwise through [WakeAlert]; either way it
+ * names the instance whose phrase was heard, and the shell brings that one to
+ * the front. The wake intent carries a one-time token ([takePendingWake]).
+ * Everything runs on the main thread except the listener's own audio thread.
  */
 object WakeRuntime {
 
@@ -51,8 +55,7 @@ object WakeRuntime {
     private val main = Handler(Looper.getMainLooper())
     private var chime: Chime? = null
 
-    private var mode = WakeMode.Off
-    private var threshold = 0.5f
+    private var targets: List<WakeTarget> = emptyList()
     private var shellVisible = false
     private var shellResumed = false
     private var serviceRunning = false
@@ -62,7 +65,8 @@ object WakeRuntime {
 
     /** The last stopped listener: the next one waits for it to let go of the mic. */
     private var retired: WakeListener? = null
-    private var listenerThreshold = 0f
+    /** What the running listener listens for: it is replaced when this changes. */
+    private var listenerPhrases: List<WakePhrase> = emptyList()
     private var listenerGen = 0
     private var lastError: String? = null
 
@@ -105,13 +109,18 @@ object WakeRuntime {
     private val _status = MutableStateFlow<WakeStatus>(WakeStatus.Idle)
     val status: StateFlow<WakeStatus> = _status.asStateFlow()
 
+    private val _listening = MutableStateFlow<Set<String>>(emptySet())
+
+    /** The instances (endpoint ids) whose phrase is listened for right now. */
+    val listening: StateFlow<Set<String>> = _listening.asStateFlow()
+
     /**
      * Set by the shell (ShellPage) while a window of it exists: takes a wake
      * directly while the shell is visible. Otherwise a wake goes out as a wake
      * intent with a one-time token, through [WakeAlert] (or a direct start while
      * visible).
      */
-    var onWake: (() -> Unit)? = null
+    var onWake: ((endpointId: String) -> Unit)? = null
 
     private val reevaluate = Runnable { evaluate() }
 
@@ -137,12 +146,12 @@ object WakeRuntime {
         evaluate()
     }
 
-    fun configure(mode: WakeMode, threshold: Float) = onMain {
-        val changed = mode != this.mode || threshold != this.threshold
-        this.mode = mode
-        this.threshold = threshold
-        if (mode == WakeMode.Off) lastError = null
-        if (changed) restartListener() else evaluate()
+    /** The instances to listen for (see [WakeTargets]), from the settings. */
+    fun configure(targets: List<WakeTarget>) = onMain {
+        this.targets = targets
+        if (targets.isEmpty()) lastError = null
+        // A changed phrase set replaces the listener in evaluate().
+        evaluate()
     }
 
     fun setShellVisible(visible: Boolean) = onMain {
@@ -186,11 +195,12 @@ object WakeRuntime {
     }
 
     /**
-     * The shell received a wake intent: true when it carries the token of the
-     * wake announced last, within its lifetime. Main thread.
+     * The shell received a wake intent: the wake, with the instance whose
+     * phrase was heard, when it carries the token of the wake announced last
+     * within its lifetime; null otherwise. Main thread.
      */
-    fun consumePendingWake(token: String?): Boolean =
-        ticket.consume(token, SystemClock.elapsedRealtime())
+    fun takePendingWake(token: String?): WakeTicket.Taken? =
+        ticket.take(token, SystemClock.elapsedRealtime())
 
     /**
      * The shell took a wake (or is about to hand it to the page): the wake
@@ -238,16 +248,23 @@ object WakeRuntime {
         val now = SystemClock.elapsedRealtime()
 
         val mic = micGranted()
-        val models = WakeModelFiles.status(app).ready
+        val featuresReady = WakeModelFiles.status(app).featuresReady
+        // The instances that could listen: those with their phrase model on the device.
+        val phrases = if (!featuresReady) emptyMap() else targets.mapNotNull { t ->
+            WakeModelFiles.phraseFileFor(app, t.modelId)?.let { t to WakePhrase(t.endpointId, it, t.threshold) }
+        }.toMap()
+        // The service runs while any of them listens in the background.
+        val serviceMode = if (phrases.keys.any { it.mode == WakeMode.Always }) WakeMode.Always else WakeMode.Off
+        val anyOn = targets.isNotEmpty()
 
         // A mic error is retried with a backoff, without a settings change.
         if (lastError != null && micBackoff.ready(now)) lastError = null
 
-        if (WakeGate.shouldStopService(mode, serviceRunning, models)) {
+        if (WakeGate.shouldStopService(serviceMode, serviceRunning, modelsReady = true)) {
             app.stopService(Intent(app, WakeService::class.java))
         } else if (!serviceRequested && mic && serviceBackoff.ready(now) &&
             // Android 14 lets a microphone service start only from the foreground.
-            WakeGate.shouldStartService(mode, shellResumed, serviceRunning, models)
+            WakeGate.shouldStartService(serviceMode, shellResumed, serviceRunning, modelsReady = true)
         ) {
             serviceRequested = true
             try {
@@ -262,27 +279,32 @@ object WakeRuntime {
 
         val voiceActive = voice.active(now)
         _voiceActive.value = voiceActive
-        val listen = lastError == null && WakeGate.shouldListen(
-            WakeGate.Inputs(
-                mode = mode,
-                shellVisible = shellVisible,
-                serviceRunning = serviceRunning,
-                voiceActive = voiceActive,
-                micPermission = mic,
-                modelsReady = models,
-                nowMs = now,
-                holdUntilMs = holdUntilMs,
-                otherAppRecording = micYield.yielding(now),
-            ),
-        )
-        if (listen) startListener() else stopListener()
+        val yielding = micYield.yielding(now)
+        val active = if (lastError != null) emptyList() else phrases.filter { (t, _) ->
+            WakeGate.shouldListen(
+                WakeGate.Inputs(
+                    mode = t.mode,
+                    shellVisible = shellVisible,
+                    serviceRunning = serviceRunning,
+                    voiceActive = voiceActive,
+                    micPermission = mic,
+                    modelsReady = true,
+                    nowMs = now,
+                    holdUntilMs = holdUntilMs,
+                    otherAppRecording = yielding,
+                ),
+            )
+        }.values.toList()
+        val listen = active.isNotEmpty()
+        if (listen) startListener(active) else stopListener()
+        _listening.value = active.map { it.endpointId }.toSet()
 
         val error = lastError
         _status.value = when {
             error != null -> WakeStatus.Error(error)
             listen -> WakeStatus.Listening
-            mode != WakeMode.Off && voiceActive -> WakeStatus.PausedForVoice
-            mode != WakeMode.Off && micYield.yielding(now) -> WakeStatus.PausedForOtherApp
+            anyOn && voiceActive -> WakeStatus.PausedForVoice
+            anyOn && yielding -> WakeStatus.PausedForOtherApp
             else -> WakeStatus.Idle
         }
 
@@ -292,21 +314,21 @@ object WakeRuntime {
             voice.changesAt(now),
             micYield.changesAt(now),
             micBackoff.retryAt.takeIf { error != null && it > now },
-            serviceBackoff.retryAt.takeIf { mode == WakeMode.Always && !serviceRunning && it > now },
+            serviceBackoff.retryAt.takeIf { serviceMode == WakeMode.Always && !serviceRunning && it > now },
         ).minOrNull()
         if (next != null) main.postDelayed(reevaluate, next - now)
     }
 
-    private fun startListener() {
-        if (listener != null && listenerThreshold == threshold) return
+    private fun startListener(phrases: List<WakePhrase>) {
+        if (listener != null && listenerPhrases == phrases) return
         stopListener()
-        listenerThreshold = threshold
+        listenerPhrases = phrases
         val gen = ++listenerGen
         listener = WakeListener(
             app,
-            threshold,
+            phrases,
             previous = retired,
-            onDetected = { main.post { if (gen == listenerGen) detected() } },
+            onDetected = { endpointId -> main.post { if (gen == listenerGen) detected(endpointId) } },
             onError = { message ->
                 main.post {
                     if (gen == listenerGen) {
@@ -333,7 +355,8 @@ object WakeRuntime {
         listener = null
     }
 
-    private fun detected() {
+    /** The phrase of the instance [endpointId] was heard. */
+    private fun detected(endpointId: String) {
         // The listener ended itself and released the mic.
         listenerGen++
         retired = listener
@@ -350,12 +373,13 @@ object WakeRuntime {
         chime?.play()
         val direct = onWake
         if (shellVisible && direct != null) {
-            direct()
+            direct(endpointId)
             return
         }
         val intent = Intent(app, MainActivity::class.java)
             .setAction(MainActivity.ACTION_WAKE)
-            .putExtra(EXTRA_WAKE_TOKEN, ticket.issue(now))
+            // The instance stays with the ticket: the intent carries the token only.
+            .putExtra(EXTRA_WAKE_TOKEN, ticket.issue(now, endpointId))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         if (shellVisible) {
             // A visible app may still start its activity directly.

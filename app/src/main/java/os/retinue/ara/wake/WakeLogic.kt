@@ -1,5 +1,8 @@
 package os.retinue.ara.wake
 
+import os.retinue.ara.data.InstanceState
+import os.retinue.ara.data.ShellSettings
+
 /** When the shell listens for the wake phrase (plan §5). Off is the default. */
 enum class WakeMode(val key: String) {
     Off("off"),
@@ -14,6 +17,51 @@ enum class WakeMode(val key: String) {
     companion object {
         fun fromKey(key: String?): WakeMode = entries.firstOrNull { it.key == key } ?: Off
     }
+}
+
+/**
+ * One instance whose wake phrase may be listened for: the endpoint, its wake
+ * mode, threshold and phrase model, and whether it is the one shown.
+ */
+data class WakeTarget(
+    val endpointId: String,
+    val mode: WakeMode,
+    val threshold: Float,
+    /** The phrase model's id in the wake model library (null: none chosen). */
+    val modelId: String?,
+    val foreground: Boolean,
+)
+
+/**
+ * Whose wake phrases the phone listens for: the instance shown and those
+ * working in the background (see [InstanceState]), each with its own mode,
+ * threshold and phrase model. A resting (disabled) instance, or one whose
+ * mode is off, is not listened for. The order decides between instances that
+ * share a phrase: the one shown first, then the background ones in list
+ * order, so a phrase two instances share wakes the one on screen.
+ */
+object WakeTargets {
+
+    fun of(settings: ShellSettings): List<WakeTarget> {
+        val set = settings.endpointSet
+        return set.endpoints
+            .mapNotNull { e ->
+                val state = set.stateOf(e)
+                if (state == InstanceState.Disabled) return@mapNotNull null
+                val wake = e.wake ?: return@mapNotNull null
+                val mode = wake.wakeMode
+                if (mode == WakeMode.Off) return@mapNotNull null
+                WakeTarget(e.id, mode, wake.threshold, wake.modelId, foreground = state == InstanceState.Foreground)
+            }
+            .sortedByDescending { it.foreground }
+    }
+
+    /**
+     * Of the instances whose phrase was heard in the same frame ([heard], ids),
+     * the one the wake goes to: the first of [targets] among them.
+     */
+    fun pick(targets: List<WakeTarget>, heard: Collection<String>): String? =
+        targets.firstOrNull { it.endpointId in heard }?.endpointId
 }
 
 /**
@@ -124,28 +172,40 @@ class WakeTicket(
 ) {
     private var token: String? = null
     private var issuedAtMs = 0L
+    private var endpointId: String? = null
 
-    /** Announce a wake at [nowMs]; returns the token to put into the wake intent. */
+    /** A wake the shell accepted: the instance whose phrase was heard (null: the one shown). */
+    data class Taken(val endpointId: String?)
+
+    /**
+     * Announce a wake at [nowMs] for the instance [endpoint]; returns the
+     * token to put into the wake intent. The instance stays here, with the
+     * token, so an intent cannot name another one.
+     */
     @Synchronized
-    fun issue(nowMs: Long): String {
+    fun issue(nowMs: Long, endpoint: String? = null): String {
         val t = newToken()
         token = t
         issuedAtMs = nowMs
+        endpointId = endpoint
         return t
     }
 
     /**
-     * True when [presented] is the pending token and still fresh; the token is
-     * then used up. A wrong token leaves the pending one alone.
+     * The wake, when [presented] is the pending token and still fresh; the
+     * token is then used up. A wrong token leaves the pending one alone.
      */
     @Synchronized
-    fun consume(presented: String?, nowMs: Long): Boolean {
-        val expected = token ?: return false
-        if (presented == null || !constantTimeEquals(expected, presented)) return false
+    fun take(presented: String?, nowMs: Long): Taken? {
+        val expected = token ?: return null
+        if (presented == null || !constantTimeEquals(expected, presented)) return null
         token = null
         val age = nowMs - issuedAtMs
-        return age in 0..maxAgeMs
+        return if (age in 0..maxAgeMs) Taken(endpointId) else null
     }
+
+    /** True when [presented] is the pending token and still fresh (see [take]). */
+    fun consume(presented: String?, nowMs: Long): Boolean = take(presented, nowMs) != null
 
     private fun constantTimeEquals(a: String, b: String): Boolean =
         java.security.MessageDigest.isEqual(a.toByteArray(), b.toByteArray())

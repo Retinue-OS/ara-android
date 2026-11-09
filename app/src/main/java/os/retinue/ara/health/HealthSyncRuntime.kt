@@ -29,6 +29,7 @@ import okhttp3.Response
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointSet
 import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
 import os.retinue.ara.net.BasicCredentials
@@ -70,6 +71,12 @@ interface HealthSyncListener {
  * resumed by the next sync to its server from the first unsent part, under
  * the same batch id, before anything new is read.
  *
+ * Endpoints working in the background (Endpoint.background) are synced too,
+ * by the automatic syncs only: after the shown endpoint's, each background
+ * server whose switch is on gets its own sync, with its own interval and
+ * back-off ([HealthSyncState.peers]) and nothing reported to the page, whose
+ * status stays the shown endpoint's.
+ *
  * Syncs run when Ara comes to the front (auto-sync, at most every
  * [HealthSyncState.intervalMinutes]) and when the page asks
  * (`RetinueShell.healthSync()`; always, a repeat within
@@ -100,6 +107,10 @@ object HealthSyncRuntime {
     /** The current endpoint's origin (`https://host[:port]`), and whether it takes health data at all. */
     private var endpointOrigin: String? = null
     private var uploadEnabled = false
+
+    /** The servers synced in the background (see [HealthSyncLogic.backgroundTargets]). */
+    private var backgroundOrigins: List<String> = emptyList()
+    private var targets: HealthTargets? = null
 
     /** The one sync running. */
     private var job: Job? = null
@@ -140,21 +151,27 @@ object HealthSyncRuntime {
             // An older build's one round moves into its server's folder before anything syncs.
             withContext(Dispatchers.IO) { rounds.migrateLegacy() }
             store.settings
-                .map { s -> HealthTargets.of(s.current, s.endpoints) }
+                .map { s -> HealthTargets.of(s.endpointSet) }
                 .distinctUntilChanged()
                 .collect { targets ->
-                    val stale = targets.current != endpointOrigin || !targets.enabled
+                    val before = this@HealthSyncRuntime.targets
+                    // Another endpoint shown, the shown one's switch turned off, or a
+                    // background server dropped: what is running is stopped.
+                    val stale = before == null || targets.current != before.current ||
+                        (before.enabled && !targets.enabled) || !targets.background.containsAll(before.background)
+                    this@HealthSyncRuntime.targets = targets
                     endpointOrigin = targets.current
                     uploadEnabled = targets.enabled
+                    backgroundOrigins = targets.background
                     val running = job?.takeIf { it.isActive }
                     if (stale && running != null) {
                         running.cancelAndJoin()
-                        if (!targets.enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+                        if (before?.enabled == true && !targets.enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
                     }
                     publish()
                     withContext(Dispatchers.IO) { rounds.retainOnly(targets.enabledOrigins) }
                     loaded.await()
-                    if (state.tokens.keys.any { it !in targets.configuredOrigins }) {
+                    if ((state.tokens.keys + state.peers.keys).any { it !in targets.configuredOrigins }) {
                         save { it.retainingTokens(targets.configuredOrigins) }
                     }
                 }
@@ -163,22 +180,31 @@ object HealthSyncRuntime {
 
     /**
      * What health sync needs to know of the endpoints: the current one's origin
-     * and switch, the origins whose switch is on (their rounds are kept), and
-     * every configured origin (their tokens are kept).
+     * and switch, the servers synced in the background, the origins whose
+     * switch is on (their rounds are kept), and every configured origin
+     * (their tokens are kept).
      */
     private data class HealthTargets(
         val current: String?,
         val enabled: Boolean,
+        val background: List<String>,
         val enabledOrigins: Set<String>,
         val configuredOrigins: Set<String>,
     ) {
         companion object {
-            fun of(current: Endpoint?, endpoints: List<Endpoint>) = HealthTargets(
-                current = current?.origin?.toString(),
-                enabled = current?.healthUpload == true,
-                enabledOrigins = endpoints.filter { it.healthUpload }.mapNotNull { it.origin?.toString() }.toSet(),
-                configuredOrigins = endpoints.mapNotNull { it.origin?.toString() }.toSet(),
-            )
+            fun of(set: EndpointSet): HealthTargets {
+                val current = set.current?.origin?.toString()
+                return HealthTargets(
+                    current = current,
+                    enabled = set.current?.healthUpload == true,
+                    background = HealthSyncLogic.backgroundTargets(
+                        current,
+                        set.backgroundEndpoints.filter { it.healthUpload }.mapNotNull { it.origin?.toString() },
+                    ),
+                    enabledOrigins = set.endpoints.filter { it.healthUpload }.mapNotNull { it.origin?.toString() }.toSet(),
+                    configuredOrigins = set.endpoints.mapNotNull { it.origin?.toString() }.toSet(),
+                )
+            }
         }
     }
 
@@ -264,12 +290,32 @@ object HealthSyncRuntime {
         listener?.onHealthEvent(event)
     }
 
-    /** Decide (see [HealthSyncLogic.decide]) and start a sync. Main thread, no suspension between check and start. */
+    /**
+     * Decide (see [HealthSyncLogic.decide]) and start a sync: the shown
+     * endpoint's, and after an automatic one the background servers' (each
+     * decides for itself, see [syncBackground]). Main thread, no suspension
+     * between check and start.
+     */
     private fun start(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
+        val running = job?.isActive == true
+        val foreground = foregroundDue(trigger, running)
+        // Background servers ride along with automatic syncs only: a deliberate
+        // one is for the endpoint on screen.
+        val background = trigger == HealthTrigger.Resume && !running && state.autoOnResume &&
+            backgroundOrigins.isNotEmpty() && available && permissions != PermissionState.None
+        if (!foreground && !background) return
+        job = scope.launch {
+            if (foreground) run(trigger, requester)
+            if (background) syncBackground()
+        }
+    }
+
+    /** Whether the shown endpoint's sync runs now (see [HealthSyncLogic.decide]); a skip is reported. */
+    private fun foregroundDue(trigger: HealthTrigger, running: Boolean): Boolean {
         // The endpoint's own switch comes first: off, nothing is read for it.
         if (!uploadEnabled) {
             if (trigger.deliberate) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
-            return
+            return false
         }
         val now = System.currentTimeMillis()
         // A back-off is the failing server's, not the next one's.
@@ -277,7 +323,7 @@ object HealthSyncRuntime {
         val decision = HealthSyncLogic.decide(
             trigger = trigger,
             now = now,
-            running = job?.isActive == true,
+            running = running,
             lastAttemptAt = state.lastAttemptAt,
             lastDeliberateAt = lastDeliberateAt,
             intervalMinutes = state.intervalMinutes,
@@ -286,10 +332,10 @@ object HealthSyncRuntime {
             backoffReason = HealthSyncLogic.backoffReason(state.lastResult, state.lastError),
         )
         when (decision) {
-            SyncDecision.Ignore -> return
+            SyncDecision.Ignore -> return false
             is SyncDecision.Skip -> {
                 emit(HealthSyncEvent.Skipped(decision.reason))
-                return
+                return false
             }
             SyncDecision.Run -> Unit
         }
@@ -298,9 +344,62 @@ object HealthSyncRuntime {
         } else if (!available || permissions == PermissionState.None) {
             // Nothing can come of an automatic sync here (no Health Connect,
             // or never set up): stay silent rather than report it on every resume.
-            return
+            return false
         }
-        job = scope.launch { run(trigger, requester) }
+        return true
+    }
+
+    /**
+     * The automatic syncs of the endpoints working in the background, one
+     * server after another, each when its own interval has passed and it
+     * does not back off ([HealthSyncState.peers]). Silent: the page's status
+     * and events are the shown endpoint's. Never asks for permissions.
+     */
+    private suspend fun syncBackground() {
+        val settings = store.settingsNow()
+        val currentOrigin = settings.current?.origin?.toString()
+        val endpoints = settings.endpointSet.backgroundEndpoints.filter { it.healthUpload }
+        for (origin in HealthSyncLogic.backgroundTargets(currentOrigin, endpoints.mapNotNull { it.origin?.toString() })) {
+            val endpoint = endpoints.first { it.origin?.toString() == origin }
+            val peer = state.peers[origin] ?: PeerSync()
+            val now = System.currentTimeMillis()
+            val decision = HealthSyncLogic.decide(
+                trigger = HealthTrigger.Resume,
+                now = now,
+                running = false,
+                lastAttemptAt = peer.lastAttemptAt,
+                lastDeliberateAt = 0L,
+                intervalMinutes = state.intervalMinutes,
+                autoOnResume = state.autoOnResume,
+                backoffUntil = peer.backoffUntil,
+                backoffReason = peer.backoffReason,
+            )
+            if (decision != SyncDecision.Run) continue
+            save { it.withPeer(origin) { p -> p.copy(lastAttemptAt = now) } }
+            val outcome = try {
+                sync(endpoint, HealthTrigger.Resume, requester = null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "background health sync to $origin failed", e)
+                SyncOutcome.Failed(e.message ?: e.javaClass.simpleName)
+            }
+            val at = System.currentTimeMillis()
+            save { s ->
+                when (outcome) {
+                    is SyncOutcome.Done -> s.withToken(outcome.origin, outcome.token, outcome.types)
+                        .withPeer(origin) { it.succeeded(at, outcome.count) }
+                    is SyncOutcome.Skipped -> s.withPeer(origin) {
+                        if (outcome.reason == SkipReason.NoBackendSupport) {
+                            it.failed(at, SyncResult.Skipped, outcome.reason.key, s.intervalMinutes)
+                        } else {
+                            it.skipped(outcome.reason)
+                        }
+                    }
+                    is SyncOutcome.Failed -> s.withPeer(origin) { it.failed(at, SyncResult.Error, outcome.message, s.intervalMinutes) }
+                }
+            }
+        }
     }
 
     private suspend fun run(trigger: HealthTrigger, requester: HealthPermissionRequester?) {

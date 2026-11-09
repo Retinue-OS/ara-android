@@ -75,7 +75,7 @@ ok('a draft goes to the app without what the app decides itself', () => {
   d.password = 'pw';
   assert.deepEqual(L.draftMessage(d), {
     id: 'home', isNew: false, baseUrl: 'https://agents.example.com', certificateAlias: 'ara-phone',
-    username: 'reto', password: 'pw', forgetPassword: false, healthUpload: true,
+    username: 'reto', password: 'pw', forgetPassword: false, healthUpload: true, background: false,
   });
   assert.equal(L.endpointSummary(home), 'Certificate: ara-phone · Sign-in: reto · Health data: on');
   assert.equal(L.endpointSummary({ healthUpload: false }), 'Certificate: none · Sign-in: none · Health data: off');
@@ -138,6 +138,35 @@ ok('the wake notes follow the mode, with the action that fixes each', () => {
   const always = L.wakeNotes({ mode: 'always', micGranted: true, modelsReady: true, notificationsAllowed: false, fullScreenAllowed: false, overlayAllowed: false });
   assert.deepEqual(always.map((n) => n.action), ['wake.notifications', 'wake.fullScreen', 'wake.overlay']);
   assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false, phrase: true }), 'Melspectrogram: present · Embedding: missing · Phrase: present');
+});
+
+ok('every endpoint is shown, working in the background, or disabled', () => {
+  assert.equal(L.instanceState(home), 'foreground');
+  assert.equal(L.instanceState({ current: false, state: 'background' }), 'background');
+  assert.equal(L.instanceState({ current: false, state: 'disabled', background: true }), 'disabled');
+  // An app that sends no state: the switch decides.
+  assert.equal(L.instanceState({ current: false, background: true }), 'background');
+  assert.equal(L.instanceState({ current: false }), 'disabled');
+  assert.equal(L.instanceState(null), 'disabled');
+  for (const k of ['foreground', 'background', 'disabled']) assert.ok(L.STATE_TEXT[k], k);
+});
+
+ok('the background switch is part of the draft, and a change to it is saved', () => {
+  const d = L.draftOf({ ...home, current: false, background: true });
+  assert.equal(d.background, true);
+  assert.equal(L.draftChanged(d), false);
+  d.background = false;
+  assert.equal(L.draftChanged(d), true);
+  assert.deepEqual(L.onClose(d), { action: 'save' });
+  assert.equal(L.draftMessage(d).background, false);
+  assert.equal(L.newDraft('n').background, false);
+});
+
+ok('the wake card names the other instances it listens for', () => {
+  assert.equal(L.alsoListeningLine({}), '');
+  assert.equal(L.alsoListeningLine({ alsoListening: [] }), '');
+  assert.match(L.alsoListeningLine({ alsoListening: ['Work'] }), /Work: its own phrase/);
+  assert.match(L.alsoListeningLine({ alsoListening: ['Work', 'Family', 7] }), /Work, Family: each one/);
 });
 
 ok('the launcher card says whether the tray sees apps opened elsewhere', () => {

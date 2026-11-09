@@ -9,6 +9,7 @@ import kotlinx.serialization.json.put
 import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
+import os.retinue.ara.data.InstanceState
 import os.retinue.ara.data.ShellSettings
 
 /** One endpoint in the page's list. */
@@ -26,6 +27,10 @@ data class EndpointRow(
     val current: Boolean,
     /** The instance's name as last fetched, for the editor's title. */
     val name: String?,
+    /** It keeps working while another is shown (Endpoint.background). */
+    val background: Boolean = false,
+    /** [InstanceState.key]: foreground (shown), background or disabled. */
+    val state: String = InstanceState.Disabled.key,
 )
 
 /** The endpoint shown, and where its own parts of the page come from. */
@@ -45,8 +50,9 @@ data class CurrentEndpoint(
 /** Why the dashboard did not load, for the banner at the top. */
 data class FailureInfo(val reason: String, val url: String?, val consoleErrors: List<String>)
 
+/** The wake phrase card: the instance shown, its phrase on this phone, and what the phone needs for it. */
 data class WakeInfo(
-    /** [os.retinue.ara.wake.WakeMode.key]. */
+    /** [os.retinue.ara.wake.WakeMode.key], of the instance shown. */
     val mode: String,
     val threshold: Float,
     val status: String,
@@ -61,6 +67,8 @@ data class WakeInfo(
     val modelUrl: String,
     val busy: Boolean,
     val message: String?,
+    /** The other instances whose phrase is listened for now (labels): they work in the background. */
+    val alsoListening: List<String> = emptyList(),
 )
 
 data class UpdatesInfo(
@@ -120,6 +128,8 @@ data class SettingsPageState(
                             put("healthUpload", e.healthUpload)
                             put("current", e.current)
                             put("name", e.name.json())
+                            put("background", e.background)
+                            put("state", e.state)
                         },
                     )
                 }
@@ -174,6 +184,7 @@ data class SettingsPageState(
                 put("modelUrl", wake.modelUrl)
                 put("busy", wake.busy)
                 put("message", wake.message.json())
+                put("alsoListening", buildJsonArray { wake.alsoListening.forEach { add(JsonPrimitive(it)) } })
             },
         )
         put(
@@ -202,6 +213,7 @@ data class SettingsPageState(
         fun endpointRows(settings: ShellSettings): List<EndpointRow> {
             val labels = EndpointLabels.labels(settings.endpoints)
             val current = settings.current?.id
+            val set = settings.endpointSet
             return settings.endpoints.map { e ->
                 EndpointRow(
                     id = e.id,
@@ -214,6 +226,8 @@ data class SettingsPageState(
                     healthUpload = e.healthUpload,
                     current = e.id == current,
                     name = e.knownName,
+                    background = e.background,
+                    state = set.stateOf(e).key,
                 )
             }
         }

@@ -78,6 +78,7 @@ function fields(d) {
     certificateAlias: d.certificateAlias || null,
     username: String(d.username || '').trim(),
     healthUpload: !!d.healthUpload,
+    background: !!d.background,
   };
 }
 
@@ -85,7 +86,7 @@ function fields(d) {
 export function newDraft(id) {
   const d = {
     id, isNew: true, baseUrl: '', certificateAlias: null, username: '', password: '',
-    hasStoredPassword: false, forgetPassword: false, healthUpload: false, name: null,
+    hasStoredPassword: false, forgetPassword: false, healthUpload: false, background: false, name: null,
   };
   d.opened = fields(d);
   return d;
@@ -103,6 +104,7 @@ export function draftOf(row) {
     hasStoredPassword: !!row.hasPassword,
     forgetPassword: false,
     healthUpload: !!row.healthUpload,
+    background: !!row.background,
     name: row.name || null,
   };
   d.opened = fields(d);
@@ -129,7 +131,8 @@ export function draftChanged(d) {
   const now = fields(d);
   const o = d.opened || {};
   return now.baseUrl !== o.baseUrl || now.certificateAlias !== o.certificateAlias
-    || now.username !== o.username || now.healthUpload !== o.healthUpload;
+    || now.username !== o.username || now.healthUpload !== o.healthUpload
+    || now.background !== o.background;
 }
 
 // What closing the editor does: an untouched draft just closes; changes are
@@ -158,6 +161,7 @@ export function draftMessage(d) {
     password: d.password || '',
     forgetPassword: !!d.forgetPassword,
     healthUpload: !!d.healthUpload,
+    background: !!d.background,
   };
 }
 
@@ -166,6 +170,25 @@ export function endpointSummary(row) {
   const cert = row.certificateAlias || 'none';
   const user = row.username || 'none';
   return `Certificate: ${cert} · Sign-in: ${user} · Health data: ${row.healthUpload ? 'on' : 'off'}`;
+}
+
+// ── Instance states ─────────────────────────────────────────────────────────
+// What an endpoint is to the phone (the app's InstanceState): the one shown
+// (foreground), one that keeps syncing health data and listening for its wake
+// phrase while another is shown (background), or one that rests (disabled).
+export const STATE_TEXT = {
+  foreground: 'Active',
+  background: 'Background',
+  disabled: 'Disabled',
+};
+
+// The state of a row, as the list shows it; the shown one is 'foreground'
+// even from an app that does not send a state.
+export function instanceState(row) {
+  if (!row) return 'disabled';
+  if (row.current) return 'foreground';
+  if (row.state === 'background' || row.state === 'disabled') return row.state;
+  return row.background ? 'background' : 'disabled';
 }
 
 // ── Importing a client certificate ──────────────────────────────────────────
@@ -282,6 +305,15 @@ export function usageAccessNote(launcher) {
       text: 'The tray counts the apps you open from Ara. With usage access it also counts those opened from a notification, from Recents or from another app.',
       label: 'Allow usage access',
     };
+}
+
+// The other instances listened for now, which wake (and come to the front)
+// with their own phrase.
+export function alsoListeningLine(w) {
+  const names = (w && Array.isArray(w.alsoListening)) ? w.alsoListening.filter((n) => typeof n === 'string' && n) : [];
+  if (!names.length) return '';
+  const them = names.length === 1 ? 'its' : 'each one’s';
+  return `Also listening in the background for ${names.join(', ')}: ${them} own phrase brings it to the front.`;
 }
 
 export function wakeModelsLine(w) {

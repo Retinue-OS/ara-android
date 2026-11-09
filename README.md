@@ -70,9 +70,10 @@ load. It has three parts, from the phone outwards:
 
 1. **This app** — what holds on this phone whichever endpoint is shown: the
    endpoints themselves, voice timing and the shelf, home screen, split screen,
-   the wake phrase, the launcher bar and updates.
+   the launcher bar and updates.
 2. **This app with *endpoint*** — what this phone does with the endpoint shown
-   now: its health data (and, once the app receives them, its notifications).
+   now: its health data, its wake phrase (and, once the app receives them, its
+   notifications).
 3. **This instance** — the endpoint's own settings (its name and colour, agent
    models, the system pages), embedded from the server's
    `/settings-instance.html`, which the server lets only itself and this page
@@ -84,15 +85,15 @@ On first start there is no endpoint yet, so the page opens at a new one.
 
 | Setting | Meaning |
 |---|---|
-| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS; the editor also imports one from a `.p12` or `.pfx` file, see [Client certificate](#client-certificate-mutual-tls-and-sign-in)), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) and the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint). The endpoint shown is marked *Active*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
+| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS; the editor also imports one from a `.p12` or `.pfx` file, see [Client certificate](#client-certificate-mutual-tls-and-sign-in)), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint) and **Keep working in the background** (see [Instance states](#instance-states); off for a new endpoint). The endpoint shown is marked *Active*, the others *Background* or *Disabled*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
 | **Voice** | When speech recognition ends in a continuous conversation: the pause that ends a take, and how long the mic waits for speech at all. For every endpoint (see [Per-device preferences](#per-device-preferences)). |
 | **Shelf** | How many minimized threads, chats and projects the dashboard's shelf keeps. For every endpoint, as above. |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Split screen** | Open apps beside Ara, and keep Ara in recent apps (both off by default; see [Split screen](#split-screen)). |
-| **Wake phrase** | Mode, with what each needs from Android, and the sensitivity; under *Advanced*, the models (see [Wake phrase](#wake-phrase)). |
 | **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
+| **Wake phrase** (with the endpoint) | The endpoint's own wake phrase on this phone: mode, with what each needs from Android, and the sensitivity, plus the other endpoints listened for in the background; under *Advanced*, the models, kept for every endpoint (see [Wake phrase](#wake-phrase)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -289,6 +290,14 @@ from Health Connect for that endpoint and nothing is sent, not even on
 request: a deliberate sync reports `skipped`/`disabled`, and the status's
 `enabled` is false. Only the app's own page sets the switch: it decides which
 server receives the data, so no dashboard page may.
+
+**Endpoints in the background.** An endpoint that keeps working in the
+background (see [Instance states](#instance-states)) and has its switch on is
+synced too, by the automatic syncs only: after the shown endpoint's sync, each
+such server gets its own, with its own interval and back-off (kept per origin),
+silently — the status, the events and the settings page's line stay the shown
+endpoint's. A deliberate sync is for the endpoint shown only. Tokens and
+rounds work for them exactly as for the shown one.
 
 **When.** When Ara comes to the front, at most every 5 minutes (adjustable,
 `setHealthSyncInterval`; counted from the last sync that ran; off with
@@ -641,7 +650,8 @@ the settings page, a link for another endpoint, or
 `RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
 and loads its start page; the settings page stays open and shows the new
 endpoint's parts. Health Connect sync follows the current endpoint
-only: a sync still running for the old one stops, and its round, if any,
+(and, for automatic syncs, the endpoints working in the background, see
+[Instance states](#instance-states)): a sync still running for the old one stops, and its round, if any,
 waits on the device for that server (see "Health Connect" above); each
 server's Changes token is its own, so a server shown again gets what changed
 since its last delivery.
@@ -654,6 +664,22 @@ at receives the bridge, the microphone, the certificate and the password, so a
 page must not be able to point it anywhere. A change to the list while a page
 is open is pushed to it (`endpoints.status`) and announced with an `endpoints`
 event.
+
+### Instance states
+
+Every endpoint is in one of three states on the phone (`InstanceState`):
+
+- **Foreground** — the one shown (*Active*). Everything above is its.
+- **Background** — not shown, but still working for the phone: its health
+  data is synced (where its switch is on, see
+  [Health Connect sync](#health-connect-sync)) and its wake phrase is still
+  listened for; hearing it brings that endpoint to the front.
+- **Disabled** — not shown, and nothing runs for it until it is shown again.
+
+Which of the last two an endpoint is while another is shown is its editor's
+**Keep working in the background** switch (`Endpoint.background`, off for a new
+endpoint and for the endpoints of earlier builds). Showing another endpoint
+moves the one shown so far into its own state: background or disabled.
 
 **Names.** An endpoint is shown under the name its server gives itself: the
 `short_name` of its web manifest (`<base>/manifest.webmanifest`), which the
@@ -751,8 +777,23 @@ settings), `update/UpdateInstaller.kt` and `update/UpdateReceiver.kt` (the
 
 ## Wake phrase
 
-Say the phrase and the web app opens a thread in continuous voice mode. Ara
-runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
+Say the phrase and the web app opens a thread in continuous voice mode.
+
+**Per instance.** The wake phrase is set per endpoint on this phone
+(`Endpoint.wake`: mode, threshold, phrase model), on the settings page under
+*This app with* that endpoint, so a phrase always wakes the instance it
+belongs to. The endpoint shown and those working in the background
+([Instance states](#instance-states)) are listened for at once, each with its
+own phrase model and threshold, in one listener: the audio, the melspectrogram
+and the embedding models run once, and every distinct phrase model scores the
+same embeddings. A phrase of a background endpoint brings that endpoint to the
+front (the wake waits until its page has loaded); when two listening endpoints
+share a phrase, the one shown takes it, else the first in the list. The service
+of mode *Always* runs while any listening endpoint is in that mode. The one
+device-wide wake setting of earlier builds becomes every endpoint's own on
+update, so the endpoint shown keeps waking as before.
+
+Ara runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
 with ONNX Runtime: 16 kHz mono audio in 80 ms frames → `melspectrogram.onnx`
 (scaled `x/10 + 2`) → 76-frame windows → `embedding_model.onnx` → the last 16
 embeddings → the phrase model → a score. A score at or above the threshold

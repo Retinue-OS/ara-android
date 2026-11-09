@@ -137,6 +137,8 @@ details.advanced[open] summary { margin-bottom: 6px; }
 .endpoint .url, .endpoint .summary { color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .endpoint .active { color: var(--accent); font-size: .85rem; font-weight: 600; white-space: nowrap; }
 .endpoint .active::before { content: "\2713\00a0"; }
+.endpoint .state { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+.endpoint .state.background { color: var(--fg); }
 .endpoint .btn { min-height: 36px; padding: 0 12px; }
 
 .notes p { margin: 8px 0 4px; font-size: .9rem; }

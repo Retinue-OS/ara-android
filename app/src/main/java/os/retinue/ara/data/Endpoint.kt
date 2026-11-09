@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.encodeToJsonElement
 import os.retinue.ara.shell.Origin
 import os.retinue.ara.shell.ShellUrls
+import os.retinue.ara.wake.WakeMode
 
 /**
  * One Retinue server this phone can show: where it is, how the shell signs in
@@ -43,6 +44,19 @@ data class Endpoint(
     val name: String? = null,
     /** When [name] was last fetched successfully (epoch ms; 0 for never). */
     val nameFetchedAt: Long = 0L,
+    /**
+     * While another endpoint is shown, this one keeps working for the phone:
+     * its health data goes on being synced (where [healthUpload] is on) and
+     * its wake phrase is still listened for. Off, it rests until it is shown
+     * again (see [InstanceState]). Off for a new endpoint.
+     */
+    val background: Boolean = false,
+    /**
+     * The wake phrase of this instance on this phone. Null in a list an older
+     * build wrote: the one device-wide wake setting of those builds stands in
+     * (see EndpointCodec.withLegacyWake), and the next write stores it here.
+     */
+    val wake: EndpointWake? = null,
 ) {
     /** The normalized base URL, or null when [baseUrl] is not a usable https URL. */
     val base: String? get() = ShellUrls.normalizeBase(baseUrl)
@@ -58,6 +72,47 @@ data class Endpoint(
 
     /** The instance name when known and not blank. */
     val knownName: String? get() = name?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+/**
+ * How the wake phrase works for one instance on this phone: when it is
+ * listened for, how sure the detector must be, and which phrase model wakes
+ * this instance (an id of the wake model library; null for none chosen).
+ * Different instances may listen for different phrases at once; a phrase
+ * heard brings its instance to the front.
+ */
+@Serializable
+data class EndpointWake(
+    /** [WakeMode.key]. */
+    val mode: String = WakeMode.Off.key,
+    /** Score at or above which the phrase counts as heard (openWakeWord's default 0.5). */
+    val threshold: Float = DEFAULT_THRESHOLD,
+    val modelId: String? = null,
+) {
+    val wakeMode: WakeMode get() = WakeMode.fromKey(mode)
+
+    companion object {
+        const val DEFAULT_THRESHOLD = 0.5f
+        const val MIN_THRESHOLD = 0.05f
+        const val MAX_THRESHOLD = 0.99f
+
+        val OFF = EndpointWake()
+
+        fun of(mode: WakeMode, threshold: Float, modelId: String? = null) =
+            EndpointWake(mode.key, threshold.coerceIn(MIN_THRESHOLD, MAX_THRESHOLD), modelId)
+    }
+}
+
+/**
+ * What an endpoint is to the phone right now. [Foreground]: the one shown
+ * (exactly one, when any is set up). [Background]: not shown, but its health
+ * data is synced and its wake phrase listened for ([Endpoint.background]).
+ * [Disabled]: not shown, and nothing runs for it.
+ */
+enum class InstanceState(val key: String) {
+    Foreground("foreground"),
+    Background("background"),
+    Disabled("disabled"),
 }
 
 /** The endpoints and which of them the shell shows. */
@@ -86,6 +141,17 @@ data class EndpointSet(val endpoints: List<Endpoint>, val currentId: String?) {
     /** Apply [change] to the endpoint [id], if there is one. */
     fun update(id: String, change: (Endpoint) -> Endpoint): EndpointSet =
         EndpointSet(endpoints.map { if (it.id == id) change(it) else it }, currentId)
+
+    /** What [endpoint] is to the phone now (see [InstanceState]). */
+    fun stateOf(endpoint: Endpoint): InstanceState = when {
+        endpoint.id == current?.id -> InstanceState.Foreground
+        endpoint.background -> InstanceState.Background
+        else -> InstanceState.Disabled
+    }
+
+    /** The endpoints that work for the phone while not shown, in list order. */
+    val backgroundEndpoints: List<Endpoint>
+        get() = endpoints.filter { stateOf(it) == InstanceState.Background }
 
     companion object {
         val EMPTY = EndpointSet(emptyList(), null)
@@ -156,6 +222,17 @@ object EndpointCodec {
             }
         }.distinctBy { it.id }
     }
+
+    /**
+     * [endpoints] with the wake setting of builds before per-instance wake
+     * phrases ([legacy], the one device-wide mode and threshold) filled in
+     * where an endpoint has none yet. Every endpoint gets it: the phrase woke
+     * whichever endpoint was shown, so each keeps doing so when shown. Only
+     * the shown one listens until another is set to work in the background,
+     * so nothing changes for the user.
+     */
+    fun withLegacyWake(endpoints: List<Endpoint>, legacy: EndpointWake): List<Endpoint> =
+        if (endpoints.all { it.wake != null }) endpoints else endpoints.map { if (it.wake == null) it.copy(wake = legacy) else it }
 
     /**
      * The endpoint an older build's settings describe: its base URL and

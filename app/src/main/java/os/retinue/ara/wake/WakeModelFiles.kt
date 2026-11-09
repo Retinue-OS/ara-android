@@ -42,6 +42,14 @@ object WakeModelFiles {
     fun embeddingFile(context: Context) = File(dir(context), EMBEDDING)
     fun phraseFile(context: Context) = File(dir(context), PHRASE)
 
+    /**
+     * The phrase model file an instance listens with ([modelId], its id in the
+     * wake model library), or null when it has none. Until the library holds
+     * several models, every instance listens with the one phrase model.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun phraseFileFor(context: Context, modelId: String?): File? = phraseFile(context).takeIf { it.length() > 0 }
+
     fun status(context: Context) = WakeModelStatus(
         melspectrogram = melFile(context).length() > 0,
         embedding = embeddingFile(context).length() > 0,

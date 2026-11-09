@@ -11,6 +11,7 @@ import os.retinue.ara.data.AraStore
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.wake.WakeRuntime
+import os.retinue.ara.wake.WakeTargets
 
 /**
  * Process start: wake detection, the updater and health sync follow the stored
@@ -28,9 +29,10 @@ class AraApp : Application() {
         HealthSyncRuntime.init(this)
         scope.launch {
             AraStore(this@AraApp).settings
-                .map { it.wakeMode to it.wakeThreshold }
+                // Each instance shown or working in the background listens for its own phrase.
+                .map { WakeTargets.of(it) }
                 .distinctUntilChanged()
-                .collect { (mode, threshold) -> WakeRuntime.configure(mode, threshold) }
+                .collect { WakeRuntime.configure(it) }
         }
     }
 }

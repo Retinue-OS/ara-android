@@ -20,6 +20,7 @@ import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.CredentialVault
 import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
@@ -144,6 +145,9 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
                     healthUpload = draft.healthUpload,
                     name = if (sameAddress) existing?.name else null,
                     nameFetchedAt = if (sameAddress) existing?.nameFetchedAt ?: 0L else 0L,
+                    background = draft.background,
+                    // The wake phrase is set on the settings page, not in the editor: kept.
+                    wake = existing?.wake ?: EndpointWake.OFF,
                 ),
             )
         }
@@ -199,8 +203,15 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Other settings ------------------------------------------------------
 
-    fun setWakeMode(mode: WakeMode) = viewModelScope.launch { store.setWakeMode(mode) }
-    fun setWakeThreshold(value: Float) = viewModelScope.launch { store.setWakeThreshold(value) }
+    /** The wake mode of the instance [endpointId] on this phone. */
+    fun setWakeMode(endpointId: String, mode: WakeMode) = viewModelScope.launch {
+        store.updateEndpointWake(endpointId) { it.copy(mode = mode.key) }
+    }
+
+    /** The wake threshold of the instance [endpointId] on this phone. */
+    fun setWakeThreshold(endpointId: String, value: Float) = viewModelScope.launch {
+        store.updateEndpointWake(endpointId) { EndpointWake.of(it.wakeMode, value, it.modelId) }
+    }
     fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
     fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }

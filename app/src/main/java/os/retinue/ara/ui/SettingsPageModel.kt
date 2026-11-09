@@ -4,6 +4,8 @@ import android.content.Context
 import android.text.format.DateUtils
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.R
+import os.retinue.ara.data.EndpointLabels
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.settings.FailureInfo
@@ -15,6 +17,7 @@ import os.retinue.ara.shell.PageStatus
 import os.retinue.ara.update.InstalledBuild
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.update.UpdateState
+import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeStatus
 
@@ -28,6 +31,8 @@ internal data class WakeConditions(
     val models: WakeModelStatus,
     val modelBusy: Boolean,
     val modelMessage: String?,
+    /** The instances listened for now (WakeRuntime.listening). */
+    val listening: Set<String> = emptySet(),
 )
 
 /**
@@ -46,52 +51,70 @@ internal fun settingsPageState(
     update: UpdateState,
     installAllowed: Boolean,
     usageAccess: Boolean,
-): SettingsPageState = SettingsPageState(
-    version = BuildConfig.VERSION_NAME,
-    endpoints = SettingsPageState.endpointRows(settings),
-    current = SettingsPageState.currentEndpoint(settings),
-    failure = (page.status as? PageStatus.Failed)?.let { failed ->
-        FailureInfo(
-            reason = failureText(context, failed.failure),
-            url = failed.failure.url ?: page.url,
-            consoleErrors = page.consoleErrors.map { consoleErrorText(context, it) },
-        )
-    },
-    health = health.toJson(),
-    isDefaultHome = isDefaultHome,
-    splitLaunch = settings.splitLaunch,
-    keepSplitInRecents = settings.keepSplitInRecents,
-    wake = WakeInfo(
-        mode = settings.wakeMode.key,
-        threshold = settings.wakeThreshold,
-        status = wakeStatusText(context, wake.status),
-        micGranted = wake.micGranted,
-        modelsReady = wake.models.ready,
-        notificationsAllowed = wake.notificationsAllowed,
-        fullScreenAllowed = wake.fullScreenAllowed,
-        overlayAllowed = wake.overlayAllowed,
-        melspectrogram = wake.models.melspectrogram,
-        embedding = wake.models.embedding,
-        phrase = wake.models.phrase,
-        modelUrl = settings.wakeModelUrl,
-        busy = wake.modelBusy,
-        message = wake.modelMessage,
-    ),
-    updates = UpdatesInfo(
-        installed = installedText(context, UpdateRuntime.installed),
-        auto = settings.autoUpdate,
-        channel = settings.updateChannel.key,
-        status = updateStatusText(context, update),
-        busy = update.busy,
-        progress = (update as? UpdateState.Downloading)?.progress,
-        installTag = (update as? UpdateState.Available)?.release?.tag,
-        awaitingConfirmation = update is UpdateState.AwaitingConfirmation,
-        canCheck = !update.busy && update !is UpdateState.AwaitingConfirmation,
-        installAllowed = installAllowed,
-    ),
-    device = settings.deviceWebSettings,
-    usageAccess = usageAccess,
-)
+): SettingsPageState {
+    val shown = settings.current
+    val shownWake = shown?.wake ?: EndpointWake.OFF
+    val labels = EndpointLabels.labels(settings.endpoints)
+    return SettingsPageState(
+        version = BuildConfig.VERSION_NAME,
+        endpoints = SettingsPageState.endpointRows(settings),
+        current = SettingsPageState.currentEndpoint(settings),
+        failure = (page.status as? PageStatus.Failed)?.let { failed ->
+            FailureInfo(
+                reason = failureText(context, failed.failure),
+                url = failed.failure.url ?: page.url,
+                consoleErrors = page.consoleErrors.map { consoleErrorText(context, it) },
+            )
+        },
+        health = health.toJson(),
+        isDefaultHome = isDefaultHome,
+        splitLaunch = settings.splitLaunch,
+        keepSplitInRecents = settings.keepSplitInRecents,
+        wake = WakeInfo(
+            mode = shownWake.mode,
+            threshold = shownWake.threshold,
+            status = wakeStatusText(context, shownWakeStatus(wake, shown?.id, shownWake.wakeMode)),
+            micGranted = wake.micGranted,
+            modelsReady = wake.models.ready,
+            notificationsAllowed = wake.notificationsAllowed,
+            fullScreenAllowed = wake.fullScreenAllowed,
+            overlayAllowed = wake.overlayAllowed,
+            melspectrogram = wake.models.melspectrogram,
+            embedding = wake.models.embedding,
+            phrase = wake.models.phrase,
+            modelUrl = settings.wakeModelUrl,
+            busy = wake.modelBusy,
+            message = wake.modelMessage,
+            alsoListening = settings.endpoints.filter { it.id != shown?.id && it.id in wake.listening }.map { labels[it.id] ?: it.hostLabel },
+        ),
+        updates = UpdatesInfo(
+            installed = installedText(context, UpdateRuntime.installed),
+            auto = settings.autoUpdate,
+            channel = settings.updateChannel.key,
+            status = updateStatusText(context, update),
+            busy = update.busy,
+            progress = (update as? UpdateState.Downloading)?.progress,
+            installTag = (update as? UpdateState.Available)?.release?.tag,
+            awaitingConfirmation = update is UpdateState.AwaitingConfirmation,
+            canCheck = !update.busy && update !is UpdateState.AwaitingConfirmation,
+            installAllowed = installAllowed,
+        ),
+        device = settings.deviceWebSettings,
+        usageAccess = usageAccess,
+    )
+}
+
+/**
+ * The detector's status as the shown instance sees it: listening when its
+ * own phrase is listened for, idle when its mode is off (the detector may
+ * still listen for an instance in the background).
+ */
+internal fun shownWakeStatus(wake: WakeConditions, shownId: String?, mode: WakeMode): WakeStatus = when {
+    mode == WakeMode.Off -> WakeStatus.Idle
+    shownId != null && shownId in wake.listening -> WakeStatus.Listening
+    wake.status == WakeStatus.Listening -> WakeStatus.Idle
+    else -> wake.status
+}
 
 private fun wakeStatusText(context: Context, status: WakeStatus): String = when (status) {
     WakeStatus.Idle -> context.getString(R.string.wake_status_idle)

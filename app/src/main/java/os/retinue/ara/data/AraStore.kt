@@ -46,8 +46,6 @@ class AraStore(context: Context) {
         ShellSettings(
             endpoints = endpoints.endpoints,
             currentEndpointId = endpoints.currentId,
-            wakeMode = WakeMode.fromKey(p[K.wakeMode]),
-            wakeThreshold = p[K.wakeThreshold] ?: ShellSettings.DEFAULT_WAKE_THRESHOLD,
             wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
@@ -110,12 +108,23 @@ class AraStore(context: Context) {
 
     private fun endpointsOf(p: Preferences): EndpointSet {
         val list = EndpointCodec.decode(p[K.endpoints]) ?: EndpointCodec.legacy(p[K.baseUrl], p[K.certAlias])
-        return EndpointSet(list, p[K.currentEndpoint])
+        return EndpointSet(EndpointCodec.withLegacyWake(list, legacyWake(p)), p[K.currentEndpoint])
     }
 
-    suspend fun setWakeMode(mode: WakeMode) = edit { it[K.wakeMode] = mode.key }
+    /**
+     * The one device-wide wake setting of builds before per-instance wake
+     * phrases: what an endpoint without its own starts with. The keys stay,
+     * so an older build still finds its setting.
+     */
+    private fun legacyWake(p: Preferences): EndpointWake = EndpointWake.of(
+        WakeMode.fromKey(p[K.wakeMode]),
+        p[K.wakeThreshold] ?: EndpointWake.DEFAULT_THRESHOLD,
+    )
 
-    suspend fun setWakeThreshold(value: Float) = edit { it[K.wakeThreshold] = value.coerceIn(0.05f, 0.99f) }
+    /** The wake phrase of the endpoint [id] on this phone: [change] applied to what it has. */
+    suspend fun updateEndpointWake(id: String, change: (EndpointWake) -> EndpointWake) {
+        updateEndpoints { set -> set.update(id) { e -> e.copy(wake = change(e.wake ?: EndpointWake.OFF)) } }
+    }
 
     suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
 
@@ -176,6 +185,7 @@ class AraStore(context: Context) {
             it[K.healthFailures] = s.failures
             it[K.healthBackoffUntil] = s.backoffUntil
             it.putOrRemove(K.healthBackoffOrigin, s.backoffOrigin)
+            if (s.peers.isEmpty()) it.remove(K.healthPeers) else it[K.healthPeers] = HealthSyncLogic.encodePeers(s.peers)
         }
         return after
     }
@@ -194,6 +204,7 @@ class AraStore(context: Context) {
         failures = p[K.healthFailures] ?: 0,
         backoffUntil = p[K.healthBackoffUntil] ?: 0L,
         backoffOrigin = p[K.healthBackoffOrigin],
+        peers = HealthSyncLogic.decodePeers(p[K.healthPeers]),
     )
 
     private fun MutablePreferences.putOrRemove(key: Preferences.Key<String>, value: String?) {
@@ -239,6 +250,9 @@ class AraStore(context: Context) {
         val healthFailures = intPreferencesKey("health_failures")
         val healthBackoffUntil = longPreferencesKey("health_backoff_until")
         val healthBackoffOrigin = stringPreferencesKey("health_backoff_origin")
+
+        /** The background servers' sync state (JSON, origin → PeerSync). */
+        val healthPeers = stringPreferencesKey("health_background_json")
 
         /** The dashboard's per-device preferences (JSON, see [DeviceWebSettings]). */
         val deviceWebSettings = stringPreferencesKey("device_web_settings_json")

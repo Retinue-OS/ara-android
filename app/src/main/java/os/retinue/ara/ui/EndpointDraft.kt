@@ -28,6 +28,8 @@ data class EndpointDraft(
     val healthUpload: Boolean,
     /** The instance's name as last fetched; null while unknown. */
     val name: String?,
+    /** While another endpoint is shown, this one keeps working in the background (Endpoint.background). */
+    val background: Boolean = false,
 ) {
     /** Why a draft cannot be saved as it is. */
     enum class Problem {

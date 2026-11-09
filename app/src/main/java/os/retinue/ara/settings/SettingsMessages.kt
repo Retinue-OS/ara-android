@@ -26,6 +26,7 @@ data class PageDraft(
     val password: String,
     val forgetPassword: Boolean,
     val healthUpload: Boolean,
+    val background: Boolean = false,
 )
 
 /** What the settings page (assets/settings/page.mjs) asks of the app. */
@@ -128,6 +129,7 @@ object SettingsMessages {
                         password = d.text("password", MAX_TEXT) ?: "",
                         forgetPassword = d.bool("forgetPassword") ?: false,
                         healthUpload = d.bool("healthUpload") ?: false,
+                        background = d.bool("background") ?: false,
                     ),
                 )
             }
@@ -206,6 +208,7 @@ object SettingsMessages {
         forgetPassword = d.forgetPassword,
         healthUpload = d.healthUpload,
         name = existing?.knownName,
+        background = d.background,
     )
 
     /** How the page names a [EndpointDraft.Problem]. */

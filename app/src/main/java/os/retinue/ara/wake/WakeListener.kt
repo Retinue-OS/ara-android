@@ -10,8 +10,18 @@ import android.util.Log
 import java.io.File
 
 /**
+ * One phrase listened for: the instance it wakes, its model file and threshold.
+ * Phrases are in [WakeTargets] order, so a frame in which several are heard
+ * wakes the first of them.
+ */
+data class WakePhrase(val endpointId: String, val file: File, val threshold: Float)
+
+/**
  * One listening session: opens the microphone (16 kHz mono PCM16), runs
- * openWakeWord's pipeline on a dedicated thread, and reports a detection. The
+ * openWakeWord's pipeline on a dedicated thread, and reports a detection with
+ * the instance whose phrase was heard. Several phrases share one pipeline: the
+ * audio, the mel and the embedding models run once, and each distinct phrase
+ * model scores the same embeddings (each instance with its own threshold). The
  * mic is held only between [start] and [stop]; [WakeRuntime] decides when.
  * [stop] only signals: the thread lets go of the mic within one read (80 ms).
  * A listener started right after another waits for [previous] to let go first,
@@ -19,9 +29,9 @@ import java.io.File
  */
 class WakeListener(
     context: Context,
-    private val threshold: Float,
+    private val phrases: List<WakePhrase>,
     private var previous: WakeListener? = null,
-    private val onDetected: () -> Unit,
+    private val onDetected: (endpointId: String) -> Unit,
     private val onError: (String) -> Unit,
     /**
      * The listener's recording is about to start ([onRecording]) and was
@@ -32,7 +42,10 @@ class WakeListener(
 ) {
     private val melFile: File = WakeModelFiles.melFile(context)
     private val embeddingFile: File = WakeModelFiles.embeddingFile(context)
-    private val phraseFile: File = WakeModelFiles.phraseFile(context)
+
+    init {
+        require(phrases.isNotEmpty()) { "A listener needs a phrase" }
+    }
 
     @Volatile private var running = false
     @Volatile private var thread: Thread? = null
@@ -74,10 +87,14 @@ class WakeListener(
             // Clear an interrupt from stop(); `running` says whether to go on.
             Thread.interrupted()
             if (!running) return
-            models = OnnxWakeModels(melFile, embeddingFile, phraseFile)
+            // Each distinct model file is loaded once, however many instances listen for it.
+            val files = phrases.map { it.file }.distinct()
+            models = OnnxWakeModels(melFile, embeddingFile, files)
             val m = models
-            val features = WakeFeatures(m::melspectrogram, m::embedding, m.keywordFrames)
-            val scorer = WakeScorer(threshold = threshold)
+            val features = WakeFeatures(m::melspectrogram, m::embedding, m.maxKeywordFrames)
+            val modelOf = phrases.map { files.indexOf(it.file) }
+            val scorers = phrases.map { WakeScorer(threshold = it.threshold) }
+            val scores = FloatArray(files.size)
 
             val minBuffer = AudioRecord.getMinBufferSize(
                 WakeFeatures.SAMPLE_RATE,
@@ -103,13 +120,21 @@ class WakeListener(
                 val n = record.read(buf, 0, buf.size)
                 if (n < 0) throw IllegalStateException("Microphone read failed ($n)")
                 if (n == 0) continue
-                var heard = false
+                var heard: String? = null
                 features.push(buf, n) { window ->
-                    if (!heard && scorer.onScore(m.score(window), SystemClock.elapsedRealtime())) heard = true
+                    if (heard != null) return@push
+                    for (i in files.indices) scores[i] = m.score(i, window)
+                    val now = SystemClock.elapsedRealtime()
+                    // Every scorer sees every frame (warm-up and refractory stay in step);
+                    // the first phrase heard, in WakeTargets order, takes the wake.
+                    for (p in phrases.indices) {
+                        if (scorers[p].onScore(scores[modelOf[p]], now) && heard == null) heard = phrases[p].endpointId
+                    }
                 }
-                if (heard && running) {
+                val woken = heard
+                if (woken != null && running) {
                     running = false
-                    onDetected()
+                    onDetected(woken)
                 }
             }
         } catch (e: Exception) {
