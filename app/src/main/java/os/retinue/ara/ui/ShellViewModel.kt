@@ -211,7 +211,6 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setWakeMode(mode: WakeMode) = viewModelScope.launch { store.setWakeMode(mode) }
     fun setWakeThreshold(value: Float) = viewModelScope.launch { store.setWakeThreshold(value) }
-    fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
     fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
