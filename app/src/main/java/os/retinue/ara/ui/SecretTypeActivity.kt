@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.view.View
 import android.view.WindowManager
+import android.view.autofill.AutofillManager
 import android.view.inputmethod.EditorInfo
 import android.widget.CheckBox
 import android.widget.EditText
@@ -23,15 +24,20 @@ import os.retinue.ara.keyboard.KeyboardRuntime
  * — or the user types — a password that Ara then types into the connected
  * device.
  *
- * What it guarantees: the secret is in this window and in the key presses
- * only. It is never written to a log, never stored, never handed to the page,
- * the server or any agent; the page learns `secret-typed` or
- * `secret-cancelled`, nothing about the secret, not even its length. The
- * window is FLAG_SECURE (no screenshots, blank in recents), and the field is a
+ * What it guarantees: the secret is never written to a log, never stored by
+ * Ara, never handed to the page, the server or any agent; the page learns
+ * `secret-typed` or `secret-cancelled` (or an error that says nothing about
+ * the secret), and the typing is padded so its duration says little of the
+ * length (KeyboardRuntime.typeSecret). The dialog names the device it types
+ * into, and nothing is typed if another one is connected by then. The window
+ * is FLAG_SECURE (no screenshots, blank in Recents), and the field is a
  * password field with the autofill hint "password", so password managers
- * offer to fill it and keyboards do not learn from it. The characters are
- * copied into a buffer that is overwritten once typed, and the field is
- * cleared.
+ * offer to fill it and keyboards do not learn from it. Ara's own copies — the
+ * char buffer and the key reports — are overwritten once typed, the autofill
+ * session is cancelled (no "save password?" prompt), and the field is
+ * cleared. What Ara cannot wipe: the text the IME or the autofill service
+ * handed over is a string in Android's own code, and an autofill service
+ * sees what the user types into a field it serves.
  *
  * A plain [Activity] with a framework [EditText], not Compose: autofill
  * services fill framework views most reliably.
@@ -39,13 +45,18 @@ import os.retinue.ara.keyboard.KeyboardRuntime
 class SecretTypeActivity : Activity() {
 
     private var field: EditText? = null
+    private var dialog: AlertDialog? = null
     private var requestId: String? = null
+    private var host: String? = null
     private var settled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         requestId = KeyboardLogic.cleanId(intent.getStringExtra(EXTRA_ID))
+        host = intent.getStringExtra(EXTRA_HOST)
+        val hostName = KeyboardRuntime.status.value.host?.takeIf { it.address == host }?.name
+            ?: getString(R.string.keyboard_secret_unknown_host)
         val label = KeyboardLogic.cleanLabel(intent.getStringExtra(EXTRA_LABEL))
             ?: getString(R.string.keyboard_secret_default_label)
         val pad = (20 * resources.displayMetrics.density).toInt()
@@ -73,13 +84,14 @@ class SecretTypeActivity : Activity() {
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(label)
-            .setMessage(R.string.keyboard_secret_message)
+            .setMessage(getString(R.string.keyboard_secret_message, hostName))
             .setView(box)
             .setPositiveButton(R.string.keyboard_secret_type) { _, _ -> typeAndFinish(enter.isChecked) }
             .setNegativeButton(R.string.keyboard_secret_cancel) { _, _ -> cancelAndFinish() }
             .setOnCancelListener { cancelAndFinish() }
             .create()
         dialog.window?.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        this.dialog = dialog
         dialog.setOnShowListener {
             edit.requestFocus()
             dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
@@ -94,12 +106,13 @@ class SecretTypeActivity : Activity() {
         val editable = edit?.text
         val chars = CharArray(editable?.length ?: 0)
         editable?.getChars(0, chars.size, chars, 0)
+        endAutofill()
         editable?.clear()
         if (chars.isEmpty()) {
             KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, requestId))
         } else {
-            // The runtime overwrites the buffer once sent.
-            KeyboardRuntime.typeSecret(chars, enter, requestId)
+            // The runtime overwrites the buffer once sent, and types only into [host].
+            KeyboardRuntime.typeSecret(chars, enter, requestId, host)
         }
         finish()
     }
@@ -107,16 +120,28 @@ class SecretTypeActivity : Activity() {
     private fun cancelAndFinish() {
         if (settled) return
         settled = true
+        endAutofill()
         field?.text?.clear()
         KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, requestId))
         finish()
     }
 
+    /** End the autofill session without a "save password?" prompt. */
+    private fun endAutofill() {
+        try {
+            getSystemService(AutofillManager::class.java)?.cancel()
+        } catch (e: Exception) {
+            // No autofill on this phone.
+        }
+    }
+
     override fun onDestroy() {
         // Left by any other way (the task removed): nothing typed, and the page hears so.
         // Covered alone it stays: a password manager's unlock screen returns to it.
-        if (!settled) cancelAndFinish()
+        if (!settled && !isChangingConfigurations) cancelAndFinish()
         field?.text?.clear()
+        dialog?.dismiss()
+        dialog = null
         super.onDestroy()
     }
 
@@ -124,11 +149,14 @@ class SecretTypeActivity : Activity() {
         private const val EXTRA_ID = "id"
         private const val EXTRA_LABEL = "label"
         private const val EXTRA_ENTER = "enter"
+        private const val EXTRA_HOST = "host"
 
-        fun intent(context: Context, id: String?, label: String?, enter: Boolean): Intent =
+        /** The dialog for typing into [host] (the connected device's address, the app's own). */
+        fun intent(context: Context, id: String?, label: String?, enter: Boolean, host: String?): Intent =
             Intent(context, SecretTypeActivity::class.java)
                 .putExtra(EXTRA_ID, id)
                 .putExtra(EXTRA_LABEL, label)
                 .putExtra(EXTRA_ENTER, enter)
+                .putExtra(EXTRA_HOST, host)
     }
 }

@@ -3,7 +3,9 @@ package os.retinue.ara.keyboard
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
 
@@ -37,6 +39,36 @@ class KeyboardLogicTest {
         assertEquals("Meta account", KeyboardLogic.cleanLabel("  Meta\naccount ")?.replace("  ", " "))
         assertNull(KeyboardLogic.cleanLabel("   "))
         assertEquals(KeyboardLogic.MAX_LABEL, KeyboardLogic.cleanLabel("y".repeat(500))!!.length)
+        // Not only ASCII controls: C1, line/paragraph separators and bidi
+        // overrides would break or spoof the dialog's title.
+        assertEquals("Meta account x", KeyboardLogic.cleanLabel("Meta\u202E account\u2028\u0085x"))
+        assertEquals("a b", KeyboardLogic.cleanLabel("a\u200Bb"))
+    }
+
+    @Test
+    fun onlyTheChosenHostMayStay() {
+        // The one the user tapped Connect for, and any while pairing.
+        assertTrue(KeyboardLogic.acceptsHost("BB", pending = "BB", pairing = false, held = true, lastHost = "AA"))
+        assertTrue(KeyboardLogic.acceptsHost("BB", pending = null, pairing = true, held = false, lastHost = "AA"))
+        // Held off by a Disconnect: none, not even the last one.
+        assertFalse(KeyboardLogic.acceptsHost("AA", pending = null, pairing = false, held = true, lastHost = "AA"))
+        // Otherwise the last one, or the first ever.
+        assertTrue(KeyboardLogic.acceptsHost("AA", pending = null, pairing = false, held = false, lastHost = "AA"))
+        assertFalse(KeyboardLogic.acceptsHost("BB", pending = null, pairing = false, held = false, lastHost = "AA"))
+        assertTrue(KeyboardLogic.acceptsHost("BB", pending = null, pairing = false, held = false, lastHost = null))
+    }
+
+    @Test
+    fun secretTimingIsBucketed() {
+        assertEquals(3000L, KeyboardLogic.secretPad(0, 3000))
+        assertEquals(2600L, KeyboardLogic.secretPad(400, 3000))
+        assertEquals(0L, KeyboardLogic.secretPad(3000, 3000))
+        assertEquals(2999L, KeyboardLogic.secretPad(3001, 3000))
+        // Whatever the length within a bucket, it ends at the same moment.
+        assertEquals(400 + KeyboardLogic.secretPad(400, 3000), 2900 + KeyboardLogic.secretPad(2900, 3000))
+        assertEquals(KeyboardError.Failed, KeyboardLogic.secretErrorForPage(KeyboardError.UnsupportedChar))
+        assertEquals(KeyboardError.Failed, KeyboardLogic.secretErrorForPage(KeyboardError.TooLong))
+        assertEquals(KeyboardError.NotConnected, KeyboardLogic.secretErrorForPage(KeyboardError.NotConnected))
     }
 
     @Test
@@ -44,6 +76,8 @@ class KeyboardLogicTest {
         val j = ready.copy(layout = "de-CH").toJson()
         assertEquals(setOf("available", "enabled", "connected", "host", "layout"), j.keys)
         assertEquals("de-CH", j["layout"]!!.jsonPrimitive.content)
+        // The host by name only: its Bluetooth address stays in the app.
+        assertEquals(setOf("name"), j["host"]!!.jsonObject.keys)
         assertEquals(JsonNull, KeyboardStatus().toJson()["host"])
     }
 

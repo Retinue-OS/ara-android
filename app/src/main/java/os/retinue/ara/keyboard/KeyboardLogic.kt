@@ -21,7 +21,7 @@ data class KeyboardStatus(
     val registered: Boolean = false,
     /** A device is connected, so text can be typed now. */
     val connected: Boolean = false,
-    /** The connected device, or else the last one. */
+    /** The connected device, or else the one Ara reconnects to (none after a Disconnect). */
     val host: KeyboardHost? = null,
     /** The layout Ara types for on [host] (KeyLayouts id). */
     val layout: String = KeyLayouts.US,
@@ -31,14 +31,24 @@ data class KeyboardStatus(
     val permitted: Boolean = false,
     /** The paired devices, for the keyboard screen. */
     val paired: List<KeyboardHost> = emptyList(),
+    /** Bluetooth is on (the service and its notification wait for it). */
+    val bluetoothOn: Boolean = false,
+    /** Android refused the keyboard role (another app holds it). */
+    val refused: Boolean = false,
+    /** The user disconnected: Ara connects to no device until they connect one again. */
+    val held: Boolean = false,
 ) {
-    /** The page's JSON (the contract: available, enabled, connected, host, layout). */
+    /**
+     * The page's JSON (the contract: available, enabled, connected, host,
+     * layout). The host is named only — its Bluetooth address is none of the
+     * page's business.
+     */
     fun toJson(): JsonObject = buildJsonObject {
         put("available", available)
         put("enabled", enabled)
         put("connected", connected)
         if (host != null) {
-            put("host", buildJsonObject { put("name", host.name); put("address", host.address) })
+            put("host", buildJsonObject { put("name", host.name) })
         } else {
             put("host", JsonNull)
         }
@@ -50,9 +60,13 @@ data class KeyboardStatus(
 enum class KeyboardError(val key: String) {
     NotEnabled("not-enabled"),
     NotConnected("not-connected"),
+    /** The page asked while Ara was not on screen: nothing types unseen. */
+    NotInFront("not-in-front"),
     TooLong("too-long"),
     UnsupportedChar("unsupported-char"),
     Busy("busy"),
+    /** Stopped by the user (keyboardCancel, the keyboard screen's Stop). */
+    Cancelled("cancelled"),
     Failed("failed"),
 }
 
@@ -105,9 +119,48 @@ object KeyboardLogic {
     /** A request id the page may echo back, or null (dropped) for anything else. */
     fun cleanId(id: String?): String? = id?.takeIf { idChars.matches(it) }
 
-    /** A label for the secret dialog: one line, bounded, never empty. */
+    /**
+     * A label for the secret dialog: one plain line, bounded, never empty —
+     * control, format (bidi, zero-width) and line/paragraph separator
+     * characters become spaces, so a page cannot break or spoof the title.
+     */
     fun cleanLabel(label: String?): String? =
-        label?.replace(Regex("[\\p{Cntrl}]"), " ")?.trim()?.take(MAX_LABEL)?.takeIf { it.isNotEmpty() }
+        label?.replace(LABEL_JUNK, " ")?.replace(Regex("\\s+"), " ")?.trim()?.take(MAX_LABEL)
+            ?.takeIf { it.isNotEmpty() }
+
+    private val LABEL_JUNK = Regex("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]")
+
+    /**
+     * Whether a host that connected may stay connected — Ara types only into
+     * the device the user chose, never into another one that connects by
+     * itself: the one they tapped Connect for, any while they are pairing a
+     * new device, none while they hold Ara off (a Disconnect), the first one
+     * ever, and otherwise only the one it last typed into.
+     */
+    fun acceptsHost(address: String, pending: String?, pairing: Boolean,
+                    held: Boolean, lastHost: String?): Boolean = when {
+        address == pending -> true
+        pairing -> true
+        held -> false
+        lastHost == null -> true
+        else -> address == lastHost
+    }
+
+    /**
+     * How long a secret's typing is held beyond [elapsedMs]: to the next
+     * multiple of [bucketMs], at least one, so the time it takes — which a
+     * page can watch through `busy` answers — tells it little of the length.
+     */
+    fun secretPad(elapsedMs: Long, bucketMs: Long): Long {
+        val buckets = maxOf(1L, (elapsedMs + bucketMs - 1) / bucketMs)
+        return buckets * bucketMs - elapsedMs
+    }
+
+    /** What the page hears of a secret that failed: never why it lies in the secret itself. */
+    fun secretErrorForPage(error: KeyboardError): KeyboardError = when (error) {
+        KeyboardError.UnsupportedChar, KeyboardError.TooLong -> KeyboardError.Failed
+        else -> error
+    }
 
     /**
      * What stands in the way of typing, checked before anything is sent:

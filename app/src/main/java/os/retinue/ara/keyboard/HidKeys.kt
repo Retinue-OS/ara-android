@@ -43,6 +43,7 @@ object HidKeys {
     const val KEY_COMMA = 0x36
     const val KEY_DOT = 0x37
     const val KEY_SLASH = 0x38
+    const val KEY_CAPSLOCK = 0x39
     const val KEY_HOME = 0x4A
     const val KEY_DELETE = 0x4C
     const val KEY_END = 0x4D
@@ -84,6 +85,32 @@ object HidKeys {
 
     /** All keys up. */
     fun release(): ByteArray = ByteArray(8)
+
+    /** The LED bit the host sets while its Caps Lock is on (HID LED page, usage 2). */
+    const val LED_CAPS_LOCK = 0x02
+
+    /**
+     * The LED byte of an output report the host sent (SET_REPORT or interrupt
+     * data), with or without the report id in front, or null for none.
+     */
+    fun ledByte(data: ByteArray?, reportId: Int = REPORT_ID): Byte? = when {
+        data == null || data.isEmpty() -> null
+        data.size >= 2 && data[0].toInt() == reportId -> data[1]
+        else -> data[0]
+    }
+
+    fun capsLockOn(leds: Byte): Boolean = (leds.toInt() and LED_CAPS_LOCK) != 0
+
+    /**
+     * [strokes] typed with the host's Caps Lock out of the way: it would flip
+     * every letter (and on some layouts more), so it is pressed off before
+     * and on again after — layout-independent, unlike flipping Shift.
+     */
+    fun aroundCapsLock(strokes: List<Stroke>, capsOn: Boolean): List<Stroke> {
+        if (!capsOn || strokes.isEmpty()) return strokes
+        val caps = Stroke(MOD_NONE, KEY_CAPSLOCK)
+        return listOf(caps) + strokes + caps
+    }
 
     /**
      * A boot-protocol keyboard with a report id: 8 modifier bits, a reserved

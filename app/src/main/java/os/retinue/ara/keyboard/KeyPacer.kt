@@ -32,19 +32,28 @@ object KeyPacer {
     /**
      * Send [strokes] through [send], pausing [delayMs] after each report.
      * Returns how many presses went out completely; stops at the first report
-     * [send] refuses (the host went away), after trying to release all keys
-     * so none is left held down on the other device.
+     * [send] refuses (the host went away), or before the next press once
+     * [cancelled] says so, after trying to release all keys so none is left
+     * held down on the other device. Every report is overwritten once sent:
+     * for a secret, the reports are the secret in the device's terms.
      */
     suspend fun send(
         strokes: List<Stroke>,
         delayMs: Long = DEFAULT_DELAY_MS,
         pause: suspend (Long) -> Unit = { delay(it) },
+        cancelled: () -> Boolean = { false },
         send: (ByteArray) -> Boolean,
     ): Int {
         var done = 0
         for (s in strokes) {
+            if (cancelled()) {
+                send(HidKeys.release())
+                return done
+            }
             for (report in reports(listOf(s))) {
-                if (!send(report)) {
+                val ok = send(report)
+                report.fill(0)
+                if (!ok) {
                     send(HidKeys.release())
                     return done
                 }

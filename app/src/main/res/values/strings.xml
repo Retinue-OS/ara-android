@@ -233,6 +233,11 @@
     <string name="keyboard_status_starting">Starting…</string>
     <string name="keyboard_status_connected">Connected to %1$s</string>
     <string name="keyboard_status_waiting">On, no device connected</string>
+    <string name="keyboard_status_bluetooth_off">Bluetooth is off. Ara becomes a keyboard again once it is on.</string>
+    <string name="keyboard_status_refused">Another app is acting as a Bluetooth keyboard. Switch it off there, then switch this off and on.</string>
+    <string name="keyboard_status_held">Disconnected. Ara connects to no device until you tap Connect.</string>
+    <string name="keyboard_stop">Stop typing</string>
+    <string name="keyboard_live_reset">Live typing stopped (no device, or you stopped it). The field was cleared; what reached the device stays there.</string>
     <string name="key_enter">Enter</string>
     <string name="key_tab">Tab</string>
     <string name="key_backspace">⌫</string>
@@ -242,7 +247,9 @@
     <string name="key_up">↑</string>
     <string name="key_down">↓</string>
     <string name="keyboard_secret_default_label">Password</string>
-    <string name="keyboard_secret_message">Ara types this into the connected device and forgets it. It is not stored, and neither the dashboard nor Ara sees it.</string>
+    <string name="keyboard_secret_message">Ara types this into %1$s and forgets it. It is not stored, and neither the dashboard nor Ara sees it.</string>
+    <string name="keyboard_secret_unknown_host">the connected device</string>
+    <string name="keyboard_secret_unsupported">The password was not typed: it has a character the device\'s keyboard layout lacks.</string>
     <string name="keyboard_secret_hint">Password</string>
     <string name="keyboard_secret_enter">Press Enter after</string>
     <string name="keyboard_secret_type">Type</string>

@@ -96,6 +96,7 @@ import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthTrigger
+import os.retinue.ara.keyboard.KeyboardError
 import os.retinue.ara.keyboard.KeyboardEvent
 import os.retinue.ara.keyboard.KeyboardLogic
 import os.retinue.ara.keyboard.KeyboardRuntime
@@ -1559,11 +1560,26 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
-            is WebMessage.KeyboardType -> KeyboardRuntime.type(message.text, message.enter, message.id)
-            is WebMessage.KeyboardKey -> KeyboardRuntime.key(message.name, message.id)
-            is WebMessage.KeyboardSecret -> openSecretDialog(message)
+            is WebMessage.KeyboardType ->
+                if (onScreenFor(message.id)) KeyboardRuntime.type(message.text, message.enter, message.id)
+            is WebMessage.KeyboardKey ->
+                if (onScreenFor(message.id)) KeyboardRuntime.key(message.name, message.id)
+            is WebMessage.KeyboardSecret -> if (onScreenFor(message.id)) openSecretDialog(message)
             WebMessage.KeyboardOpen -> openKeyboard()
+            WebMessage.KeyboardCancel -> KeyboardRuntime.cancelTyping()
         }
+    }
+
+    /**
+     * The page may type only while Ara is on screen: a script running in a
+     * page the user is not looking at (the screen off, another app in front)
+     * makes nothing happen on the other device. Otherwise the request is
+     * answered `not-in-front` at once.
+     */
+    private fun onScreenFor(id: String?): Boolean {
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return true
+        KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(id, KeyboardError.NotInFront))
+        return false
     }
 
     /** The keyboard screen (pairing, layout, live typing). */
@@ -1582,7 +1598,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(message.id, error))
             return
         }
-        startActivity(SecretTypeActivity.intent(this, message.id, message.label, message.enter))
+        val host = KeyboardRuntime.status.value.host?.address
+        startActivity(SecretTypeActivity.intent(this, message.id, message.label, message.enter, host))
     }
 
     /**

@@ -85,6 +85,9 @@ sealed class WebMessage {
 
     /** `keyboardOpen()`: the native keyboard screen. */
     data object KeyboardOpen : WebMessage()
+
+    /** `keyboardCancel()`: stop what is being typed. */
+    data object KeyboardCancel : WebMessage()
 }
 
 /** A voice the stand-in exposes as a `SpeechSynthesisVoice`. */
@@ -171,6 +174,7 @@ object ShellMessages {
                 id = KeyboardLogic.cleanId(obj.str("id")),
             )
             "keyboard.open" -> WebMessage.KeyboardOpen
+            "keyboard.cancel" -> WebMessage.KeyboardCancel
             else -> null
         }
     }

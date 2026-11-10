@@ -56,6 +56,31 @@ class KeyLayoutsTest {
     }
 
     @Test
+    fun deadKeysOnlyComposeWhatEveryHostComposes() {
+        // Windows composes ´ with vowels and y, not with n: "ń" is refused
+        // rather than typed as "´n".
+        assertNull(de.strokesFor('ń'))
+        assertNull(ch.strokesFor('ś'))
+        assertTrue(KeyLayouts.map("Gdańsk", de) is Mapped.Unsupported)
+        assertEquals(listOf(Stroke(MOD_RALT, HidKeys.KEY_MINUS), Stroke(MOD_LSHIFT, key('e'))), ch.strokesFor('É'))
+        assertEquals(listOf(Stroke(MOD_RALT, HidKeys.KEY_EQUAL), Stroke(MOD_NONE, key('n'))), ch.strokesFor('ñ'))
+        // AltGr+1 differs between hosts (¦ on Windows, | on Linux): not offered.
+        assertNull(ch.strokesFor('¦'))
+    }
+
+    @Test
+    fun swissFrench() {
+        val fr = KeyLayouts.byId(KeyLayouts.FR_CH)!!
+        assertEquals(Stroke(MOD_NONE, HidKeys.KEY_LEFTBRACE), one(fr, 'è'))
+        assertEquals(Stroke(MOD_LSHIFT, HidKeys.KEY_LEFTBRACE), one(fr, 'ü'))
+        assertEquals(Stroke(MOD_NONE, HidKeys.KEY_SEMICOLON), one(fr, 'é'))
+        assertEquals(Stroke(MOD_NONE, HidKeys.KEY_APOSTROPHE), one(fr, 'à'))
+        assertEquals(Stroke(MOD_RALT, HidKeys.KEY_1 + 1), one(fr, '@'))
+        assertEquals(listOf(Stroke(MOD_NONE, HidKeys.KEY_RIGHTBRACE), Stroke(MOD_LSHIFT, key('u'))), fr.strokesFor('Ü'))
+        assertEquals(KeyLayouts.FR_CH, KeyLayouts.defaultFor(Locale("fr", "CH")))
+    }
+
+    @Test
     fun germanGermany() {
         assertEquals(Stroke(MOD_RALT, key('q')), one(de, '@'))
         assertEquals(Stroke(MOD_NONE, HidKeys.KEY_MINUS), one(de, 'ß'))
@@ -104,6 +129,7 @@ class KeyLayoutsTest {
     fun defaultLayoutFollowsThePhone() {
         assertEquals(KeyLayouts.DE_CH, KeyLayouts.defaultFor(Locale("de", "CH")))
         assertEquals(KeyLayouts.DE_DE, KeyLayouts.defaultFor(Locale("de", "AT")))
-        assertEquals(KeyLayouts.US, KeyLayouts.defaultFor(Locale("fr", "CH")))
+        assertEquals(KeyLayouts.FR_CH, KeyLayouts.defaultFor(Locale("fr", "CH")))
+        assertEquals(KeyLayouts.US, KeyLayouts.defaultFor(Locale("fr", "FR")))
     }
 }

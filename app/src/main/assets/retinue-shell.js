@@ -11,7 +11,8 @@
 //     preferences the app holds for every endpoint: deviceSettings(),
 //     setDeviceSetting(key, value), and (RetinueShell/5) the keyboard for
 //     other devices: keyboardStatus(), keyboardType(text, opts),
-//     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(). Shell -> web
+//     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(),
+//     keyboardCancel(). Shell -> web
 //     events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
@@ -138,8 +139,9 @@
       available: !!s.available,
       enabled: !!s.enabled,
       connected: !!s.connected,
-      host: s.host && typeof s.host === 'object' && typeof s.host.address === 'string'
-        ? { name: typeof s.host.name === 'string' ? s.host.name : s.host.address, address: s.host.address }
+      // The device's name only: its Bluetooth address stays in the app.
+      host: s.host && typeof s.host === 'object' && typeof s.host.name === 'string' && s.host.name
+        ? { name: s.host.name }
         : null,
       layout: typeof s.layout === 'string' ? s.layout : 'us',
     };
@@ -232,6 +234,8 @@
     },
     // The native keyboard screen: switch on, pair, layout, live typing.
     keyboardOpen: function () { post({ type: 'keyboard.open' }); },
+    // Stop what is being typed; its request ends with an `error` `cancelled`.
+    keyboardCancel: function () { post({ type: 'keyboard.cancel' }); },
   };
   try {
     Object.defineProperty(window, 'RetinueShell', { value: shell, configurable: true, enumerable: true, writable: false });

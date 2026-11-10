@@ -34,6 +34,10 @@ import os.retinue.ara.keyboard.HidKeys.Stroke
  * on a German layout, `É` on a Swiss one) is the dead key and then the base
  * letter, or a space for the accent alone.
  *
+ * The tables follow the layouts as Windows, Linux, ChromeOS and Android
+ * (the Quest included) define them. macOS puts many AltGr characters
+ * elsewhere on its German and Swiss layouts, so those come out wrong there.
+ *
  * Pure, so the tables are pinned down by unit tests.
  */
 class KeyLayout internal constructor(
@@ -48,9 +52,11 @@ class KeyLayout internal constructor(
         direct[c]?.let { return listOf(it) }
         // An accent alone: the dead key, then a space.
         SPACING_ACCENTS[c]?.let { mark -> dead[mark]?.let { return listOf(it, SPACE) } }
-        // An accented letter: the dead key, then the letter.
+        // An accented letter: the dead key, then the letter — only for the
+        // letters a dead key composes on every host (Windows composes far
+        // fewer than Linux): "ń" would come out as "´n", so it is refused.
         val nfd = Normalizer.normalize(c.toString(), Normalizer.Form.NFD)
-        if (nfd.length == 2) {
+        if (nfd.length == 2 && COMPOSABLE[nfd[1]]?.contains(nfd[0]) == true) {
             val base = direct[nfd[0]] ?: return null
             val accent = dead[nfd[1]] ?: return null
             return listOf(accent, base)
@@ -60,6 +66,15 @@ class KeyLayout internal constructor(
 
     companion object {
         private val SPACE = Stroke(MOD_NONE, KEY_SPACE)
+
+        /** The letters each dead key composes with, by its combining mark. */
+        private val COMPOSABLE = mapOf(
+            '\u0301' to "aeiouyAEIOUY", // ´
+            '\u0300' to "aeiouAEIOU", // `
+            '\u0302' to "aeiouAEIOU", // ^
+            '\u0308' to "aeiouyAEIOU", // ¨
+            '\u0303' to "anoANO", // ~
+        )
 
         /** Accents typed alone, by the combining mark their dead key carries. */
         private val SPACING_ACCENTS = mapOf(
@@ -82,16 +97,18 @@ object KeyLayouts {
 
     const val US = "us"
     const val DE_CH = "de-CH"
+    const val FR_CH = "fr-CH"
     const val DE_DE = "de-DE"
 
     /** The layouts in the order the settings list them. */
-    val ALL: List<KeyLayout> by lazy { listOf(us(), deCh(), deDe()) }
+    val ALL: List<KeyLayout> by lazy { listOf(us(), deCh(), frCh(), deDe()) }
 
     fun byId(id: String?): KeyLayout? = ALL.firstOrNull { it.id == id }
 
     /** A first guess for a new device: the phone's own language and country. */
     fun defaultFor(locale: Locale): String = when {
         locale.language == "de" && locale.country in setOf("CH", "LI") -> DE_CH
+        locale.language == "fr" && locale.country == "CH" -> FR_CH
         locale.language == "de" -> DE_DE
         else -> US
     }
@@ -197,10 +214,31 @@ object KeyLayouts {
 
     /** German (Switzerland), QWERTZ. Capital umlauts come from the ¨ dead key. */
     private fun deCh() = Builder().apply {
+        swiss()
+        put('ü', KEY_LEFTBRACE); shift('è', KEY_LEFTBRACE)
+        put('ö', KEY_SEMICOLON); shift('é', KEY_SEMICOLON)
+        put('ä', KEY_APOSTROPHE); shift('à', KEY_APOSTROPHE)
+    }.build(DE_CH, "German (Switzerland)")
+
+    /**
+     * French (Switzerland): the Swiss layout with the three keys right of
+     * the letters the other way round — è/ü, é/ö, à/ä.
+     */
+    private fun frCh() = Builder().apply {
+        swiss()
+        put('è', KEY_LEFTBRACE); shift('ü', KEY_LEFTBRACE)
+        put('é', KEY_SEMICOLON); shift('ö', KEY_SEMICOLON)
+        put('à', KEY_APOSTROPHE); shift('ä', KEY_APOSTROPHE)
+    }.build(FR_CH, "French (Switzerland)")
+
+    /**
+     * What the Swiss layouts share. AltGr+1 (`¦` on Windows, `|` on Linux)
+     * is left out: it differs between hosts.
+     */
+    private fun Builder.swiss() {
         letters(swapYZ = true)
         digits()
         shiftedDigits("+\"*ç%&/()=")
-        altGr('¦', HidKeys.KEY_1)
         altGr('@', HidKeys.KEY_1 + 1)
         altGr('#', HidKeys.KEY_1 + 2)
         altGr('¬', HidKeys.KEY_1 + 5)
@@ -211,19 +249,18 @@ object KeyLayouts {
         dead('̂', KEY_EQUAL) // ^
         dead('̀', KEY_EQUAL, MOD_LSHIFT) // `
         dead('̃', KEY_EQUAL, MOD_RALT) // ~
-        put('ü', KEY_LEFTBRACE); shift('è', KEY_LEFTBRACE); altGr('[', KEY_LEFTBRACE)
+        altGr('[', KEY_LEFTBRACE)
         dead('̈', KEY_RIGHTBRACE) // ¨
         shift('!', KEY_RIGHTBRACE); altGr(']', KEY_RIGHTBRACE)
         put('$', KEY_NONUS_HASH); shift('£', KEY_NONUS_HASH); altGr('}', KEY_NONUS_HASH)
-        put('ö', KEY_SEMICOLON); shift('é', KEY_SEMICOLON)
-        put('ä', KEY_APOSTROPHE); shift('à', KEY_APOSTROPHE); altGr('{', KEY_APOSTROPHE)
+        altGr('{', KEY_APOSTROPHE)
         put('§', KEY_GRAVE); shift('°', KEY_GRAVE)
         put(',', KEY_COMMA); shift(';', KEY_COMMA)
         put('.', KEY_DOT); shift(':', KEY_DOT)
         put('-', KEY_SLASH); shift('_', KEY_SLASH)
         put('<', KEY_102ND); shift('>', KEY_102ND); altGr('\\', KEY_102ND)
         altGr('€', KEY_A + ('e' - 'a'))
-    }.build(DE_CH, "German (Switzerland)")
+    }
 
     /** German (Germany), QWERTZ. */
     private fun deDe() = Builder().apply {

@@ -26,6 +26,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -141,6 +142,9 @@ class KeyboardActivity : ComponentActivity() {
                     }
                 }
 
+                if (status.busy) {
+                    OutlinedButton(onClick = KeyboardRuntime::cancelTyping) { Text(stringResource(R.string.keyboard_stop)) }
+                }
                 if (status.connected) {
                     Spacer(Modifier.height(4.dp))
                     Text(stringResource(R.string.keyboard_live), style = MaterialTheme.typography.titleMedium)
@@ -152,7 +156,8 @@ class KeyboardActivity : ComponentActivity() {
                             "escape" to R.string.key_escape, "left" to R.string.key_left, "right" to R.string.key_right,
                             "up" to R.string.key_up, "down" to R.string.key_down,
                         ).forEach { (name, label) ->
-                            Button(onClick = { KeyboardRuntime.key(name) }) { Text(stringResource(label)) }
+                            // In order with the live field's edits, never dropped as busy.
+                            Button(onClick = { KeyboardRuntime.liveKey(name) }) { Text(stringResource(label)) }
                         }
                     }
                 }
@@ -172,9 +177,25 @@ class KeyboardActivity : ComponentActivity() {
     @Composable
     private fun LiveField() {
         var last by remember { mutableStateOf("") }
+        var view by remember { mutableStateOf<EditText?>(null) }
+        // Live typing failed or was stopped: the device no longer has what
+        // the field shows, so the field starts over (sending nothing).
+        val resets by KeyboardRuntime.liveResets.collectAsStateWithLifecycle()
+        var seenResets by remember { mutableStateOf(resets) }
+        var wasReset by remember { mutableStateOf(false) }
+        LaunchedEffect(resets) {
+            if (resets != seenResets) {
+                seenResets = resets
+                last = ""
+                view?.setText("")
+                wasReset = true
+            }
+        }
+        if (wasReset) Text(stringResource(R.string.keyboard_live_reset), style = MaterialTheme.typography.bodySmall)
         AndroidView(
             factory = { ctx ->
                 EditText(ctx).apply {
+                    view = this
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                         InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                     imeOptions = EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
@@ -185,6 +206,7 @@ class KeyboardActivity : ComponentActivity() {
                     // device could not get them, and the next diff would be
                     // computed against text it never had.
                     filters = arrayOf(
+                        InputFilter.LengthFilter(KeyboardLogic.MAX_TEXT),
                         InputFilter { source, start, end, _, _, _ ->
                             val layout = KeyLayouts.byId(KeyboardRuntime.status.value.layout)
                                 ?: return@InputFilter null
@@ -204,7 +226,10 @@ class KeyboardActivity : ComponentActivity() {
                             val now = s?.toString().orEmpty()
                             val (back, add) = KeyboardLogic.liveDiff(last, now)
                             last = now
-                            if (back > 0 || add.isNotEmpty()) KeyboardRuntime.live(back, add)
+                            if (back > 0 || add.isNotEmpty()) {
+                                wasReset = false
+                                KeyboardRuntime.live(back, add)
+                            }
                         }
                     })
                 }
@@ -217,7 +242,10 @@ class KeyboardActivity : ComponentActivity() {
     private fun statusLine(status: KeyboardStatus): String = when {
         !status.enabled -> stringResource(R.string.keyboard_status_off)
         !status.permitted -> stringResource(R.string.keyboard_status_permission)
+        !status.bluetoothOn -> stringResource(R.string.keyboard_status_bluetooth_off)
+        status.refused -> stringResource(R.string.keyboard_status_refused)
         !status.registered -> stringResource(R.string.keyboard_status_starting)
+        status.held && !status.connected -> stringResource(R.string.keyboard_status_held)
         status.connected && status.host != null -> stringResource(R.string.keyboard_status_connected, status.host.name)
         else -> stringResource(R.string.keyboard_status_waiting)
     }

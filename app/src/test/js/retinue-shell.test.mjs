@@ -348,7 +348,8 @@ console.log('device settings bridge tests passed');
   vm.createContext(ctx);
   vm.runInContext(kb, ctx);
   const shell = ctx.RetinueShell;
-  assert.deepEqual(JSON.parse(shell.keyboardStatus()), status);
+  // The device by name only, whatever the shell sends: no Bluetooth address reaches the page.
+  assert.deepEqual(JSON.parse(shell.keyboardStatus()), { ...status, host: { name: 'Quest 3' } });
   shell.keyboardType('Grüezi', { id: 'm1', enter: true });
   shell.keyboardType('two', '{"id":"m2"}');   // opts as JSON, as the contract writes it
   shell.keyboardType(42, {});                  // not text: ignored
@@ -359,6 +360,7 @@ console.log('device settings bridge tests passed');
   shell.keyboardSecret({ id: 's1', label: 'Meta account', enter: true });
   shell.keyboardSecret('nonsense');            // unreadable opts: a plain dialog
   shell.keyboardOpen();
+  shell.keyboardCancel();
   assert.deepEqual(posts, [
     { type: 'keyboard.type', text: 'Grüezi', enter: true, id: 'm1' },
     { type: 'keyboard.type', text: 'two', enter: false, id: 'm2' },
@@ -368,6 +370,7 @@ console.log('device settings bridge tests passed');
     { type: 'keyboard.secret', label: 'Meta account', enter: true, id: 's1' },
     { type: 'keyboard.secret', enter: false },
     { type: 'keyboard.open' },
+    { type: 'keyboard.cancel' },
   ]);
   // The shell pushes a new status before its event: a listener reads the new one.
   const heard = [];

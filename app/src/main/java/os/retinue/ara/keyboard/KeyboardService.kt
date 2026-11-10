@@ -5,6 +5,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationChannelCompat
@@ -18,7 +19,13 @@ import os.retinue.ara.R
  * The foreground service (type connectedDevice) that keeps Ara registered as
  * a Bluetooth keyboard while it is in the background, with its ongoing
  * notification. It does no work itself: [KeyboardRuntime] holds the
- * registration; this only keeps the process alive and says so.
+ * registration; this only keeps the process alive and says so. It runs only
+ * while the keyboard is on and Bluetooth is on.
+ *
+ * Started with startForegroundService, it must enter the foreground even when
+ * it cannot stay (the permissions were taken back, started from the
+ * background): otherwise Android kills the app with "did not then call
+ * startForeground()". It then leaves at once — like WakeService.
  */
 class KeyboardService : Service() {
 
@@ -26,22 +33,54 @@ class KeyboardService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        val notification = notification()
         try {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
-                notification(),
+                notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
             )
         } catch (e: Exception) {
             // Started from the background, or the permissions were taken back:
             // the keyboard then works while Ara is in front only.
             Log.w(TAG, "could not enter the foreground", e)
-            stopSelf()
+            leave(notification)
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    /**
+     * Satisfy startForegroundService's promise without the connectedDevice
+     * type, then stop. A short service needs no permission (Android 14+);
+     * before that the type is not checked when entering the foreground.
+     */
+    private fun leave(notification: android.app.Notification) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "could not enter the foreground to stop", e)
+        }
+        try {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            Log.w(TAG, "stopForeground failed", e)
+        }
+        stopSelf()
+    }
+
+    // Not sticky: a restart by the system would happen in the background,
+    // where a connectedDevice service may not start; the app's next start
+    // (KeyboardRuntime.init) brings it back.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
 
     private fun notification(): android.app.Notification {
         val manager = NotificationManagerCompat.from(this)

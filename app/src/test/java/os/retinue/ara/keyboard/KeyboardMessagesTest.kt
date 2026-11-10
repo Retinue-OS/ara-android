@@ -36,6 +36,7 @@ class KeyboardMessagesTest {
         )
         assertEquals(WebMessage.KeyboardSecret(null, false, null), ShellMessages.parse("""{"type":"keyboard.secret"}"""))
         assertEquals(WebMessage.KeyboardOpen, ShellMessages.parse("""{"type":"keyboard.open"}"""))
+        assertEquals(WebMessage.KeyboardCancel, ShellMessages.parse("""{"type":"keyboard.cancel"}"""))
     }
 
     @Test
