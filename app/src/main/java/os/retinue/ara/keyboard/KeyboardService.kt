@@ -33,6 +33,7 @@ class KeyboardService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        starting = false
         val notification = notification()
         try {
             ServiceCompat.startForeground(
@@ -41,6 +42,13 @@ class KeyboardService : Service() {
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
             )
+            // Asked to stop before it got here (Bluetooth on and off at once):
+            // the start's promise is kept, then it goes.
+            if (stopRequested) {
+                stopRequested = false
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
         } catch (e: Exception) {
             // Started from the background, or the permissions were taken back:
             // the keyboard then works while Ara is in front only.
@@ -112,15 +120,34 @@ class KeyboardService : Service() {
         private const val CHANNEL = "keyboard"
         private const val NOTIFICATION_ID = 7
 
+        /** Started, and onCreate not yet run: a stop then waits for it. */
+        @Volatile
+        private var starting = false
+
+        @Volatile
+        private var stopRequested = false
+
         fun start(context: Context) {
             try {
+                stopRequested = false
+                starting = true
                 ContextCompat.startForegroundService(context, Intent(context, KeyboardService::class.java))
             } catch (e: Exception) {
+                starting = false
                 Log.w(TAG, "could not start", e)
             }
         }
 
+        /**
+         * Stop the service. Before its onCreate has run, stopping it would break
+         * startForegroundService's promise (Android kills the app for that):
+         * onCreate then enters the foreground and leaves at once instead.
+         */
         fun stop(context: Context) {
+            if (starting) {
+                stopRequested = true
+                return
+            }
             context.stopService(Intent(context, KeyboardService::class.java))
         }
     }

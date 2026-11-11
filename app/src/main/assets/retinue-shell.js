@@ -209,21 +209,24 @@
       health.auto_on_resume = !!on;
       post({ type: 'health.auto', on: !!on });
     },
-    // {available, enabled, connected, host: {name, address}|null, layout} as a JSON string.
+    // {available, enabled, connected, host: {name}|null, layout} as a JSON string
+    // (the host by name only: its Bluetooth address stays in the app).
     keyboardStatus: function () { return JSON.stringify(keyboard); },
     // Type `text` into the connected device; opts {id, enter} (an object or
     // its JSON). Returns at once; a `keyboard` event says `typed` or `error`.
     // A line break is typed as Shift+Enter (a new line in chat apps and text
     // areas, but a submit in a terminal or a one-line field), a tab as Tab.
+    // Invalid arguments throw (the page's call fails at once) rather than
+    // vanishing without the event the page waits for.
     keyboardType: function (text, opts) {
-      if (typeof text !== 'string') return;
+      if (typeof text !== 'string') throw new TypeError('keyboardType: text must be a string');
       var o = keyboardOpts(opts);
       post({ type: 'keyboard.type', text: text, enter: !!o.enter, id: keyboardId(o) });
     },
     // Press one key: enter, tab, backspace, escape, up, down, left, right, home, end, delete, space;
     // opts {id} (an object or its JSON). A `keyboard` event says `typed` or `error`.
     keyboardKey: function (name, opts) {
-      if (KEYBOARD_KEYS.indexOf(name) < 0) return;
+      if (KEYBOARD_KEYS.indexOf(name) < 0) throw new TypeError('keyboardKey: unknown key ' + String(name));
       post({ type: 'keyboard.key', name: name, id: keyboardId(keyboardOpts(opts)) });
     },
     // The native secret dialog; opts {id, label, enter}. The page hears only

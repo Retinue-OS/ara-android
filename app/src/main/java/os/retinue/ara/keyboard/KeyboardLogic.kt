@@ -133,17 +133,24 @@ object KeyboardLogic {
     /**
      * Whether a host that connected may stay connected — Ara types only into
      * the device the user chose, never into another one that connects by
-     * itself: the one they tapped Connect for, any while they are pairing a
-     * new device, none while they hold Ara off (a Disconnect), the first one
-     * ever, and otherwise only the one it last typed into.
+     * itself: while they switch to a device ([pending]), only that one; else
+     * a device they paired just now ([recentlyBonded] — pairing takes the
+     * user on both sides); none while they hold Ara off (a Disconnect); the
+     * first one ever; and otherwise only the one it last typed into.
      */
-    fun acceptsHost(address: String, pending: String?, pairing: Boolean,
-                    held: Boolean, lastHost: String?): Boolean = when {
-        address == pending -> true
-        pairing -> true
+    fun acceptsHost(address: String, pending: String?, held: Boolean,
+                    recentlyBonded: Boolean, lastHost: String?): Boolean = when {
+        pending != null -> address == pending
+        recentlyBonded -> true
         held -> false
         lastHost == null -> true
         else -> address == lastHost
+    }
+
+    /** The `count` of a `typed` event: the text's characters, a CRLF line break as one. */
+    fun charCount(text: CharSequence): Int {
+        val s = text.toString()
+        return s.codePointCount(0, s.length) - Regex("\r\n").findAll(s).count()
     }
 
     /**

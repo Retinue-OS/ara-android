@@ -352,11 +352,12 @@ console.log('device settings bridge tests passed');
   assert.deepEqual(JSON.parse(shell.keyboardStatus()), { ...status, host: { name: 'Quest 3' } });
   shell.keyboardType('Grüezi', { id: 'm1', enter: true });
   shell.keyboardType('two', '{"id":"m2"}');   // opts as JSON, as the contract writes it
-  shell.keyboardType(42, {});                  // not text: ignored
+  // Invalid arguments throw: the page's call fails at once, nothing is posted.
+  assert.throws(() => shell.keyboardType(42, {}), TypeError);
   shell.keyboardKey('enter');
   shell.keyboardKey('tab', { id: 'k1' });
   shell.keyboardKey('escape', '{"id":"k2"}');  // opts as JSON
-  shell.keyboardKey('format-disk');            // not a key: ignored
+  assert.throws(() => shell.keyboardKey('format-disk'), TypeError);
   shell.keyboardSecret({ id: 's1', label: 'Meta account', enter: true });
   shell.keyboardSecret('nonsense');            // unreadable opts: a plain dialog
   shell.keyboardOpen();

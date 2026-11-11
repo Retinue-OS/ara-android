@@ -56,12 +56,23 @@ import os.retinue.ara.keyboard.KeyboardStatus
  */
 class KeyboardActivity : ComponentActivity() {
 
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result.values.all { it }) KeyboardRuntime.setEnabled(true) else KeyboardRuntime.retry()
+    // An empty result (the request was dismissed) grants nothing: ask the runtime.
+    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (KeyboardRuntime.permitted()) KeyboardRuntime.setEnabled(true) else KeyboardRuntime.retry()
+    }
+
+    // Being discoverable needs one more permission, asked for only when the user wants it.
+    private val advertise = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (KeyboardRuntime.mayAdvertise()) discoverable.launch(KeyboardRuntime.discoverableIntent())
     }
 
     private val discoverable = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         KeyboardRuntime.retry()
+    }
+
+    private fun makeDiscoverable() {
+        if (KeyboardRuntime.mayAdvertise()) discoverable.launch(KeyboardRuntime.discoverableIntent())
+        else advertise.launch(KeyboardRuntime.ADVERTISE_PERMISSIONS)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,7 +120,7 @@ class KeyboardActivity : ComponentActivity() {
                     Text(stringResource(R.string.keyboard_intro), style = MaterialTheme.typography.bodySmall)
                     return@Column
                 }
-                OutlinedButton(onClick = { discoverable.launch(KeyboardRuntime.discoverableIntent()) }) {
+                OutlinedButton(onClick = ::makeDiscoverable) {
                     Text(stringResource(R.string.keyboard_discoverable))
                 }
                 Text(stringResource(R.string.keyboard_pair_hint), style = MaterialTheme.typography.bodySmall)
@@ -207,15 +218,17 @@ class KeyboardActivity : ComponentActivity() {
                     // computed against text it never had.
                     filters = arrayOf(
                         InputFilter.LengthFilter(KeyboardLogic.MAX_TEXT),
+                        // A pasted \r\n is one line break on the device but two
+                        // characters here: \r is dropped, so a deletion later
+                        // never takes one character too many.
                         InputFilter { source, start, end, _, _, _ ->
                             val layout = KeyLayouts.byId(KeyboardRuntime.status.value.layout)
                                 ?: return@InputFilter null
-                            if ((start until end).all { KeyLayouts.typeable(source[it], layout) }) {
+                            val keep: (Char) -> Boolean = { it != '\r' && KeyLayouts.typeable(it, layout) }
+                            if ((start until end).all { keep(source[it]) }) {
                                 null
                             } else {
-                                (start until end).map { source[it] }
-                                    .filter { KeyLayouts.typeable(it, layout) }
-                                    .joinToString("")
+                                (start until end).map { source[it] }.filter(keep).joinToString("")
                             }
                         },
                     )

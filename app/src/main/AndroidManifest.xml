@@ -53,6 +53,9 @@
          the registration while Ara is in the background. Asked for only when
          the user switches the keyboard on. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Held while typing: a press whose release came after the phone slept
+         would repeat on the other device. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
@@ -251,7 +254,7 @@
         <activity
             android:name=".ui.SecretTypeActivity"
             android:exported="false"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|fontScale|density|locale|layoutDirection"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|fontScale|fontWeightAdjustment|density|locale|layoutDirection|colorMode|touchscreen|mcc|mnc|grammaticalGender"
             android:theme="@style/Theme.Ara.Translucent"
             android:windowSoftInputMode="stateAlwaysVisible" />
 

@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.View
 import android.view.WindowManager
@@ -36,8 +38,10 @@ import os.retinue.ara.keyboard.KeyboardRuntime
  * char buffer and the key reports — are overwritten once typed, the autofill
  * session is cancelled (no "save password?" prompt), and the field is
  * cleared. What Ara cannot wipe: the text the IME or the autofill service
- * handed over is a string in Android's own code, and an autofill service
- * sees what the user types into a field it serves.
+ * handed over is a string in Android's own code, the field's own buffer keeps
+ * the old characters until reused (clearing only moves its gap), and an
+ * autofill service sees what the user types into a field it serves. One dialog
+ * at a time; the page's Stop closes it; it closes itself after ten minutes.
  *
  * A plain [Activity] with a framework [EditText], not Compose: autofill
  * services fill framework views most reliably.
@@ -49,14 +53,23 @@ class SecretTypeActivity : Activity() {
     private var requestId: String? = null
     private var host: String? = null
     private var settled = false
+    private val timer = Handler(Looper.getMainLooper())
+
+    /** The page's Stop (`keyboardCancel()`) closes this dialog, as the user's Cancel would. */
+    private val closer: () -> Unit = { runOnUiThread { cancelAndFinish() } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         requestId = KeyboardLogic.cleanId(intent.getStringExtra(EXTRA_ID))
         host = intent.getStringExtra(EXTRA_HOST)
+        // The name the other device gave itself: shown cleaned, like the label.
         val hostName = KeyboardRuntime.status.value.host?.takeIf { it.address == host }?.name
+            ?.let(KeyboardLogic::cleanLabel)
             ?: getString(R.string.keyboard_secret_unknown_host)
+        KeyboardRuntime.secretDialogOpened(closer)
+        // Nobody answers: it closes itself, so the page hears an end.
+        timer.postDelayed({ cancelAndFinish() }, TIMEOUT_MS)
         val label = KeyboardLogic.cleanLabel(intent.getStringExtra(EXTRA_LABEL))
             ?: getString(R.string.keyboard_secret_default_label)
         val pad = (20 * resources.displayMetrics.density).toInt()
@@ -139,6 +152,8 @@ class SecretTypeActivity : Activity() {
         // Left by any other way (the task removed): nothing typed, and the page hears so.
         // Covered alone it stays: a password manager's unlock screen returns to it.
         if (!settled && !isChangingConfigurations) cancelAndFinish()
+        timer.removeCallbacksAndMessages(null)
+        KeyboardRuntime.secretDialogClosed(closer)
         field?.text?.clear()
         dialog?.dismiss()
         dialog = null
@@ -150,6 +165,9 @@ class SecretTypeActivity : Activity() {
         private const val EXTRA_LABEL = "label"
         private const val EXTRA_ENTER = "enter"
         private const val EXTRA_HOST = "host"
+
+        /** How long the dialog waits for the user before it closes as cancelled. */
+        private const val TIMEOUT_MS = 10 * 60 * 1000L
 
         /** The dialog for typing into [host] (the connected device's address, the app's own). */
         fun intent(context: Context, id: String?, label: String?, enter: Boolean, host: String?): Intent =

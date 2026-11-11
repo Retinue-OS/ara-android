@@ -47,15 +47,25 @@ class KeyboardLogicTest {
 
     @Test
     fun onlyTheChosenHostMayStay() {
-        // The one the user tapped Connect for, and any while pairing.
-        assertTrue(KeyboardLogic.acceptsHost("BB", pending = "BB", pairing = false, held = true, lastHost = "AA"))
-        assertTrue(KeyboardLogic.acceptsHost("BB", pending = null, pairing = true, held = false, lastHost = "AA"))
-        // Held off by a Disconnect: none, not even the last one.
-        assertFalse(KeyboardLogic.acceptsHost("AA", pending = null, pairing = false, held = true, lastHost = "AA"))
+        // While switching: only the device asked for — not the old one coming back.
+        assertTrue(KeyboardLogic.acceptsHost("BB", pending = "BB", held = true, recentlyBonded = false, lastHost = "AA"))
+        assertFalse(KeyboardLogic.acceptsHost("AA", pending = "BB", held = false, recentlyBonded = false, lastHost = "AA"))
+        // One paired just now (the user paired it), even after a Disconnect.
+        assertTrue(KeyboardLogic.acceptsHost("CC", pending = null, held = true, recentlyBonded = true, lastHost = "AA"))
+        // Held off by a Disconnect: no other, not even the last one.
+        assertFalse(KeyboardLogic.acceptsHost("AA", pending = null, held = true, recentlyBonded = false, lastHost = "AA"))
+        assertFalse(KeyboardLogic.acceptsHost("BB", pending = null, held = true, recentlyBonded = false, lastHost = null))
         // Otherwise the last one, or the first ever.
-        assertTrue(KeyboardLogic.acceptsHost("AA", pending = null, pairing = false, held = false, lastHost = "AA"))
-        assertFalse(KeyboardLogic.acceptsHost("BB", pending = null, pairing = false, held = false, lastHost = "AA"))
-        assertTrue(KeyboardLogic.acceptsHost("BB", pending = null, pairing = false, held = false, lastHost = null))
+        assertTrue(KeyboardLogic.acceptsHost("AA", pending = null, held = false, recentlyBonded = false, lastHost = "AA"))
+        assertFalse(KeyboardLogic.acceptsHost("BB", pending = null, held = false, recentlyBonded = false, lastHost = "AA"))
+        assertTrue(KeyboardLogic.acceptsHost("BB", pending = null, held = false, recentlyBonded = false, lastHost = null))
+    }
+
+    @Test
+    fun typedCountsCharacters() {
+        assertEquals(5, KeyboardLogic.charCount("hello"))
+        assertEquals(3, KeyboardLogic.charCount("a\r\nb"), "a CRLF line break is one")
+        assertEquals(1, KeyboardLogic.charCount("😀"), "a code point, not two UTF-16 units")
     }
 
     @Test

@@ -175,9 +175,12 @@ The web app detects the shell and talks to it through:
   `escape`, `up`, `down`, `left`, `right`, `home`, `end`, `delete`, `space`;
   `keyboardSecret(opts)` with `{id, label, enter}` (opens the native secret
   dialog); `keyboardOpen()` (the native keyboard screen); `keyboardCancel()`
-  (stops what is being typed). Typing, keys and the secret dialog are taken
-  only while Ara is on screen (otherwise `not-in-front` at once). An `id` is
-  echoed when it is 1–64 of `A–Z a–z 0–9 . _ : -`, and dropped otherwise.
+  (stops a text being typed and closes an open secret dialog; never a secret
+  being typed). Typing, keys and the secret dialog are taken only while the
+  user is looking at Ara — resumed, focused, unlocked (otherwise
+  `not-in-front` at once) — and not while a secret dialog is open (`busy`).
+  An `id` is echoed when it is 1–64 of `A–Z a–z 0–9 . _ : -`, and dropped
+  otherwise; invalid arguments throw.
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -204,7 +207,8 @@ The web app detects the shell and talks to it through:
   `disabled`); a changed endpoint list sends `type` `endpoints`, changed
   per-device preferences `type` `device-settings` with the `keys` that
   changed. The keyboard sends `type` `keyboard` with a `state`: `typed`
-  (`count`, the characters typed; a key press too), `error` (`error`:
+  (`count`, the characters typed — a CRLF line break as one; a key press
+  too), `error` (`error`:
   `not-enabled`, `not-connected`, `not-in-front`, `too-long`,
   `unsupported-char`, `busy`, `cancelled`, `failed`),
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
@@ -831,26 +835,32 @@ apps use.
 
 **Switching it on and pairing.** Settings → *Keyboard for other devices* →
 *Open keyboard* opens the native keyboard screen. Switching *Act as a Bluetooth
-keyboard* on asks for Android's Bluetooth permissions (connect, and advertise
-to be discoverable), registers Ara as a keyboard and starts a foreground
-service (type `connectedDevice`, with an ongoing notification) so the
-registration survives Ara going to the background — only while Bluetooth is
-on. *Make this phone discoverable* asks Android for two minutes of
-visibility; the other device then pairs with the phone from its own
-Bluetooth settings. The screen lists the paired devices with
-*Connect*/*Disconnect*, and says when Bluetooth is off or another app holds
-the keyboard role. Off, Ara unregisters and the service leaves.
+keyboard* on asks for Android's *connect* Bluetooth permission, registers Ara
+as a keyboard and starts a foreground service (type `connectedDevice`, with
+an ongoing notification) so the registration survives Ara going to the
+background — only while Bluetooth is on (when the app was started in the
+background, the service starts the next time Ara comes to the front). *Make
+this phone discoverable* asks for the *advertise* permission then, and
+Android for two minutes of visibility; the other device then pairs with the
+phone from its own Bluetooth settings. The screen lists the paired devices
+with *Connect*/*Disconnect*, and says when Bluetooth is off, when another app
+holds the keyboard role, and — after ten seconds without an answer from it —
+when the phone has no HID device profile at all. Off, Ara unregisters and the
+service leaves.
 
 **Which device it types into.** Only the one the user chose: the one they
-tapped *Connect* for, or paired just now, and from then on the one it last
-typed into. Another paired device that connects to the phone by itself is
-disconnected again, so a text never lands on a device nobody picked. Ara
-reconnects to the chosen device when it starts, when the keyboard is switched
-on, when Bluetooth comes on, and when that device connects to the phone for
-something else or is bonded anew (its own Bluetooth broadcast; Ara does not
-page it). *Disconnect* holds: Ara connects to no device — not even the chosen
-one connecting by itself — until the user taps *Connect* (or pairs a device,
-or switches the keyboard on afresh).
+tapped *Connect* for — while that connection is pending (up to 30 s), no
+other — or one paired with the phone in the last three minutes (from the
+other device, or in Android's own Bluetooth settings: pairing takes the user
+on both sides), and from then on the one it last typed into. Another paired
+device that connects to the phone by itself is disconnected again, so a text
+never lands on a device nobody picked. Ara reconnects to the chosen device
+when it starts, when the keyboard is switched on, when Bluetooth comes on,
+and when that device connects to the phone for something else or is bonded
+anew (its own Bluetooth broadcast; Ara does not page it). *Disconnect* holds:
+Ara connects to no device — not even the chosen one connecting by itself —
+but one paired just now, until the user taps *Connect* (or switches the
+keyboard on afresh).
 
 **Layouts.** A keyboard sends key positions, and the other device turns them
 into characters with the layout *it* is set to; so Ara types for that layout,
@@ -864,12 +874,15 @@ a German or Swiss layout the AltGr characters (`@`, `#`, `[`, `{`, `\`, `|`,
 a Mac. Characters a layout makes with a dead key (`É`, `ô`, capital umlauts on
 the Swiss layouts) are typed as the dead key and the letter, for the letters
 every host composes (á é í ó ú ý, à è ì ò ù, â ê î ô û, ä ë ï ö ü ÿ, ã ñ õ and
-their capitals); others (`ń`, `ś`, …) count as missing. A text is mapped
+their capitals); others (`ń`, `ś`, …) count as missing, and so do `´` and `¨`
+alone (dead key and space make `'` and `"` on Linux hosts). A text is mapped
 whole before anything is sent: a character the layout cannot type is
 reported (`unsupported-char`) and nothing is typed, so no half text is left
 on the other device. When the host's Caps Lock is on (its LED report says
 so), Ara presses it off before the text and on again after, so letters keep
-their case. A line break is typed as Shift+Enter
+their case; a newly connected host counts as off until it says otherwise (a
+host that remaps Caps Lock — to Escape, say — gets those two presses as
+that). A line break is typed as Shift+Enter
 (a new line, not "send", in chat apps and text areas — but in a terminal, a
 URL bar or a one-line field Shift+Enter submits like Enter, which is why the
 dashboard never types a line break without a tap); Enter after the text is an
@@ -879,23 +892,33 @@ explicit option.
 presses), modifiers are pressed a report ahead of their key, and there is a
 pause of 12 ms after every report: hosts drop keys that arrive faster (the
 Quest among them). Typing goes one request at a time; a request while one is
-running is refused as `busy`. If the device goes away mid-text, Ara releases
-all keys and reports `failed`; *Stop typing* on the keyboard screen (or the
-page's `keyboardCancel()`) stops it before the next key and reports
-`cancelled`.
+running is refused as `busy`. The phone is kept awake while it types (a
+press whose release came only after it slept would repeat). If the device
+goes away mid-text, Ara releases all keys and reports `failed`; *Stop typing*
+on the keyboard screen stops anything, a password too, before the next
+character (never between a dead key and its letter) and reports `cancelled`.
+The page's `keyboardCancel()` stops a text and closes an open password
+dialog, but not a password being typed — a page cutting that short would
+learn its length, and leave part of it on the device.
 
 **From the dashboard.** The page asks with `keyboardType(text, {id, enter})`
 and `keyboardKey(name, {id})` and hears the outcome — `typed` or `error`, with
 the request's `id` — as `keyboard` events (see the
 [contract](#shell--web-contract)). The app types only what a page of the
 configured origin hands over, through the same origin-restricted bridge as
-everything else, and only while Ara is on screen: a script in a page nobody
-is looking at gets `not-in-front`. When to type is the dashboard's and the
-user's business.
+everything else, and only while the user is looking at Ara — resumed, its
+window focused, the phone unlocked: a script in a page nobody is looking at
+(the screen off, another app or the other half of a split screen in use)
+gets `not-in-front`. While a password dialog is open the page's requests get
+`busy`, and there is one dialog at a time. Typing that started then runs to
+its end (or Stop). A call with invalid arguments throws; every other request
+with an id gets exactly one final event. When to type is the dashboard's and
+the user's business.
 
 **Passwords — the secret path.** `keyboardSecret({id, label, enter})` opens a
 **native dialog**, outside the WebView, titled with the page's label ("Meta
-account") and naming the device it types into. Its field is a password field
+account") and naming the device it types into (by the name the device gave
+itself, cleaned like the label). Its field is a password field
 with the autofill hint *password*, so the user's password manager (Bitwarden,
 KeePassDX, …) offers to fill it — a locked one may show its unlock screen
 first, and the dialog waits under it; the user can also type. *Type* sends it
@@ -907,20 +930,23 @@ holds:
 - the page hears only `secret-typed` or `secret-cancelled` (or an `error` that
   says nothing about the secret: a character the layout lacks is `failed` to
   the page, and the phone itself says why). The typing is held — busy to
-  every other request — to a multiple of three seconds, so how long it took,
-  which a page could watch, says little of the length;
-- Ara's own copies are overwritten once sent: the char array the field's
-  characters are copied into, and every key report. The autofill session is
-  cancelled (no "save password?" prompt) and the field is cleared. What Ara
-  cannot wipe: the IME and the autofill service hand the text over as a
-  string in Android's own code, and an autofill service sees what the user
-  types into a field it serves;
+  every other request — to a multiple of three seconds, stopped or not, so
+  how long it took, which a page could watch, says little of the length; the
+  page cannot cut it short;
+- Ara's own copies are overwritten: the char array the field's characters are
+  copied into (as soon as they are mapped to key presses), the lists of those
+  presses, and every key report once sent. The autofill session is cancelled
+  (no "save password?" prompt) and the field is cleared. What Ara cannot
+  wipe: the IME and the autofill service hand the text over as a string in
+  Android's own code, the field's buffer keeps old characters until reused,
+  and an autofill service sees what the user types into a field it serves;
 - the dialog's window is `FLAG_SECURE` (no screenshots, blank in Recents), the
   keyboard is told not to learn from it, and the field cannot be long-pressed
   to copy;
 - no dialog opens while no device is connected (the page hears
   `not-connected` instead), so nobody is asked for a password that could not
-  be typed.
+  be typed; a dialog nobody answers closes itself after ten minutes
+  (`secret-cancelled`).
 
 **Live mode.** The keyboard screen's *Type live* field sends every change at
 once: new characters typed, deletions as Backspace (an edit in the middle of
@@ -928,9 +954,10 @@ the field is sent as deleting back to it and retyping the rest). Changes are
 queued and sent in order — none is dropped while an earlier one is still
 being typed, the buttons below (Enter, Tab, Backspace, Esc, the arrows) in
 the same queue — and the field takes only characters the device's layout can
-type, up to 4000; a line break goes as Shift+Enter. If an edit cannot be sent
-(no device, stopped), the queue is dropped and the field cleared, with a note:
-what reached the device stays there. The field takes no suggestions and no
+type, up to 4000 (a pasted `\r\n` becomes one line break); a line break goes
+as Shift+Enter. If an edit cannot be sent (no device, stopped), or waiting
+edits are dropped by a Stop, the field is cleared, with a note: what reached
+the device stays there. The field takes no suggestions and no
 personalised learning, and takes part in no autofill.
 
 **Limits.** The other device treats the input as it would from any keyboard:

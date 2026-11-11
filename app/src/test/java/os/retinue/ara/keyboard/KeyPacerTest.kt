@@ -66,6 +66,19 @@ class KeyPacerTest {
     }
 
     @Test
+    fun neverStopsBetweenADeadKeyAndItsLetter() = runBlocking {
+        val de = KeyLayouts.byId(KeyLayouts.DE_DE)!!
+        val strokes = (KeyLayouts.map("éa", de) as Mapped.Ok).strokes // ´, e, a
+        var presses = 0
+        val done = KeyPacer.send(strokes, pause = {}, cancelled = { presses >= 1 }) { r ->
+            if (r.any { it != 0.toByte() } && r[2] != 0.toByte()) presses++
+            true
+        }
+        // Stop asked after the dead key: its letter still goes, then it stops.
+        assertEquals(2, done)
+    }
+
+    @Test
     fun reportsAreOverwrittenOnceSent() = runBlocking {
         val kept = mutableListOf<ByteArray>()
         KeyPacer.send(listOf(Stroke(MOD_LSHIFT, 4)), pause = {}) { r -> kept += r; true }

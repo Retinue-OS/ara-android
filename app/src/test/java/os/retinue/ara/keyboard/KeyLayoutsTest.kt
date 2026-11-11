@@ -1,6 +1,7 @@
 package os.retinue.ara.keyboard
 
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.util.Locale
@@ -66,6 +67,15 @@ class KeyLayoutsTest {
         assertEquals(listOf(Stroke(MOD_RALT, HidKeys.KEY_EQUAL), Stroke(MOD_NONE, key('n'))), ch.strokesFor('ñ'))
         // AltGr+1 differs between hosts (¦ on Windows, | on Linux): not offered.
         assertNull(ch.strokesFor('¦'))
+        // ´ and ¨ alone: dead key and space make ' and " on Linux, so neither is offered;
+        // ^ alone works everywhere.
+        assertNull(ch.strokesFor('´'))
+        assertNull(ch.strokesFor('¨'))
+        assertNull(de.strokesFor('´'))
+        assertEquals(2, ch.strokesFor('^')!!.size)
+        // A dead key holds its letter: typing never stops between the two.
+        assertTrue(ch.strokesFor('ô')!![0].joinsNext)
+        assertFalse(ch.strokesFor('ô')!![1].joinsNext)
     }
 
     @Test

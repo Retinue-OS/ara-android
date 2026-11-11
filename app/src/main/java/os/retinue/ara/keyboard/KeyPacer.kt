@@ -45,11 +45,14 @@ object KeyPacer {
         send: (ByteArray) -> Boolean,
     ): Int {
         var done = 0
+        var previous: Stroke? = null
         for (s in strokes) {
-            if (cancelled()) {
+            // Never between a dead key and the press that completes it.
+            if (previous?.joinsNext != true && cancelled()) {
                 send(HidKeys.release())
                 return done
             }
+            previous = s
             for (report in reports(listOf(s))) {
                 val ok = send(report)
                 report.fill(0)

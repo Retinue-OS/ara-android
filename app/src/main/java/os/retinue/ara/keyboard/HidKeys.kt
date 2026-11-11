@@ -77,6 +77,15 @@ object HidKeys {
             require(modifiers in 0..0xFF) { "modifiers" }
             require(key in 0..0xFF) { "key" }
         }
+
+        /**
+         * A dead key: it makes nothing alone, the next press completes the
+         * character — so typing never stops between the two (KeyPacer), which
+         * would leave the accent waiting on the other device. Not part of
+         * equality: a dead key is the same key press.
+         */
+        var joinsNext: Boolean = false
+            internal set
     }
 
     /** The report for [stroke] held down. */

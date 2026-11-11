@@ -195,6 +195,17 @@ object ShellDecisions {
         else -> PendingWake.Wait
     }
 
+    /**
+     * Whether the page may make the shell type now: only while the user is
+     * looking at it — the activity resumed, its window focused (in split
+     * screen too: the other half may be what they use), the keyguard gone —
+     * and no secret dialog is open over it (the page could otherwise move the
+     * other device's focus before the password arrives). Stricter than a wake.
+     */
+    fun mayType(resumed: Boolean, windowFocused: Boolean, keyguardLocked: Boolean,
+                secretDialogOpen: Boolean): Boolean =
+        resumed && windowFocused && !keyguardLocked && !secretDialogOpen
+
     enum class UnhandledEvent {
         /** Load the web app's start page (a Home press). */
         LoadStart,

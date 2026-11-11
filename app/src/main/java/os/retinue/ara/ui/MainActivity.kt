@@ -895,6 +895,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     override fun onStart() {
         super.onStart()
+        // The keyboard's service cannot start while the process starts in the
+        // background (a job, a broadcast): it starts now, with Ara in front.
+        KeyboardRuntime.retry()
         page.windowStarted(this)
         // The window coming to the front shows the page.
         if (!parking) page.take(this)
@@ -1565,20 +1568,30 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.KeyboardKey ->
                 if (onScreenFor(message.id)) KeyboardRuntime.key(message.name, message.id)
             is WebMessage.KeyboardSecret -> if (onScreenFor(message.id)) openSecretDialog(message)
-            WebMessage.KeyboardOpen -> openKeyboard()
-            WebMessage.KeyboardCancel -> KeyboardRuntime.cancelTyping()
+            WebMessage.KeyboardOpen -> if (onScreenFor(null)) openKeyboard()
+            WebMessage.KeyboardCancel -> KeyboardRuntime.cancelFromPage()
         }
     }
 
     /**
-     * The page may type only while Ara is on screen: a script running in a
-     * page the user is not looking at (the screen off, another app in front)
-     * makes nothing happen on the other device. Otherwise the request is
-     * answered `not-in-front` at once.
+     * The page may make Ara type only while the user is looking at it
+     * ([ShellDecisions.mayType]: resumed, focused, unlocked): a script running
+     * in a page nobody is looking at — the screen off, another app or the
+     * other half of a split screen in use, the notification shade down —
+     * makes nothing happen on the other device; that is `not-in-front`. While
+     * a secret dialog is open nothing else is taken (`busy`): the page could
+     * otherwise move the other device's focus before the password arrives.
+     * Typing that started passes this once, and runs to its end.
      */
     private fun onScreenFor(id: String?): Boolean {
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return true
-        KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(id, KeyboardError.NotInFront))
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        val error = when {
+            KeyboardRuntime.secretDialogOpen -> KeyboardError.Busy
+            !ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, secretDialogOpen = false) ->
+                KeyboardError.NotInFront
+            else -> return true
+        }
+        KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(id, error))
         return false
     }
 

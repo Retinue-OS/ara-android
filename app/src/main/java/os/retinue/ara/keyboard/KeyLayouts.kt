@@ -76,13 +76,16 @@ class KeyLayout internal constructor(
             '\u0303' to "anoANO", // ~
         )
 
-        /** Accents typed alone, by the combining mark their dead key carries. */
+        /**
+         * Accents typed alone (the dead key, then a space), by the combining
+         * mark their dead key carries. Not ´ and ¨: on Linux hosts the dead
+         * key and a space make ' and " instead, and no sequence types them
+         * alone on both — so they count as missing.
+         */
         private val SPACING_ACCENTS = mapOf(
             '^' to '̂',
             '`' to '̀',
-            '´' to '́',
             '~' to '̃',
-            '¨' to '̈',
         )
     }
 }
@@ -169,7 +172,7 @@ object KeyLayouts {
         fun put(c: Char, key: Int, mod: Int = MOD_NONE) { direct.putIfAbsent(c, Stroke(mod, key)) }
         fun shift(c: Char, key: Int) = put(c, key, MOD_LSHIFT)
         fun altGr(c: Char, key: Int) = put(c, key, MOD_RALT)
-        fun dead(mark: Char, key: Int, mod: Int = MOD_NONE) { dead[mark] = Stroke(mod, key) }
+        fun dead(mark: Char, key: Int, mod: Int = MOD_NONE) { dead[mark] = Stroke(mod, key).also { it.joinsNext = true } }
 
         /** Letters a–z at their US positions, with [swapYZ] for QWERTZ. */
         fun letters(swapYZ: Boolean) {
