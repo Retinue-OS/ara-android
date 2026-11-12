@@ -13,6 +13,7 @@ import os.retinue.ara.shell.ShellDecisions.PendingWake
 import os.retinue.ara.shell.ShellDecisions.SplitRequest
 import os.retinue.ara.shell.ShellDecisions.UnhandledEvent
 import os.retinue.ara.shell.ShellDecisions.WakeDelivery
+import os.retinue.ara.shell.EndpointLabel
 import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellVoice
 import os.retinue.ara.shell.WebMessage
@@ -71,7 +72,12 @@ class ShellMessagesTest {
     fun parsesBridgeCalls() {
         assertEquals(WebMessage.VoiceActive(true), ShellMessages.parse("""{"type":"voiceActive","active":true}"""))
         assertEquals(WebMessage.VoiceActive(false), ShellMessages.parse("""{"type":"voiceActive","active":false}"""))
-        assertEquals(WebMessage.OpenSettings, ShellMessages.parse("""{"type":"openSettings"}"""))
+        assertEquals(WebMessage.OpenSettings(), ShellMessages.parse("""{"type":"openSettings"}"""))
+        assertEquals(WebMessage.OpenSettings("endpoints"), ShellMessages.parse("""{"type":"openSettings","section":"endpoints"}"""))
+        assertEquals(WebMessage.OpenSettings(), ShellMessages.parse("""{"type":"openSettings","section":""}"""))
+        assertEquals(WebMessage.SelectEndpoint("endpoint-1"), ShellMessages.parse("""{"type":"endpoint.select","id":"endpoint-1"}"""))
+        assertNull(ShellMessages.parse("""{"type":"endpoint.select"}"""))
+        assertNull(ShellMessages.parse("""{"type":"endpoint.select","id":""}"""))
         assertEquals(WebMessage.StopSpeaking, ShellMessages.parse("""{"type":"tts.cancel"}"""))
         assertEquals(WebMessage.StopSpeaking, ShellMessages.parse("""{"type":"tts.pause"}"""))
         assertEquals(WebMessage.Voices, ShellMessages.parse("""{"type":"tts.voices"}"""))
@@ -114,6 +120,19 @@ class ShellMessagesTest {
         assertFalse(ShellMessages.eventHandled("false"))
         assertFalse(ShellMessages.eventHandled("null"))
         assertFalse(ShellMessages.eventHandled(null))
+    }
+
+    @Test
+    fun endpointListForThePage() {
+        val list = listOf(EndpointLabel("a", "Retinue (home.example)", true), EndpointLabel("b", "Admin", false))
+        assertEquals(
+            """[{"id":"a","label":"Retinue (home.example)","current":true},{"id":"b","label":"Admin","current":false}]""",
+            ShellMessages.endpointsJson(list).toString(),
+        )
+        val s = ShellMessages.endpointsStatus(list)
+        assertTrue(s.startsWith("window.__retinueShellReceive&&window.__retinueShellReceive({\"type\":\"endpoints.status\",\"endpoints\":["))
+        assertEquals("endpoints", ShellMessages.ENDPOINTS_EVENT)
+        assertEquals("endpoints", ShellMessages.SECTION_ENDPOINTS)
     }
 
     @Test

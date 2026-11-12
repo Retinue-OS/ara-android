@@ -46,6 +46,9 @@ window.RetinueShell.setVoiceActive(true);
 window.RetinueShell.openSettings();
 assert.deepEqual(log.slice(0, 1), ['tts.voices']);
 assert.ok(log.includes('voiceActive') && log.includes('openSettings'));
+// The bare asset knows no endpoints; the members exist all the same (RetinueShell/3).
+assert.equal(window.RetinueShell.endpoints(), '[]');
+assert.equal(JSON.parse(window.RetinueShell.healthSyncStatus()).enabled, false);
 
 // shell events: the shell asks whether a listener ran (ShellMessages.eventScript)
 const eventScript = (type) => "(function(){var e=new CustomEvent('retinue-shell',{detail:{\"type\":\"" + type + "\"},cancelable:true});" +
@@ -212,7 +215,7 @@ assert.equal(JSON.parse(window.RetinueShell.healthSyncStatus()).min_interval_min
   ctx.SpeechSynthesisUtterance = function () {};
   const status = {
     available: true, permissions: 'partial', last_sync_at: '2026-11-01T10:00:00Z', last_result: 'ok',
-    last_error: null, last_count: 12, min_interval_minutes: 5, auto_on_resume: true,
+    last_error: null, last_count: 12, min_interval_minutes: 5, auto_on_resume: true, enabled: true,
   };
   // As web/ShellBridge.kt substitutes it: the status JSON as a string literal.
   const baked = src.replace('"__RETINUE_HEALTH_STATUS__"', JSON.stringify(JSON.stringify(status)));
@@ -243,9 +246,93 @@ assert.equal(JSON.parse(window.RetinueShell.healthSyncStatus()).min_interval_min
 }
 console.log('health bridge tests passed');
 
+// ---- Endpoints: the baked list, the pushed list, and what the page may ask ----
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  const list = [{ id: 'home', label: 'Retinue (agents.example.com)', current: true }, { id: 'admin', label: 'Admin', current: false }];
+  // As web/ShellBridge.kt substitutes it: the list JSON as a string literal.
+  const baked = src.replace('"__RETINUE_ENDPOINTS__"', JSON.stringify(JSON.stringify(list)));
+  vm.createContext(ctx);
+  vm.runInContext(baked, ctx);
+  const shell = ctx.RetinueShell;
+  assert.deepEqual(JSON.parse(shell.endpoints()), list);
+  shell.selectEndpoint('admin');
+  shell.selectEndpoint('');      // ignored
+  shell.selectEndpoint(42);      // ignored
+  shell.openSettings('endpoints');
+  shell.openSettings();
+  shell.openSettings(7);         // not a section: plain openSettings
+  assert.deepEqual(posts, [
+    { type: 'endpoint.select', id: 'admin' },
+    { type: 'openSettings', section: 'endpoints' },
+    { type: 'openSettings' },
+    { type: 'openSettings' },
+  ]);
+  // The shell pushes a new list (ShellMessages.endpointsStatus); malformed entries are dropped, garbage ignored.
+  ctx.__retinueShellReceive({ type: 'endpoints.status', endpoints: [{ id: 'admin', label: 'Admin', current: true }, { label: 'no id' }, { id: 'x', current: 0 }] });
+  assert.deepEqual(JSON.parse(shell.endpoints()), [{ id: 'admin', label: 'Admin', current: true }, { id: 'x', label: 'x', current: false }]);
+  ctx.__retinueShellReceive({ type: 'endpoints.status', endpoints: 'nope' });
+  assert.equal(JSON.parse(shell.endpoints()).length, 2);
+  // The page's copy is its own: changing it changes nothing in the shell's.
+  const copy = JSON.parse(shell.endpoints());
+  copy[0].label = 'tampered';
+  assert.equal(JSON.parse(shell.endpoints())[0].label, 'Admin');
+}
+console.log('endpoint bridge tests passed');
+
+// ---- Per-device preferences (RetinueShell/4): baked, written, pushed ----
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, CustomEvent, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const target = new EventTarget();
+  ctx.addEventListener = target.addEventListener.bind(target);
+  ctx.removeEventListener = target.removeEventListener.bind(target);
+  ctx.dispatchEvent = target.dispatchEvent.bind(target);
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  const values = { 'retinue.shelf.size': '7', 'retinue.shelf.v1': 'not kept', 'retinue.view.news': 'list' };
+  const baked = src.replace('"__RETINUE_DEVICE_SETTINGS__"', JSON.stringify(JSON.stringify(values)));
+  vm.createContext(ctx);
+  vm.runInContext(baked, ctx);
+  const shell = ctx.RetinueShell;
+  assert.equal(shell.settingsPage, true);
+  assert.deepEqual(JSON.parse(shell.deviceSettings()), { 'retinue.shelf.size': '7', 'retinue.view.news': 'list' });
+  // A write is kept at once and sent; keys and sizes the app refuses are neither.
+  shell.setDeviceSetting('retinue-voice-silence-ms', 2500);
+  shell.setDeviceSetting('retinue.view.news', null);
+  shell.setDeviceSetting('retinue.attention.held', '1');
+  shell.setDeviceSetting('retinue.layout.v1', 'x'.repeat(5000));
+  assert.deepEqual(posts.filter((p) => p.type === 'device.set'), [
+    { type: 'device.set', key: 'retinue-voice-silence-ms', value: '2500' },
+    { type: 'device.set', key: 'retinue.view.news', value: null },
+  ]);
+  assert.deepEqual(JSON.parse(shell.deviceSettings()), { 'retinue.shelf.size': '7', 'retinue-voice-silence-ms': '2500' });
+  // The app pushes a new copy: the page hears which keys changed, after the copy is current.
+  const heard = [];
+  ctx.addEventListener('retinue-shell', (e) => {
+    // Spread into this realm's array: the script's arrays come from its own context.
+    if (e.detail.type === 'device-settings') heard.push([[...e.detail.keys].sort(), shell.deviceSettings()]);
+  });
+  ctx.__retinueShellReceive({ type: 'device.status', settings: { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500', bogus: 'x' } });
+  assert.equal(heard.length, 1);
+  assert.deepEqual(heard[0][0], ['retinue.shelf.size']);
+  assert.deepEqual(JSON.parse(heard[0][1]), { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500' });
+  // The same copy again: nothing changed, no event.
+  ctx.__retinueShellReceive({ type: 'device.status', settings: { 'retinue.shelf.size': '3', 'retinue-voice-silence-ms': '2500' } });
+  assert.equal(heard.length, 1);
+}
+console.log('device settings bridge tests passed');
+
 // placeCall: the number goes to the shell as a string; nothing without one.
 {
-  const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, TypeError, console };
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, Array, TypeError, console };
   ctx.window = ctx;
   const posts = [];
   ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };

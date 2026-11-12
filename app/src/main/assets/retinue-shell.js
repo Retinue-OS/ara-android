@@ -2,12 +2,17 @@
 // only (see web/ShellBridge.kt). Two things live here:
 //
 //  1. window.RetinueShell — the shell <-> web contract (plan section 4):
-//     {platform, version, setVoiceActive(bool), openSettings()} and Health
-//     Connect sync: healthConnectAvailable(), healthSync(), healthSyncStatus(),
-//     setHealthSyncInterval(minutes), setHealthAutoSync(bool) — and
-//     placeCall(number), whose outcome comes as a `call` event. Shell -> web
-//     events arrive as `retinue-shell` CustomEvents dispatched on window; the
-//     shell checks whether a page listener ran for them (see below).
+//     {platform, version, setVoiceActive(bool), openSettings(section?)},
+//     Health Connect sync: healthConnectAvailable(), healthSync(),
+//     healthSyncStatus(), setHealthSyncInterval(minutes),
+//     setHealthAutoSync(bool), the endpoints (RetinueShell/3):
+//     endpoints(), selectEndpoint(id), and (RetinueShell/4) the app's own
+//     settings page (settingsPage) and the dashboard's per-device
+//     preferences the app holds for every endpoint: deviceSettings(),
+//     setDeviceSetting(key, value), and (RetinueShell/5) placeCall(number),
+//     whose outcome comes as a `call` event. Shell -> web events arrive as
+//     `retinue-shell` CustomEvents dispatched on window; the shell checks
+//     whether a page listener ran for them (see below).
 //
 //  2. A speechSynthesis / SpeechSynthesisUtterance stand-in, backed by
 //     Android's TextToSpeech, installed only when the WebView has no working
@@ -40,6 +45,7 @@
   var health = {
     available: false, permissions: 'none', last_sync_at: null, last_result: null,
     last_error: null, last_count: null, min_interval_minutes: 5, auto_on_resume: true,
+    enabled: false,
   };
   function takeHealth(s) {
     if (!s || typeof s !== 'object') return;
@@ -49,14 +55,112 @@
   }
   try { takeHealth(JSON.parse("__RETINUE_HEALTH_STATUS__")); } catch (_) { /* the bare asset: defaults */ }
 
+  // ---- Endpoints -----------------------------------------------------------
+  //
+  // The Retinue servers this phone knows, as the shell shows them: id, label
+  // (the instance's own name) and which one is shown. A snapshot the shell
+  // baked in when it installed this script, replaced by its `endpoints.status`
+  // messages (an `endpoints` event follows each). Switching and editing are the
+  // shell's: the page only asks, and never learns the other servers' URLs.
+  var endpoints = [];
+  function takeEndpoints(list) {
+    if (!Array.isArray(list)) return;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e && typeof e === 'object' && typeof e.id === 'string' && e.id) {
+        out.push({ id: e.id, label: typeof e.label === 'string' && e.label ? e.label : e.id, current: !!e.current });
+      }
+    }
+    endpoints = out;
+  }
+  try { takeEndpoints(JSON.parse("__RETINUE_ENDPOINTS__")); } catch (_) { /* the bare asset: none */ }
+
+  // ---- Per-device preferences (RetinueShell/4) -----------------------------
+  //
+  // The dashboard's voice timeouts, shelf size and layout, which the app holds
+  // for every endpoint (the page's components/device-store.js; the app's
+  // DeviceWebSettings). deviceSettings() answers at once from a copy: baked in
+  // when the shell installed this script, replaced by its `device.status`
+  // messages, after which a `device-settings` event names the keys that
+  // changed. The keys and limits mirror the app's, so a write the app would
+  // refuse is not kept here either.
+  var DEVICE_KEYS = ['retinue-voice-silence-ms', 'retinue-voice-nospeech-ms', 'retinue.shelf.size',
+    'retinue.layout.v1', 'retinue.chatpage.v1'];
+  var DEVICE_PREFIXES = ['retinue.view.'];
+  var DEVICE_MAX_KEY = 80;
+  var DEVICE_MAX_VALUE = 4096;
+  var DEVICE_MAX_ENTRIES = 64;
+  var DEVICE_KEY_CHARS = /^[A-Za-z0-9._:-]+$/;
+  function has(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function isDeviceKey(k) {
+    if (typeof k !== 'string' || !k || k.length > DEVICE_MAX_KEY || !DEVICE_KEY_CHARS.test(k)) return false;
+    if (DEVICE_KEYS.indexOf(k) >= 0) return true;
+    for (var i = 0; i < DEVICE_PREFIXES.length; i++) {
+      var p = DEVICE_PREFIXES[i];
+      if (k.indexOf(p) === 0 && k.length > p.length) return true;
+    }
+    return false;
+  }
+  var device = {};
+  // Replace the copy; returns the keys whose values changed.
+  function takeDevice(values) {
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return [];
+    var next = {};
+    var n = 0;
+    for (var k in values) {
+      if (!has(values, k) || n >= DEVICE_MAX_ENTRIES) continue;
+      var v = values[k];
+      if (isDeviceKey(k) && typeof v === 'string' && v.length <= DEVICE_MAX_VALUE) { next[k] = v; n++; }
+    }
+    var changed = [];
+    for (k in device) { if (has(device, k) && device[k] !== next[k]) changed.push(k); }
+    for (k in next) { if (has(next, k) && !has(device, k)) changed.push(k); }
+    device = next;
+    return changed;
+  }
+  try { takeDevice(JSON.parse("__RETINUE_DEVICE_SETTINGS__")); } catch (_) { /* the bare asset: none */ }
+
   var shell = {
     platform: 'android',
     version: '__RETINUE_SHELL_VERSION__',
     // The page has the microphone in use: the shell pauses wake detection and
     // keeps the screen on until it is reported inactive again.
     setVoiceActive: function (active) { post({ type: 'voiceActive', active: !!active }); },
-    openSettings: function () { post({ type: 'openSettings' }); },
+    // The native settings; `section` names a part of them ('endpoints': the
+    // endpoint list, or the editor of the one endpoint there is).
+    openSettings: function (section) {
+      var msg = { type: 'openSettings' };
+      if (typeof section === 'string' && section) msg.section = section;
+      post(msg);
+    },
     nativeSpeech: false,
+    // The configured endpoints as a JSON string: [{id, label, current}].
+    endpoints: function () { return JSON.stringify(endpoints); },
+    // Show the endpoint `id` (one of endpoints()); the shell switches and
+    // loads that server's dashboard, so this page is left.
+    selectEndpoint: function (id) {
+      if (typeof id !== 'string' || !id) return;
+      post({ type: 'endpoint.select', id: id });
+    },
+    // The app has a settings page of its own: openSettings() shows it, with
+    // this app's settings, the endpoint's and the instance's.
+    settingsPage: true,
+    // The per-device preferences as a JSON string: {key: value}.
+    deviceSettings: function () { return JSON.stringify(device); },
+    // Keep `value` (a string; null removes it) under `key`, for every endpoint.
+    setDeviceSetting: function (key, value) {
+      if (!isDeviceKey(key)) return;
+      var v = value == null ? null : String(value);
+      if (v !== null && v.length > DEVICE_MAX_VALUE) return;
+      if (v === null) {
+        delete device[key];
+      } else {
+        if (!has(device, key) && Object.keys(device).length >= DEVICE_MAX_ENTRIES) return;
+        device[key] = v;
+      }
+      post({ type: 'device.set', key: key, value: v });
+    },
     healthConnectAvailable: function () { return health.available ? 'true' : 'false'; },
     // A sync now (asks for Health Connect permissions first if needed);
     // returns at once, the outcome comes as `health-sync` events.
@@ -160,7 +264,17 @@
   });
 
   receivers.push(function (msg) {
-    if (msg && msg.type === 'health.status') takeHealth(msg.status);
+    if (!msg) return;
+    if (msg.type === 'health.status') takeHealth(msg.status);
+    else if (msg.type === 'endpoints.status') takeEndpoints(msg.endpoints);
+    else if (msg.type === 'device.status') {
+      var changed = takeDevice(msg.settings);
+      if (changed.length) {
+        try {
+          window.dispatchEvent(new CustomEvent('retinue-shell', { detail: { type: 'device-settings', keys: changed } }));
+        } catch (_) { /* no events here: the copy is current all the same */ }
+      }
+    }
   });
 
   // ---- speechSynthesis stand-in -------------------------------------------

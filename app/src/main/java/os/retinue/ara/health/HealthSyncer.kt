@@ -39,23 +39,23 @@ sealed class SyncOutcome {
  * Connect and the letterbox behind [HealthSource] and [Letterbox] so the
  * order of things is unit-tested:
  *
- * 1. The round an earlier sync left half-uploaded ([HealthRoundStore]) goes
- *    first, before any Health Connect gate: its parts hold data already
- *    read, and a permission revoked or Health Connect gone meanwhile must
- *    not leave them on the device for good. A round for another origin is
- *    discarded (what was read for one server is not the next one's).
+ * 1. The round an earlier sync left half-uploaded to this origin
+ *    ([HealthRounds]) goes first, before any Health Connect gate: its parts
+ *    hold data already read, and a permission revoked or Health Connect gone
+ *    meanwhile must not leave them on the device for good. Another server's
+ *    round is not touched: it waits for that server.
  * 2. Health Connect must be there and some type granted (a deliberate sync
  *    asks first, see [HealthSyncLogic.shouldRequestPermissions]).
  * 3. The letterbox is probed (once per sync, before anything is read).
  * 4. The changes are read, written to the device as a round and uploaded.
  *
- * The token advances only once every part of a round was stored; it is
- * kept per set of granted types and per origin.
+ * The token advances only once every part of a round was stored; each
+ * origin has its own ([HealthSyncState.tokens]), kept per set of granted types.
  */
 class HealthSyncer(
     private val source: HealthSource,
     private val letterbox: Letterbox,
-    private val rounds: HealthRoundStore,
+    private val rounds: HealthRounds,
     private val client: ClientInfo,
 ) {
 
@@ -74,17 +74,18 @@ class HealthSyncer(
     ): SyncOutcome {
         var count = 0
         var probed = false
-        val pending = withContext(Dispatchers.IO) {
-            rounds.discardUnless(origin)
-            rounds.pending()
-        }
         if (origin == null) return SyncOutcome.Failed("No Retinue base URL is set")
+        val store = rounds.of(origin)
+        val pending = withContext(Dispatchers.IO) {
+            store.discardUnless(origin)
+            store.pending()
+        }
         if (pending != null) {
             probe(origin)?.let { return it }
             probed = true
-            upload(origin, pending)?.let { return it }
+            upload(store, origin, pending)?.let { return it }
             count += pending.count
-            update { it.copy(token = pending.nextToken, tokenTypes = pending.typeKey, tokenOrigin = origin) }
+            update { it.withToken(origin, pending.nextToken, pending.typeKey) }
         }
 
         val available = source.available()
@@ -108,13 +109,12 @@ class HealthSyncer(
         if (!probed) probe(origin)?.let { return it }
 
         val typeKey = HealthSyncLogic.typeKey(types)
-        val s = state()
-        val storedToken = s.token?.takeIf { s.tokenTypes == typeKey && s.tokenOrigin == origin }
+        val storedToken = state().tokenFor(origin, typeKey)
         val collected = withContext(Dispatchers.IO) { source.collect(types, storedToken) }
         // Nothing new: the token still moves on.
         if (collected.changes.isEmpty()) return SyncOutcome.Done(count, collected.token, typeKey, origin)
-        val round = withContext(Dispatchers.IO) { begin(collected, trigger, types, typeKey, origin) }
-        upload(origin, round)?.let { return it }
+        val round = withContext(Dispatchers.IO) { begin(store, collected, trigger, types, typeKey, origin) }
+        upload(store, origin, round)?.let { return it }
         return SyncOutcome.Done(count + round.count, round.nextToken, typeKey, origin)
     }
 
@@ -130,7 +130,14 @@ class HealthSyncer(
      * (a part's file is built and written, then forgotten, before the next),
      * ready to upload. IO thread.
      */
-    private fun begin(collected: Collected, trigger: HealthTrigger, types: List<HealthType>, typeKey: String, origin: String): HealthRound {
+    private fun begin(
+        store: HealthRoundStore,
+        collected: Collected,
+        trigger: HealthTrigger,
+        types: List<HealthType>,
+        typeKey: String,
+        origin: String,
+    ): HealthRound {
         val parts = HealthSyncLogic.partCount(collected.changes.size)
         val sentAt = Instant.now()
         val round = HealthRound(
@@ -144,7 +151,7 @@ class HealthSyncer(
             count = collected.changes.size,
             nextToken = collected.token,
         )
-        return rounds.begin(round) { part ->
+        return store.begin(round) { part ->
             HealthSyncLogic.envelope(
                 batchId = round.batchId,
                 kind = collected.kind,
@@ -168,19 +175,19 @@ class HealthSyncer(
      * device); otherwise the outcome that ends the sync, with the round kept
      * for the next one.
      */
-    private suspend fun upload(origin: String, round: HealthRound): SyncOutcome? {
+    private suspend fun upload(store: HealthRoundStore, origin: String, round: HealthRound): SyncOutcome? {
         var current = round
         while (!current.complete) {
             val part = current.partsSent + 1
             val url = HealthSyncLogic.uploadUrl(origin, current.fileName(part))
-            val body = withContext(Dispatchers.IO) { rounds.partFile(part).readBytes() }
+            val body = withContext(Dispatchers.IO) { store.partFile(part).readBytes() }
             when (val result = letterbox.put(url, body)) {
-                UploadResult.Stored -> current = withContext(Dispatchers.IO) { rounds.sent(current, part) }
+                UploadResult.Stored -> current = withContext(Dispatchers.IO) { store.sent(current, part) }
                 UploadResult.NoBackend -> return SyncOutcome.Skipped(SkipReason.NoBackendSupport)
                 is UploadResult.Failed -> return SyncOutcome.Failed("Part $part of ${current.parts}: ${result.message}")
             }
         }
-        withContext(Dispatchers.IO) { rounds.clear() }
+        withContext(Dispatchers.IO) { store.clear() }
         return null
     }
 }

@@ -11,10 +11,12 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.Test
+import os.retinue.ara.health.ChangesToken
 import os.retinue.ara.health.HealthRecords
 import os.retinue.ara.health.HealthRound
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
+import os.retinue.ara.health.HealthSyncState
 import os.retinue.ara.health.HealthSyncStatus
 import os.retinue.ara.health.HealthTrigger
 import os.retinue.ara.health.PendingAction
@@ -277,17 +279,21 @@ class HealthSyncLogicTest {
         assertEquals(
             Json.parseToJsonElement(
                 """{"available":false,"permissions":"none","last_sync_at":null,"last_result":null,
-                "last_error":null,"last_count":null,"min_interval_minutes":5,"auto_on_resume":true}""",
+                "last_error":null,"last_count":null,"min_interval_minutes":5,"auto_on_resume":true,"enabled":false}""",
             ),
             HealthSyncStatus().toJson(),
         )
         val s = HealthSyncStatus(
             available = true, permissions = PermissionState.Partial, lastSyncAt = Instant.parse("2026-11-01T17:15:00Z").toEpochMilli(),
-            lastResult = SyncResult.Ok, lastCount = 12, minIntervalMinutes = 10, autoOnResume = false,
+            lastResult = SyncResult.Ok, lastCount = 12, minIntervalMinutes = 10, autoOnResume = false, enabled = true,
         ).toJson()
         assertEquals("\"2026-11-01T17:15:00Z\"", s["last_sync_at"].toString())
         assertEquals("\"partial\"", s["permissions"].toString())
         assertEquals("12", s["last_count"].toString())
+        assertEquals("true", s["enabled"].toString())
+        // The per-endpoint switch, off: a sync asked for is skipped with its own reason.
+        assertEquals("disabled", SkipReason.Disabled.key)
+        assertEquals("""{"state":"skipped","reason":"disabled"}""", HealthSyncEvent.Skipped(SkipReason.Disabled).detail().toString())
     }
 
     @Test
@@ -310,5 +316,50 @@ class HealthSyncLogicTest {
         // An extra "type" never overrides the event's.
         val sneaky: JsonObject = buildJsonObject { put("type", "wake") }
         assertTrue(ShellMessages.eventScript("health-sync", sneaky).contains("{\"type\":\"health-sync\"}"))
+    }
+
+    @Test
+    fun eachOriginKeepsItsOwnToken() {
+        val a = "https://a.example"
+        val b = "https://b.example"
+        val s = HealthSyncState().withToken(a, "t-a1", "Steps").withToken(b, "t-b1", "Steps").withToken(a, "t-a2", "Steps")
+        assertEquals("t-a2", s.tokenFor(a, "Steps"))
+        assertEquals("t-b1", s.tokenFor(b, "Steps"))
+        // Made for other types, or for no such server: none.
+        assertNull(s.tokenFor(a, "Steps,Weight"))
+        assertNull(s.tokenFor("https://c.example", "Steps"))
+        // A server no endpoint points at any more is forgotten; the rest stay as they are.
+        assertEquals(mapOf(b to ChangesToken("t-b1", "Steps")), s.retainingTokens(setOf(b, "https://c.example")).tokens)
+        assertTrue(s.retainingTokens(setOf(a, b)) === s)
+    }
+
+    @Test
+    fun tokensAsStored() {
+        val tokens = mapOf("https://a.example" to ChangesToken("t-a", "Steps"), "https://b.example:8443" to ChangesToken("t-b", "Steps,Weight"))
+        assertEquals(tokens, HealthSyncLogic.decodeTokens(HealthSyncLogic.encodeTokens(tokens)))
+        assertEquals(emptyMap(), HealthSyncLogic.decodeTokens(HealthSyncLogic.encodeTokens(emptyMap())))
+        // Never written: the older build's one token decides. Unreadable: none (every server reads its window).
+        assertNull(HealthSyncLogic.decodeTokens(null))
+        assertEquals(emptyMap(), HealthSyncLogic.decodeTokens("not json"))
+        assertEquals(emptyMap(), HealthSyncLogic.decodeTokens("[1, 2]"))
+        // Entries without an origin or a token are dropped; unknown fields are ignored.
+        assertEquals(
+            mapOf("https://a.example" to ChangesToken("t-a", "Steps")),
+            HealthSyncLogic.decodeTokens(
+                """{"https://a.example": {"token": "t-a", "types": "Steps", "since": 1}, "": {"token": "x", "types": "Steps"}, "https://c.example": {"token": "", "types": "Steps"}}""",
+            ),
+        )
+    }
+
+    @Test
+    fun theOneTokenOfAnOlderBuildBecomesItsOriginsEntry() {
+        assertEquals(
+            mapOf("https://a.example" to ChangesToken("t", "Steps")),
+            HealthSyncLogic.legacyTokens("t", "Steps", "https://a.example"),
+        )
+        assertEquals(emptyMap(), HealthSyncLogic.legacyTokens(null, "Steps", "https://a.example"))
+        assertEquals(emptyMap(), HealthSyncLogic.legacyTokens("t", null, "https://a.example"))
+        // A token of the builds before origins were recorded: no server to give it to.
+        assertEquals(emptyMap(), HealthSyncLogic.legacyTokens("t", "Steps", null))
     }
 }

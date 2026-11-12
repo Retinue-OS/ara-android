@@ -23,6 +23,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import os.retinue.ara.BuildConfig
 import os.retinue.ara.net.AraHttp
+import os.retinue.ara.net.BasicCredentials
+import os.retinue.ara.settings.AppPage
+import os.retinue.ara.settings.AppPageServer
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatusTracker
 import os.retinue.ara.shell.Route
@@ -32,6 +35,9 @@ import os.retinue.ara.shell.UrlRouter
 interface ShellHost {
     val router: UrlRouter
     val certificateAlias: String?
+
+    /** The current endpoint's stored user name and password, opened for use; null when none. */
+    fun storedCredentials(): BasicCredentials?
 
     fun onPageStarted(url: String?)
     fun onPageFinished(url: String?)
@@ -50,8 +56,12 @@ interface ShellHost {
     fun onConsoleError(message: String, source: String, line: Int)
 }
 
-/** The user agent suffix of the contract (plan §4). */
-const val SHELL_UA_SUFFIX = " RetinueShell/3 (Android)"
+/**
+ * The user agent suffix of the contract (plan §4); 5: `placeCall`; 4: the app
+ * has a settings page of its own and holds the dashboard's per-device
+ * preferences; 3: the endpoint members of the bridge exist.
+ */
+const val SHELL_UA_SUFFIX = " RetinueShell/5 (Android)"
 
 /** WebView configuration for the shell (plan §1). */
 @SuppressLint("SetJavaScriptEnabled")
@@ -81,17 +91,50 @@ fun configureShellWebView(webView: WebView) {
     WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
 }
 
-class ShellWebViewClient(private val context: Context, private val host: ShellHost) : WebViewClient() {
+/** One thread for KeyChain lookups, shared by every WebView the shell creates. */
+private val keyExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
+    Thread(r, "client-cert").apply { isDaemon = true }
+}
 
-    private companion object {
-        /** One thread for KeyChain lookups, shared by every WebView the shell creates. */
-        val keyExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
-            Thread(r, "client-cert").apply { isDaemon = true }
+/**
+ * mTLS: present the KeyChain certificate [alias] the user selected, only to
+ * [router]'s configured origin; any other host is refused. Loading the key
+ * blocks, so it happens off the main thread. Without a selected certificate
+ * the request goes on without one, unremembered, so selecting one later takes
+ * effect. Both the dashboard's WebView and the settings page's (for the
+ * instance section it embeds) answer this way.
+ */
+fun answerClientCertRequest(context: Context, router: UrlRouter, alias: String?, request: ClientCertRequest) {
+    if (!router.isConfiguredHost(request.host, request.port)) {
+        request.cancel()
+        return
+    }
+    if (alias == null) {
+        request.ignore()
+        return
+    }
+    keyExecutor.execute {
+        try {
+            val (key, chain) = AraHttp.clientKey(context, alias)
+            request.proceed(key, chain)
+        } catch (e: Exception) {
+            request.ignore()
         }
     }
+}
+
+class ShellWebViewClient(private val context: Context, private val host: ShellHost) : WebViewClient() {
+
+    /**
+     * The stored password has answered a challenge of this page load: a second
+     * challenge means it was wrong, and the dialog takes over rather than loop.
+     */
+    private var storedAuthUsed = false
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
+        // The app's own settings page lives in its own WebView, never in the dashboard's.
+        if (AppPage.isAppHost(url)) return true
         return when (val route = host.router.route(url, request.isForMainFrame)) {
             Route.Stay -> false
             Route.Block -> true
@@ -120,6 +163,7 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
     }
 
     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+        storedAuthUsed = false
         host.onPageStarted(url)
     }
 
@@ -157,41 +201,38 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
 
 
     /**
-     * mTLS: present the KeyChain certificate the user selected — only to the
-     * configured origin. Loading the key blocks, so it happens off the main thread.
+     * Nothing is served on the app's reserved address here, and no request for
+     * it leaves the phone: the dashboard's pages cannot load or frame the app's
+     * settings page (AppPageServer).
      */
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+        AppPageServer.refuse(request.url)
+
+    /** mTLS for the configured origin (see [answerClientCertRequest]). */
     override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
-        val alias = host.certificateAlias
-        if (!host.router.isConfiguredHost(request.host, request.port)) {
-            request.cancel()
-            return
-        }
-        if (alias == null) {
-            // Proceed without a certificate this time, without remembering it,
-            // so selecting one later takes effect.
-            request.ignore()
-            return
-        }
-        keyExecutor.execute {
-            try {
-                val (key, chain) = AraHttp.clientKey(context, alias)
-                request.proceed(key, chain)
-            } catch (e: Exception) {
-                request.ignore()
-            }
-        }
+        answerClientCertRequest(context, host.router, host.certificateAlias, request)
     }
 
     /**
-     * HTTP authentication: the sign-in dialog only for the configured host (a
-     * frame of another origin must not ask for the user's password in the
-     * shell's name). The callback carries no port, so the host decides.
+     * HTTP authentication, only for the configured host (a frame of another
+     * origin must not ask for the user's password in the shell's name; the
+     * callback carries no port, so the host decides): the endpoint's stored
+     * user name and password answer the first challenge of a page load by
+     * themselves, the sign-in dialog any other.
      */
     override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) {
         val router = this.host.router
         if (!router.isConfiguredHost(host, router.origin?.port ?: -1)) {
             handler.cancel()
             return
+        }
+        if (!storedAuthUsed) {
+            val stored = this.host.storedCredentials()
+            if (stored != null) {
+                storedAuthUsed = true
+                handler.proceed(stored.username, stored.password)
+                return
+            }
         }
         this.host.onHttpAuth(host.orEmpty(), realm.orEmpty(), handler)
     }

@@ -4,6 +4,8 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -17,7 +19,7 @@ enum class HealthTrigger(val key: String) {
     /** Ara came to the front (automatic, at most every [HealthSyncLogic.DEFAULT_INTERVAL_MINUTES]). */
     Resume("resume"),
 
-    /** The web app asked (`RetinueShell.healthSync()`), e.g. Settings → Phone shell. */
+    /** Someone asked: the settings page's "Update health data now", or the web app (`RetinueShell.healthSync()`). */
     Manual("manual"),
 
     /** As [Manual], from the `/sync-health` page a thread or an intent link opened. */
@@ -49,6 +51,9 @@ enum class SkipReason(val key: String) {
     NoPermission("no-permission"),
     Unavailable("unavailable"),
     NoBackendSupport("no-backend-support"),
+
+    /** The current endpoint does not take health data (its upload switch is off). */
+    Disabled("disabled"),
 }
 
 /** The last sync's outcome, kept across restarts. */
@@ -71,6 +76,8 @@ data class HealthSyncStatus(
     val lastCount: Int? = null,
     val minIntervalMinutes: Int = HealthSyncLogic.DEFAULT_INTERVAL_MINUTES,
     val autoOnResume: Boolean = true,
+    /** The current endpoint takes health data at all (its per-endpoint upload switch); false with no endpoint. */
+    val enabled: Boolean = false,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         put("available", available)
@@ -81,6 +88,7 @@ data class HealthSyncStatus(
         put("last_count", lastCount?.let { JsonPrimitive(it) } ?: JsonNull)
         put("min_interval_minutes", minIntervalMinutes)
         put("auto_on_resume", autoOnResume)
+        put("enabled", enabled)
     }
 }
 
@@ -302,6 +310,30 @@ object HealthSyncLogic {
     /** The key a stored Changes token belongs to: the sorted names of the types it was made for. */
     fun typeKey(types: Collection<HealthType>): String = types.map { it.name }.sorted().joinToString(",")
 
+    private val tokensSerializer = MapSerializer(String.serializer(), ChangesToken.serializer())
+
+    /** The Changes tokens as stored (a JSON object, origin → token), see [HealthSyncState.tokens]. */
+    fun encodeTokens(tokens: Map<String, ChangesToken>): String = json.encodeToString(tokensSerializer, tokens)
+
+    /**
+     * The Changes tokens of a stored document; null for no document (never
+     * written, so the one token of an older build decides, see [legacyTokens])
+     * and an empty map for an unreadable one (every server then starts with
+     * the whole window, which is safe).
+     */
+    fun decodeTokens(raw: String?): Map<String, ChangesToken>? {
+        if (raw == null) return null
+        return try {
+            json.decodeFromString(tokensSerializer, raw).filter { (origin, t) -> origin.isNotBlank() && t.token.isNotEmpty() }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /** The one token of builds before per-origin tokens, as the map: for its origin, if it had one. */
+    fun legacyTokens(token: String?, types: String?, origin: String?): Map<String, ChangesToken> =
+        if (token.isNullOrEmpty() || types == null || origin.isNullOrBlank()) emptyMap() else mapOf(origin to ChangesToken(token, types))
+
     /** The body of one POST (contract §3). */
     fun envelope(
         batchId: String,
@@ -457,16 +489,41 @@ data class HealthSyncState(
     val lastResult: SyncResult? = null,
     val lastError: String? = null,
     val lastCount: Int? = null,
-    /** The Changes token, advanced only once every part of a sync was stored. */
-    val token: String? = null,
-    /** The types [token] was made for ([HealthSyncLogic.typeKey]); another set starts afresh. */
-    val tokenTypes: String? = null,
-    /** The origin [token]'s changes were delivered to; another server starts afresh with the whole window. */
-    val tokenOrigin: String? = null,
+    /**
+     * The Changes token of each server (origin → token): where in Health
+     * Connect's change log that server's deliveries stand. Each advances only
+     * once every part of a sync to its server was stored, so a server that
+     * was not shown for a while gets what changed since its own last delivery
+     * — deletions included — when it is shown again (as long as Health
+     * Connect still has its token, about 30 days). A server without one starts
+     * with the whole window.
+     */
+    val tokens: Map<String, ChangesToken> = emptyMap(),
     /** The shell has asked Health Connect for permissions before. */
     val permissionsAsked: Boolean = false,
     /** Syncs in a row that stored nothing for want of a letterbox or an upload error; 0 after a success. */
     val failures: Int = 0,
     /** No automatic sync before this (epoch ms; 0 for none), after such a failure (see [HealthSyncLogic.backoffMs]). */
     val backoffUntil: Long = 0L,
+    /** The origin [failures] and [backoffUntil] belong to: a failing server does not hold back another. */
+    val backoffOrigin: String? = null,
+) {
+    /** [origin]'s token, when it was made for these [types] ([HealthSyncLogic.typeKey]); another set starts afresh. */
+    fun tokenFor(origin: String, types: String): String? = tokens[origin]?.takeIf { it.types == types }?.token
+
+    /** [origin]'s deliveries now stand at [token] (made for [types]); the other servers' tokens are untouched. */
+    fun withToken(origin: String, token: String, types: String): HealthSyncState =
+        copy(tokens = tokens + (origin to ChangesToken(token, types)))
+
+    /** Only the tokens of [origins] (the servers still configured): a removed server's position is forgotten. */
+    fun retainingTokens(origins: Set<String>): HealthSyncState =
+        if (tokens.keys.all { it in origins }) this else copy(tokens = tokens.filterKeys { it in origins })
+}
+
+/** One server's position in Health Connect's change log (see [HealthSyncState.tokens]). */
+@Serializable
+data class ChangesToken(
+    val token: String,
+    /** The types the token was made for ([HealthSyncLogic.typeKey]). */
+    val types: String,
 )

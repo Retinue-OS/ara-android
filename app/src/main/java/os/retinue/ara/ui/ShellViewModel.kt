@@ -6,22 +6,29 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
+import os.retinue.ara.data.CredentialVault
+import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
+import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.FolderIcons
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
+import os.retinue.ara.net.EndpointNames
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelFiles
@@ -29,7 +36,7 @@ import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeRuntime
 import os.retinue.ara.wake.WakeStatus
 
-/** Settings, launcher bar, app list and model downloads for the shell's native UI. */
+/** Settings, launcher bar, app list (and its order by recent use) and model downloads for the shell's native UI. */
 class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     private val appCtx: Application = app
@@ -48,6 +55,23 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     private val _shortcuts = MutableStateFlow<List<PinnedShortcut>>(emptyList())
     val shortcuts: StateFlow<List<PinnedShortcut>> = _shortcuts.asStateFlow()
 
+    /** Android's last use of each package, with usage access (see [AppUsage]); empty without. */
+    private val _usage = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    private val _usageAccess = MutableStateFlow(AppUsage.hasAccess(app))
+
+    /** The user has given Ara usage access, so the tray also sees apps opened elsewhere. */
+    val usageAccess: StateFlow<Boolean> = _usageAccess.asStateFlow()
+
+    /**
+     * The tray's lines: every app and web app but those on the bar itself
+     * (apps in folders included, folders not), the most recently used first.
+     */
+    internal val trayItems: StateFlow<List<DrawerItem>> =
+        combine(_apps, _shortcuts, launcher, store.launches, _usage) { apps, shortcuts, bar, launches, usage ->
+            trayItems(apps, shortcuts, bar, launches, usage)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _models = MutableStateFlow(WakeModelFiles.status(app))
     val models: StateFlow<WakeModelStatus> = _models.asStateFlow()
 
@@ -58,6 +82,9 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     val modelBusy: StateFlow<Boolean> = _modelBusy.asStateFlow()
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
+
+    /** When each endpoint's name was last asked for (epoch ms), so a server that is down is not asked on every occasion. */
+    private val nameAttempts = mutableMapOf<String, Long>()
 
     init {
         // Folder icons an interrupted save left behind; anything stored from now on is kept.
@@ -72,8 +99,106 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setBaseUrl(url: String) = viewModelScope.launch { store.setBaseUrl(url) }
-    fun setCertificateAlias(alias: String?) = viewModelScope.launch { store.setCertificateAlias(alias) }
+    /** Read Android's usage stats again (and whether Ara may), for the tray's order. */
+    fun refreshUsage() {
+        viewModelScope.launch {
+            _usageAccess.value = AppUsage.hasAccess(appCtx)
+            _usage.value = AppUsage.lastUsed(appCtx)
+        }
+    }
+
+    /** Ara launched [item] (an app or web app) just now: it moves to the top of the tray. */
+    fun recordLaunch(item: LauncherEntry.Launchable) {
+        val at = System.currentTimeMillis()
+        viewModelScope.launch { store.recordLaunch(item.key, at) }
+    }
+
+    // --- Endpoints -----------------------------------------------------------
+
+    /**
+     * Save what the editor holds (see [EndpointDraft]): a new endpoint, or the
+     * old one with its fields replaced. A typed password is sealed first; an
+     * empty field keeps the stored one unless the draft says to forget it. A
+     * changed address drops the fetched name, and the name is fetched afresh.
+     */
+    fun saveEndpoint(draft: EndpointDraft) = viewModelScope.launch {
+        val user = draft.username.trim().takeIf { it.isNotEmpty() }
+        val typed = draft.password.takeIf { user != null && it.isNotEmpty() }
+        val sealed = typed?.let { withContext(Dispatchers.IO) { CredentialVault.seal(it) } }
+        store.updateEndpoints { set ->
+            val existing = set.endpoints.firstOrNull { it.id == draft.id }
+            val sameAddress = existing != null && existing.base == draft.base
+            val secret = when {
+                user == null -> null
+                sealed != null -> sealed
+                draft.forgetPassword -> null
+                else -> existing?.secret
+            }
+            set.upsert(
+                Endpoint(
+                    id = draft.id,
+                    baseUrl = draft.baseUrl.trim(),
+                    certificateAlias = draft.certificateAlias,
+                    username = user,
+                    secret = secret,
+                    healthUpload = draft.healthUpload,
+                    name = if (sameAddress) existing?.name else null,
+                    nameFetchedAt = if (sameAddress) existing?.nameFetchedAt ?: 0L else 0L,
+                ),
+            )
+        }
+        refreshEndpointNames(force = true, onlyId = draft.id)
+    }
+
+    fun removeEndpoint(id: String) = viewModelScope.launch { store.updateEndpoints { it.remove(id) } }
+
+    /** Show the endpoint [id] from now on (the windows follow the settings and load its start page). */
+    fun selectEndpoint(id: String) = viewModelScope.launch {
+        store.updateEndpoints { it.select(id) }
+        refreshEndpointNames(onlyId = id)
+    }
+
+    /** The failure card's "Choose certificate": the current endpoint gets [alias]. */
+    fun setEndpointCertificate(id: String, alias: String?) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(certificateAlias = alias) } }
+    }
+
+    /** The settings page's health switch: the endpoint [id] takes health data, or not. */
+    fun setHealthUpload(id: String, on: Boolean) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(healthUpload = on) } }
+    }
+
+    /** The sign-in dialog's "Remember": the endpoint [id] keeps this user name and (sealed) password. */
+    fun rememberCredentials(id: String, username: String, password: String) = viewModelScope.launch {
+        val user = username.trim()
+        if (user.isEmpty() || password.isEmpty()) return@launch
+        val sealed = withContext(Dispatchers.IO) { CredentialVault.seal(password) }
+        store.updateEndpoints { set -> set.update(id) { it.copy(username = user, secret = sealed) } }
+    }
+
+    /**
+     * Fetch the names of the endpoints that are due for it (see
+     * [EndpointNames.due]) — all of them, or [onlyId] — and store what comes
+     * back. A fetch that failed is not repeated within [EndpointNames.RETRY_MS]
+     * unless [force]d.
+     */
+    fun refreshEndpointNames(force: Boolean = false, onlyId: String? = null) = viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        for (endpoint in store.settingsNow().endpoints) {
+            if (onlyId != null && endpoint.id != onlyId) continue
+            if (!EndpointNames.due(endpoint, now, force)) continue
+            val last = nameAttempts[endpoint.id]
+            if (!force && last != null && now - last in 0 until EndpointNames.RETRY_MS) continue
+            nameAttempts[endpoint.id] = now
+            val name = EndpointNames.fetch(appCtx, endpoint) ?: continue
+            store.updateEndpoints { set ->
+                set.update(endpoint.id) { it.copy(name = name, nameFetchedAt = System.currentTimeMillis()) }
+            }
+        }
+    }
+
+    // --- Other settings ------------------------------------------------------
+
     fun setWakeMode(mode: WakeMode) = viewModelScope.launch { store.setWakeMode(mode) }
     fun setWakeThreshold(value: Float) = viewModelScope.launch { store.setWakeThreshold(value) }
     fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
@@ -82,6 +207,12 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
     fun setKeepSplitInRecents(on: Boolean) = viewModelScope.launch { store.setKeepSplitInRecents(on) }
     fun setDirectCalls(on: Boolean) = viewModelScope.launch { store.setDirectCalls(on) }
+
+    /**
+     * One of the dashboard's per-device preferences (DeviceWebSettings), for
+     * every endpoint; null removes it. A key the app does not hold is ignored.
+     */
+    fun setDeviceWebSetting(key: String, value: String?) = viewModelScope.launch { store.setDeviceWebSetting(key, value) }
 
     fun updateLauncher(change: (LauncherConfig) -> LauncherConfig) =
         viewModelScope.launch { editLauncher(change = change) }

@@ -13,8 +13,10 @@ a specialized browser and home launcher around the
   app's home.
 - It adds the few things a browser tab cannot do: an on-device **wake phrase**,
   **native text-to-speech** where the WebView has none, the **client
-  certificate** (mutual TLS) for the Retinue edge, and **Health Connect sync**
-  (the phone's health data, as files, to the Retinue server).
+  certificate** (mutual TLS) and stored **sign-in** for the Retinue edge, the
+  list of **endpoints** (several Retinue servers, one shown at a time), and
+  **Health Connect sync** (the phone's health data, as files, to the Retinue
+  server — per endpoint, where switched on).
 
 The old native voice loop (SpeechRecognizer, `/message` job polling, the answer
 screen) is gone: continuous conversation is now a per-thread mode of the web
@@ -57,21 +59,46 @@ the previous one without uninstalling. Both workflows pass the commit as
 
 ## First run and settings
 
-On first start there is no base URL yet, so Ara opens its **shell settings**.
-They are also reachable from the long-press menu of any launcher-bar entry, and
-from the web app's Settings page (it calls `RetinueShell.openSettings()`).
+**Settings is one page, the app's own** (`assets/settings/`): Ara shows it in a
+WebView of its own at an address nothing on the internet answers
+(`https://appassets.androidplatform.net/settings/`, the one Google reserves for
+this; the app serves the page from the APK and lets no request for that address
+leave the phone). So it opens with or without a server: on first run, when the
+dashboard cannot load, from the web app's gear, from the long-press menu of any
+launcher-bar entry and All apps, and from the card over a page that did not
+load. It has three parts, from the phone outwards:
+
+1. **This app** — what holds on this phone whichever endpoint is shown: the
+   endpoints themselves, voice timing and the shelf, home screen, split screen,
+   the wake phrase, the launcher bar and updates.
+2. **This app with *endpoint*** — what this phone does with the endpoint shown
+   now: its health data (and, once the app receives them, its notifications).
+3. **This instance** — the endpoint's own settings (its name and colour, agent
+   models, the system pages), embedded from the server's
+   `/settings-instance.html`, which the server lets only itself and this page
+   frame. It is what a browser shows on the dashboard's own Settings page; when
+   it cannot be shown here, a button opens the dashboard there. Its links open
+   in the dashboard, and the page closes.
+
+On first start there is no endpoint yet, so the page opens at a new one.
 
 | Setting | Meaning |
 |---|---|
-| **Retinue base URL** | The web app's origin, e.g. `https://agents.example.com` (`https://` is assumed if omitted). Pages on this origin stay in the shell; nothing else gets the bridge, the microphone or the certificate. |
-| **Client certificate** | The installed certificate Ara presents to that origin (mTLS). |
+| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS; the editor also imports one from a `.p12` or `.pfx` file, see [Client certificate](#client-certificate-mutual-tls-and-sign-in)), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) and the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint). The endpoint shown is marked *Active*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
+| **Voice** | When speech recognition ends in a continuous conversation: the pause that ends a take, and how long the mic waits for speech at all. For every endpoint (see [Per-device preferences](#per-device-preferences)). |
+| **Shelf** | How many minimized threads, chats and projects the dashboard's shelf keeps. For every endpoint, as above. |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Split screen** | Open apps beside Ara, and keep Ara in recent apps (both off by default; see [Split screen](#split-screen)). |
-| **Launcher bar** | Add links, web-app pages and folders, reorder, edit, remove, reset to defaults. |
-| **Wake phrase** | Mode, sensitivity, and the models (see below). |
+| **Wake phrase** | Mode, with what each needs from Android, and the sensitivity; under *Advanced*, the models (see [Wake phrase](#wake-phrase)). |
+| **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
+| **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
 
-Nothing environment-specific is baked into the APK.
+Nothing environment-specific is baked into the APK. The one base URL and
+certificate alias of earlier builds become the first endpoint on update, with
+health data on, as it was for that server; the current endpoint's address and
+alias are mirrored back into those two keys, so an older build still finds its
+server.
 
 ---
 
@@ -80,8 +107,10 @@ Nothing environment-specific is baked into the APK.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/3 (Android)` (2: the Health Connect
-  members of the bridge exist; 3: `placeCall`).
+- The user agent ends in ` RetinueShell/5 (Android)` (5: `placeCall`; 4: the app
+  has a settings page of its own and holds the dashboard's per-device
+  preferences; 3: the endpoint members of the bridge exist; 2: the Health
+  Connect members).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -94,8 +123,10 @@ Nothing environment-specific is baked into the APK.
 - **File chooser** for attachments (the system picker, multiple files allowed).
 - **Microphone** for the page: granted only to the configured origin, after
   Android's `RECORD_AUDIO` permission (asked for on first use).
-- **HTTP authentication** prompts for user name and password (a fallback; the
-  edge normally authenticates by certificate).
+- **HTTP authentication**: the endpoint's stored user name and password answer
+  the first challenge of a page load by themselves; otherwise (none stored, or
+  it was refused) a dialog asks, with *Remember for this endpoint* to store
+  what is typed. The edge accepts either a client certificate or the password.
 - **Back** goes back in the page's history. As home app, Back at the start page
   does nothing; otherwise it sends Ara to the background (the page is kept).
 - A crashed or reclaimed WebView renderer is replaced and the start page
@@ -110,21 +141,28 @@ Nothing environment-specific is baked into the APK.
   the page loads; a main-frame network error, an HTTP error status (400 and up),
   a refused TLS certificate of the configured origin or a cancelled sign-in
   replace the page with a card giving the reason and URL, with Retry, Choose
-  certificate (when none is selected) and Shell settings. The settings' **Page
-  status** section shows the current status, the last URL, the selected
-  certificate and the page's last console errors, for a screenshot.
+  certificate (when none is selected), Switch endpoint (when there is another)
+  and Settings. The settings page then starts with the same reason and URL,
+  the page's last console errors under a fold, and Retry.
 
 ## Shell ↔ web contract
 
 The web app detects the shell and talks to it through:
 
 - `window.RetinueShell` — installed at document start on the configured origin
-  only: `{platform: 'android', version, setVoiceActive(bool), openSettings()}`
+  only: `{platform: 'android', version, setVoiceActive(bool), openSettings(section?)}`
   plus the Health Connect members (see [Health Connect sync](#health-connect-sync)):
   `healthConnectAvailable()` → `"true"`/`"false"`, `healthSync()`,
   `healthSyncStatus()` → a JSON string, `setHealthSyncInterval(minutes)`,
-  `setHealthAutoSync(bool)`, and `placeCall(number)` (see
-  [Phone calls](#phone-calls)).
+  `setHealthAutoSync(bool)`; and the endpoint members (RetinueShell/3, see
+  [Endpoints](#endpoints)): `endpoints()` → a JSON string
+  `[{id, label, current}]`, `selectEndpoint(id)`. `openSettings('endpoints')`
+  opens the settings page at the endpoint list, or at the editor straight away
+  with one endpoint. RetinueShell/4 adds `settingsPage: true` (the gear opens
+  the app's page) and the per-device preferences: `deviceSettings()` → a JSON
+  string of them, `setDeviceSetting(key, value)` (`null` removes one); see
+  [Per-device preferences](#per-device-preferences).
+  RetinueShell/5 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -147,8 +185,10 @@ The web app detects the shell and talks to it through:
   (Home on the start page leaves it alone).
   Health sync sends `type` `health-sync` with a `state`: `started` (with
   `trigger`), `done` (`count`), `error` (`error`) or `skipped` (`reason`:
-  `interval`, `no-permission`, `unavailable`, `no-backend-support`). Nobody
-  has to take these.
+  `interval`, `no-permission`, `unavailable`, `no-backend-support`,
+  `disabled`); a changed endpoint list sends `type` `endpoints`, changed
+  per-device preferences `type` `device-settings` with the `keys` that
+  changed. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
   `number`), `dialer` (`reason`: `emergency`, `disabled`, `no-permission`;
   with `number`) or `refused` (`reason`: `invalid-number`, `not-in-voice`,
@@ -203,6 +243,40 @@ Once the call is dialling the shell cannot hear the user any more, nor tell
 when the other side answers (only the default phone app can), so there is no
 voice cancel after that.
 
+### Per-device preferences
+
+A few of the dashboard's preferences belong to the device, not to the server:
+the voice timeouts, the shelf size, the layout of its split views. In a
+browser the dashboard keeps them in local storage, per origin; inside Ara the
+app holds them, so they are the same for every endpoint and survive switching.
+The app takes only the dashboard's own keys (`data/DeviceWebSettings.kt`: an
+allowlist, bounded in size), so one server cannot hand data to another
+through them. The dashboard reads them with `deviceSettings()` and writes with
+`setDeviceSetting()`; a value the app does not have yet is taken over from
+the page's local storage once. The settings page edits the voice timeouts and
+the shelf size directly.
+
+### The settings page and the app
+
+The page talks to the app through `window.AraSettingsNative`, injected by
+`addWebMessageListener` into the page's own origin, main frame only
+(`settings/SettingsBridge.kt`); the instance section, another origin, gets
+nothing. The page sends `hello` once loaded and one message per action
+(`settings/SettingsMessages.kt` lists them); the app answers with the whole
+`state` whenever anything in it changes (`settings/SettingsState.kt`), plus
+the answers to an endpoint save, to the certificate chooser and to a
+certificate import, and health sync events. Unlike a dashboard page, it may change the endpoints, their
+certificates and passwords and the health switch; the app still checks every
+endpoint it saves, and what is stored already (a password) never goes to the
+page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
+a frame of the current endpoint's origin (the page loads afresh when that
+changes) and nothing else; nobody may frame it, and the dashboard's WebView
+never loads anything from its address. A policy cannot name an IPv6 address,
+so an endpoint at one gets the way into its dashboard instead of the frame.
+The frame signs in as the dashboard does (certificate, stored password) and
+loads afresh when the endpoint, its certificate or its sign-in changes. The page's decisions live in
+`assets/settings/logic.mjs`, tested with `node app/src/test/js/settings-page.test.mjs`.
+
 ---
 
 ## Links into the app
@@ -217,17 +291,19 @@ intent://open?url=<percent-encoded full URL>#Intent;scheme=retinue-shell;package
 Chrome hands Ara `retinue-shell://open?url=…` (the opaque
 `retinue-shell:open?url=…` works too; the activity declares the scheme with
 `BROWSABLE`). Ara decodes the URL and compares its origin — scheme, host,
-port, default ports filled in — **exactly** with the configured one (http is
+port, default ports filled in — **exactly** with the current endpoint's (http is
 never upgraded to https). A match loads the URL, fragment included, in the page
 (instead of the start page when the link started Ara) — in the canonical form
 the check saw, not the link's own spelling: the WebView would canonicalise a
 host such as `straße.example` (IDNA 2008) differently from the check (IDNA
 2003), so the spelling could pass as one host and load another. A URL the
-parser does not take as a whole is refused. Anything else loads
-nothing and sets nothing up: Ara says "This link is for <origin>, which is not
-set up in this app."; a malformed link is ignored with a short message. A link
-is never replayed by a recreated activity or from Recents. There are no Android
-App Links: the origin is configured at runtime. Implementation:
+parser does not take as a whole is refused. A link for **another configured
+endpoint** asks first ("Switch to <name>?"); on Switch that endpoint becomes
+the current one and the link loads there. Anything else loads nothing and sets
+nothing up: Ara says "This link is for <origin>, which is not set up in this
+app."; a malformed link is ignored with a short message. A link is never
+replayed by a recreated activity or from Recents. There are no Android App
+Links: the origin is configured at runtime. Implementation:
 `shell/ShellLinks.kt`.
 
 ---
@@ -249,23 +325,32 @@ Connect app below that). Without Health Connect, `healthConnectAvailable()` is
 `READ_HEALTH_DATA_IN_BACKGROUND` where Health Connect offers it. Whatever
 subset the user grants is synced.
 
+**Where it may go.** Each endpoint has its own **health data switch** (on the
+settings page, with the endpoint shown, and in the endpoint's editor; off for
+a new endpoint, on for the one an update carried over). Off, nothing is read
+from Health Connect for that endpoint and nothing is sent, not even on
+request: a deliberate sync reports `skipped`/`disabled`, and the status's
+`enabled` is false. Only the app's own page sets the switch: it decides which
+server receives the data, so no dashboard page may.
+
 **When.** When Ara comes to the front, at most every 5 minutes (adjustable,
 `setHealthSyncInterval`; counted from the last sync that ran; off with
 `setHealthAutoSync(false)`; both kept on the device). Such a sync on a phone
 without Health Connect, or where nothing was ever granted, does nothing at all;
 one that is not due yet reports `skipped`/`interval`. A **deliberate** sync
-(`healthSync()`, from the web app's Settings → Phone shell or the
-`/sync-health` page) always runs; asking again within 5 s, or while one runs, is
+(*Update health data now* on the settings page, `healthSync()` from the web
+app, or the `/sync-health` page) always runs; asking again within 5 s, or while one runs, is
 the same request. It is the only one that asks for permissions, through Health
 Connect's own dialog: whenever nothing is granted, and once when only some
 types are. Its trigger is `link` on `<base>/sync-health`, `manual` elsewhere.
 One sync runs at a time; Health Connect and the network are used off the main
 thread.
 
-**What.** With a stored Changes token (kept per set of granted types): every
-change since (`kind: changes`). Without one (`initial`), or when it expired
-after about 30 days (`resync`): every record of the last 30 days as upserts,
-with a fresh token taken before reading, so nothing falls between the two.
+**What.** With a stored Changes token for the server (each server has its own,
+kept per set of granted types): every change since (`kind: changes`),
+deletions included. Without one (`initial`), or when it expired after about 30
+days (`resync`): every record of the last 30 days as upserts, with a fresh
+token taken before reading, so nothing falls between the two.
 
 **Where.** Before Health Connect is read, Ara probes the letterbox share
 `<origin>/inbox/`: a `PROPFIND` of depth 0, and when that is a 404 an
@@ -279,30 +364,40 @@ either step. Each part
 (at most 5000 changes) is then one file, written with a plain `PUT` (with
 `Content-Length`) as
 `<origin>/inbox/hc-<sent_at as 20261101T171500Z>-<batch_id>-p<part>of<parts>.health-connect.json`,
-authenticated as the WebView is: the selected client certificate and the
+authenticated as the WebView is: the endpoint's client certificate and stored
+password (one credential for the dashboard and the letterbox alike), and the
 WebView's cookies for the origin. One round has one `batch_id` and one
 `sent_at`, the same in every part. Any 2xx stored the part; anything else
 (apart from the 404/405 above) is an `error`.
 
 A round's parts are written to the device first (one at a time, in Ara's own
 files) and uploaded one by one, each file deleted once the server has it. The
-token advances only when every part of the round was stored; it is kept per
-set of granted types and per origin (another server starts with the whole
-window). A round that failed halfway stays on the device, and the next sync
-resumes it first — before Health Connect is even asked, so a permission
-revoked meanwhile cannot strand data already read — from the first unsent
-part, under the same `batch_id` and `sent_at`: the server sees one batch and
-no orphans. The round records its origin; one for another server (the base
-URL was changed or cleared) is discarded, at once when the setting changes
-and again at the next sync. A token Health Connect no longer accepts (after a
-reset or reinstall) is treated like an expired one: the window is read again.
+token advances only when every part of the round was stored. Tokens and rounds
+are kept **per server** (origin): each server's token marks where in Health
+Connect's change log its own deliveries stand, so a server that was not shown
+for a while gets exactly what changed since its last delivery when it is shown
+again — deletions included, nothing twice — as long as Health Connect still
+has that token (about 30 days; after that it gets the 30-day window again). A
+server without a token starts with the whole window. A round that failed
+halfway stays on the device, in its server's own folder, and the next sync to
+that server resumes it first — before Health Connect is even asked, so a
+permission revoked meanwhile cannot strand data already read — from the first
+unsent part, under the same `batch_id` and `sent_at`: the server sees one
+batch and no orphans. Showing another endpoint leaves a round where it is: it
+waits for its server. It is discarded only when its endpoint is removed, its
+address changed or its health switch turned off; a server's token is
+forgotten only when no endpoint points at it any more. A token Health
+Connect no longer accepts (after a reset or reinstall) is treated like an
+expired one: the window is read again.
 
 After a sync that stored nothing — no letterbox, or an upload error —
 automatic syncs back off: the interval, doubled with each failure in a row,
 capped at six hours (5 → 10 → 20 min …); a resume in that time reports
 `skipped` with the reason of the last failure (`no-backend-support`, or
-`interval`). A success resets it. A deliberate sync never waits and always
-probes again.
+`interval`). A success on that server resets it; switching to another
+endpoint leaves it behind: the back-off is the failing server's, kept per
+origin. A deliberate sync never
+waits and always probes again.
 
 **The file** (`schema` `retinue-health-connect/1`):
 
@@ -335,7 +430,8 @@ know yet).
 **Status** (`healthSyncStatus()`): `{"available", "permissions":
 "granted"|"partial"|"none", "last_sync_at": ISO|null (last success),
 "last_result": "ok"|"error"|"skipped"|null, "last_error", "last_count",
-"min_interval_minutes", "auto_on_resume"}`. An `interval` skip leaves the last
+"min_interval_minutes", "auto_on_resume", "enabled"}` (`enabled`: the current
+endpoint's health data switch). An `interval` skip leaves the last
 result alone; for other skips `last_error` holds the reason. The bridge is
 asynchronous, so the page script answers from a copy: the status the shell put
 into the script when it was installed, updated by the shell on every change
@@ -351,7 +447,7 @@ and unit-tested), `health/HealthRecords.kt` (records → JSON, unit-tested),
 `health/HealthSyncer.kt` (the order of one sync, against interfaces for Health
 Connect and the letterbox; unit-tested with fakes), `health/HealthSyncRuntime.kt`
 (the real Health Connect and OkHttp behind them, state) and
-`health/HealthRoundStore.kt` (the round on the device).
+`health/HealthRoundStore.kt` (the rounds on the device, one per server).
 
 ---
 
@@ -374,7 +470,7 @@ web apps (tap to open, long-press to pin it to the bar or put it in a folder).
 It is what keeps other apps reachable once Ara is the home screen. Long-press a
 bar entry to edit, move, or remove it, or to open it the other way: beside Ara
 in split screen, or full screen (see [Split screen](#split-screen)); the editor
-in the shell settings adds links, web pages and folders and reorders everything.
+(Settings → Launcher bar) adds links, web pages and folders and reorders everything.
 
 As home app Ara accepts pinned shortcuts (a browser's "Install app" / "Add to
 home screen" — an installed web app from Edge or Chrome — and other apps'
@@ -398,6 +494,38 @@ that no app can open it.
 App discovery uses a `<queries>` declaration for launcher activities — no
 `QUERY_ALL_PACKAGES`.
 
+### The tray
+
+**Pull the bar up** for more lines of apps: every installed app and web app
+that is not on the bar itself (apps inside folders too, but no folders), the
+**most recently used first**, then the never-used ones by name. The lines look
+like the bar and are as tall; let go and the tray settles on a whole line, a
+quick flick takes it all the way up or down. It goes up as far as the web
+app's top menu (its navigation row `retinue-nav`, or a page's own `header`),
+which stays in view: the shell asks the page for the menu's bottom edge each
+time the tray comes up, and leaves 48 dp when the page has none. With more
+apps than fit, the lines scroll once the tray is all the way up; dragging them
+down scrolls back to the top first, then takes the tray down.
+
+The tray **goes down again** on a tap anywhere above it (on the dimmed page or
+its menu; the tap does nothing else), when anything is opened from the bar,
+the tray or elsewhere, on Back, on Home, when the keyboard comes up and when
+Ara leaves the screen. Tap an app in the tray to open it; **long-press** it for
+the same menu as in All apps: open it the other way (beside Ara in split
+screen, or full screen), pin it to the bar, add it to a folder or a new one,
+and for a web app remove it from the phone. A screen reader gets an action on
+the bar's handle to bring the tray up or down.
+
+**Recent use** comes from two places: every app and web app Ara opens (from
+the bar, a folder, All apps or the tray) is recorded with the time, on the
+device (the 300 most recent); and, once the user grants Ara **usage access**
+(Settings → Launcher bar → *Allow usage access*, which opens the system page;
+`PACKAGE_USAGE_STATS`), Android's own record of when each app was last on
+screen, so apps opened from a notification, from Recents or from another app
+count too. An item's last use is the later of the two; a web app counts only
+its own launches (its package is the browser that installed it). Without
+usage access nothing is asked for and only Ara's launches count.
+
 ### Folders
 
 A folder holds apps: installed apps and installed web apps (pinned shortcuts,
@@ -408,7 +536,7 @@ folder is dropped when it is read.
 
 - **Create** one with *New folder* in the long-press menu of **All apps**, with
   *New folder with this app* in an app's long-press menu inside All apps, or
-  with **Add folder** in the shell settings.
+  with **Add folder** in the launcher bar's editor (Settings → Launcher bar).
 - **Type:** the editor offers standard folder types — Folder, Chat, Social,
   Media, Photos, Games, News, Travel, Work, Tools, Shopping, Finance, Health,
   Smart home. The type gives the folder its symbol and, until you name it
@@ -424,8 +552,9 @@ folder is dropped when it is read.
   or deleted. An icon that is replaced, or whose folder is removed, is deleted.
 - **Apps:** the editor lists the folder's apps (reorder, remove) and the
   installed apps and web apps to add (searchable). Both also go in from All
-  apps (long-press → *Add to …*) and from the bar (long-press one on the bar →
-  *Move to …*). An app may be in several folders and on the bar as well.
+  apps and the tray (long-press → *Add to …*) and from the bar (long-press one
+  on the bar → *Move to …*). An app may be in several folders and on the bar
+  as well.
 - **Use:** tap the folder to open it over the bar; tap an app to start it,
   long-press one to move it or take it out; **+** adds apps and the pencil
   edits the folder. Long-press the folder on the bar to edit, move or remove
@@ -490,19 +619,93 @@ remembered by the system, so later apps open on the other side.
 
 ---
 
-## Client certificate (mutual TLS)
+## Client certificate (mutual TLS) and sign-in
 
-1. Install the certificate as a *VPN & app user certificate* (Settings →
-   Security → Encryption & credentials → Install a certificate), or via MDM.
-2. In the shell settings, **Select certificate** and pick its alias.
+The certificate lives in the Android KeyChain, as a *VPN & app user
+certificate*. There are two ways to put it there:
 
-Ara stores only the **alias**. When the configured origin asks for a client
-certificate (`onReceivedClientCertRequest`), the key and chain are taken from
-the Android KeyChain off the main thread and presented — to that origin only;
-any other host is refused. Without a selected certificate the request proceeds
-without one (and is asked again later). The same certificate is used for model
-downloads from the configured origin; that client follows no redirects itself,
-so a redirect to another host is fetched without the certificate.
+- **Import it in Ara.** In the endpoint's editor (Settings → the endpoint's
+  *Edit*, or *Add endpoint*), **Import certificate…** and pick a PKCS#12 file
+  (`.p12` or `.pfx`) that holds the certificate and its private key, copied
+  to the device in any way (Syncthing, a download, a USB transfer). Android's
+  own certificate installer asks for the file's password and a name for the
+  certificate (where it asks what the certificate is for: *VPN and apps*).
+  Android's chooser then opens on it; picking it there selects it for the
+  endpoint, saved with the endpoint as always. This needs no developer mode,
+  adb or system settings page, so it also works on devices whose settings
+  offer no *Install a certificate*, such as a Meta Quest.
+- **Install it in Android's settings** (Settings → Security → Encryption &
+  credentials → Install a certificate), or via MDM; then, in the endpoint's
+  editor, **Select certificate** and pick its alias.
+
+Ara keeps no key store of its own. An imported file is read into memory only,
+checked to look like a PKCS#12 store of at most 256 KB
+(`net/CertificateImport.kt`; the installer, which has the password, reads the
+whole store), handed to the installer in its intent
+(`KeyChain.createInstallIntent()` with `EXTRA_PKCS12`, and the file's name as
+`EXTRA_NAME`) and wiped (`net/CertificateInstaller.kt`); the key is Android's
+from then on.
+Installing does not give Ara the key: Android grants it only through its
+chooser, which is why the import ends there. The editor says how an import
+ended: not a PKCS#12 file, unreadable or too large; installing certificates
+turned off on the device (a device policy, `DISALLOW_CONFIG_CREDENTIALS`); no
+certificate installer Ara can open; or nothing installed, when the installer
+was left, or closed at once on a device that withholds it from apps. Whether
+Meta Quest OS lets apps open the installer has not been verified yet.
+
+Ara stores only the **alias**, per endpoint. When the configured origin asks
+for a client certificate (`onReceivedClientCertRequest`), the key and chain are
+taken from the Android KeyChain off the main thread and presented — to that
+origin only; any other host is refused. Without a selected certificate the
+request proceeds without one (and is asked again later). The same certificate
+is used for the health upload and for model and manifest downloads from the
+configured origin; that client follows no redirects itself, so a redirect to
+another host is fetched without the certificate.
+
+An edge that asks for a **password** instead (the Retinue edge accepts either)
+gets the endpoint's stored **sign-in**: a user name and a password, entered in
+the editor or remembered from the sign-in dialog. The password is sealed with
+a key that never leaves the Android Keystore (AES-256-GCM, `data/CredentialVault.kt`)
+and stored in that form; a backup restored to another phone cannot open it, and
+the dialog asks again. It is sent only to that endpoint's host, with the
+WebView's first challenge of a page load (a second challenge means it was
+refused: the dialog takes over) and, through OkHttp's authenticator, once per
+request of the health upload and the downloads. With both a certificate and a
+password set, the certificate decides the TLS handshake and the password is
+never asked for.
+
+## Endpoints
+
+The shell keeps a list of Retinue servers (`data/Endpoint.kt`, stored as JSON in
+the preferences) and shows one, the **current** endpoint; everything that is
+"the configured origin" above — the bridge, the microphone, the certificate,
+the password, the letterbox — is the current endpoint's. Switching (*Use* on
+the settings page, a link for another endpoint, or
+`RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
+and loads its start page; the settings page stays open and shows the new
+endpoint's parts. Health Connect sync follows the current endpoint
+only: a sync still running for the old one stops, and its round, if any,
+waits on the device for that server (see "Health Connect" above); each
+server's Changes token is its own, so a server shown again gets what changed
+since its last delivery.
+
+The web app sees the list through `RetinueShell.endpoints()`: `[{id, label,
+current}]` — the label the shell shows, never the other servers' URLs — and
+may ask to switch or to open the editor (`openSettings('endpoints')`). It
+cannot add, change or remove an endpoint: whatever origin the shell is pointed
+at receives the bridge, the microphone, the certificate and the password, so a
+page must not be able to point it anywhere. A change to the list while a page
+is open is pushed to it (`endpoints.status`) and announced with an `endpoints`
+event.
+
+**Names.** An endpoint is shown under the name its server gives itself: the
+`short_name` of its web manifest (`<base>/manifest.webmanifest`), which the
+dashboard's Settings › Instance sets. The shell fetches it with the endpoint's
+own certificate or password (`net/EndpointNames.kt`) when an endpoint is saved
+or switched to, when the list is shown and after a page of it has loaded, at
+most once an hour, and keeps the last answer. Until the first answer the host
+stands in; when two endpoints carry the same name (two unnamed instances both
+say "Retinue") the host is appended to tell them apart.
 
 Files the WebView cannot show itself (a PDF, any download) are fetched from the
 configured origin the same way, with the WebView's cookies, up to 200 MB; a
@@ -529,7 +732,7 @@ only when the header carries none: it takes a name only from a bare
 ## Updates
 
 Ara is not in an app store, so it updates itself from the GitHub releases of
-`Retinue-OS/ara-android`. The **Updates** section of the shell settings has:
+`Retinue-OS/ara-android`. The **Updates** card of the settings page has:
 
 - **Install updates automatically** (off by default). Turning it on checks at
   once; after that Ara checks the channel whenever it comes to the front, at
@@ -613,7 +816,7 @@ activity directly (Android 10+ blocks that), so it posts a high-priority
 **full-screen notification**: on a locked or sleeping phone it opens Ara at
 once, otherwise it shows as a heads-up to tap. Android 14+ grants full-screen
 notifications by default only to calling and alarm apps; the wake section of
-the shell settings shows a button to allow it when needed
+the settings page shows a button to allow it when needed
 (`USE_FULL_SCREEN_INTENT`). To have Ara come forward at once even while the
 phone is unlocked with another app in front, allow it to **display over other
 apps** (`SYSTEM_ALERT_WINDOW`, also offered in the wake section): that
@@ -634,7 +837,7 @@ retried later with a growing delay). Detection pauses while the web app
 reports the mic in use. A microphone error stops detection for 30 s (doubling
 up to 10 min on repeated errors), or until Ara is opened again.
 
-**Models are not bundled** (licence and size). In the shell settings:
+**Models are not bundled** (licence and size). On the settings page, under the wake phrase's *Advanced*:
 
 1. **Download feature models** — `melspectrogram.onnx` and
    `embedding_model.onnx` from openWakeWord's v0.5.1 release.
@@ -693,10 +896,12 @@ shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation
 health/    HealthSyncLogic, HealthRecords,          — pure: sync gating and back-off, file envelope and name,
            HealthSyncer                               rounds, records → JSON, the order of one sync (unit-tested)
            HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
-                                                      sync state, the round kept on the device
+                                                      sync state, the rounds kept on the device (one per server)
 launcher/  LauncherEntry, LauncherConfig,           — pure: entry types (folders hold apps only), JSON
-           FolderKind                                 codec, edits, folder types (unit-tested)
-           AppCatalog, FolderIcons                  — launchable apps and their icons, folder images
+           FolderKind, AppRecency (TrayLogic)         codec, edits, folder types, the tray's order and
+                                                      height (unit-tested)
+           AppCatalog, AppUsage, FolderIcons        — launchable apps and their icons, Android's usage
+                                                      stats, folder images
 wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic gate (unit-tested)
            WakeGate), WakeFeatures                  — pure: openWakeWord's streaming buffers (unit-tested)
            OnnxWakeModels                           — the three ONNX models (ORT Java API)
@@ -705,13 +910,22 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
 web/       ShellWebView, ShellWebClients,           — the WebView, its setup and callbacks,
            ShellBridge, NativeSpeech,                 the bridge, TextToSpeech,
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
-data/      ShellSettings, AraStore                  — settings and launcher persistence (DataStore)
+data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
+           CertificateImport                        — pure: which file goes to the installer, its name (unit-tested)
+           CertificateInstaller                     — reading the picked file, Android's certificate installer
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
-           LauncherBar, AppDrawer, LauncherFolders,   drawer, folders (open folder, folder editor)
-           SettingsScreen, HealthRationaleActivity
+           LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor),
+           LauncherFolders,
+           LauncherEditorScreen, SettingsPageModel,   the launcher bar's editor, the settings page's state
+           HealthRationaleActivity
+settings/  AppPage, SettingsMessages,               — pure: the settings page's address and policy, its
+           SettingsState                              messages both ways, its state (unit-tested)
+           AppPageServer, SettingsBridge,           — the page served from the APK, its line to the app,
+           SettingsWebView                            its WebView
 assets/    retinue-shell.js                         — page side of the bridge and the speech stand-in
+           settings/                                — the settings page (logic.mjs: its decisions, node-tested)
 ```
 
 The branching rules live in framework-free classes covered by JVM unit tests;

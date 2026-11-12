@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
 import os.retinue.ara.shell.UrlRouter
 
@@ -159,14 +160,14 @@ object WakeModelFiles {
 
     /**
      * A model hosted on the configured Retinue origin (e.g. a trained "Hey
-     * Retinue") is fetched with the client certificate — by a client that
-     * follows no redirects, so the certificate never goes to another host;
-     * anything else with a plain client.
+     * Retinue") is fetched as the WebView reaches it — the endpoint's client
+     * certificate and stored password — by a client that follows no redirects,
+     * so neither goes to another host; anything else with a plain client.
      */
     private fun clientFor(context: Context, settings: ShellSettings, url: String): OkHttpClient {
-        val alias = settings.certificateAlias
-        if (alias != null && UrlRouter(settings.baseUrl).isConfiguredOrigin(url)) {
-            return AraHttp.build(context, alias, TimeUnit.SECONDS.toMillis(60))
+        val endpoint = settings.current
+        if (endpoint != null && UrlRouter(endpoint.baseUrl).isConfiguredOrigin(url)) {
+            return AraHttp.build(context, endpoint.certificateAlias, TimeUnit.SECONDS.toMillis(60), endpoint.credentials(), endpoint.origin)
         }
         return OkHttpClient.Builder()
             .callTimeout(120, TimeUnit.SECONDS)
