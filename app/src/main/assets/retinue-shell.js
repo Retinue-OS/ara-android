@@ -9,7 +9,7 @@
 //     endpoints(), selectEndpoint(id), and (RetinueShell/4) the app's own
 //     settings page (settingsPage) and the dashboard's per-device
 //     preferences the app holds for every endpoint: deviceSettings(),
-//     setDeviceSetting(key, value), and (RetinueShell/5) placeCall(number),
+//     setDeviceSetting(key, value), and (RetinueShell/6) placeCall(number),
 //     whose outcome comes as a `call` event. Shell -> web events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).

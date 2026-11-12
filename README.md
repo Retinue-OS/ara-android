@@ -109,10 +109,10 @@ server.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/5 (Android)` (5: `placeCall`; 4: the app
-  has a settings page of its own and holds the dashboard's per-device
-  preferences; 3: the endpoint members of the bridge exist; 2: the Health
-  Connect members).
+- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5:
+  reserved for the keyboard for other devices; 4: the app has a settings page
+  of its own and holds the dashboard's per-device preferences; 3: the endpoint
+  members of the bridge exist; 2: the Health Connect members).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -164,7 +164,7 @@ The web app detects the shell and talks to it through:
   the app's page) and the per-device preferences: `deviceSettings()` → a JSON
   string of them, `setDeviceSetting(key, value)` (`null` removes one); see
   [Per-device preferences](#per-device-preferences).
-  RetinueShell/5 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
+  RetinueShell/6 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a

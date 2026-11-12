@@ -330,7 +330,7 @@ console.log('endpoint bridge tests passed');
 }
 console.log('device settings bridge tests passed');
 
-// placeCall: the number goes to the shell as a string; nothing without one.
+// placeCall (RetinueShell/6): the number goes to the shell as a string; nothing without one.
 {
   const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, Array, TypeError, console };
   ctx.window = ctx;
