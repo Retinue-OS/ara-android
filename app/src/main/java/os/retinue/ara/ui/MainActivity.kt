@@ -849,6 +849,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
             is SettingsAction.DirectCalls -> setDirectCalls(action.on)
             SettingsAction.CallsPermission -> requestCallPermission()
+            is SettingsAction.TypeOnDevices -> settings.current?.let { viewModel.setTypeOnDevices(it.id, action.on) }
             SettingsAction.LauncherEdit -> showLauncherEditor = true
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
@@ -1187,6 +1188,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun applySettings(s: ShellSettings) {
         val aliasChanged = s.certificateAlias != settings.certificateAlias
         val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
+        val typingAllowed = page.keyboardAllowed()
         page.settings = s
         settingsLoaded = true
         // A wake accepted before the settings were read, or whose instance was removed since.
@@ -1227,6 +1229,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         } else {
             if (labelsChanged) bridge.endpointsChanged(labels)
             if (deviceChanged) bridge.deviceSettingsChanged(s.deviceWebSettings)
+            // The page's keyboard status says whether its server may type: re-read (a `status` event).
+            if (page.keyboardAllowed() != typingAllowed) bridge.keyboardEvent(KeyboardEvent.status)
             openPendingLink()
             tryDeliverWake()
         }
@@ -1769,13 +1773,15 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 if (onScreenFor(message.id)) KeyboardRuntime.key(message.name, message.id)
             is WebMessage.KeyboardSecret -> if (onScreenFor(message.id)) openSecretDialog(message)
             WebMessage.KeyboardOpen -> if (onScreenFor(null)) openKeyboard()
-            WebMessage.KeyboardCancel -> KeyboardRuntime.cancelFromPage()
+            WebMessage.KeyboardCancel -> if (page.keyboardAllowed()) KeyboardRuntime.cancelFromPage()
             is WebMessage.PlaceCall -> placeCall(message.number)
         }
     }
 
     /**
-     * The page may make Ara type only while the user is looking at it
+     * The page may make Ara type only where its server may (its endpoint's
+     * own switch, [ShellPage.keyboardAllowed]; otherwise `not-enabled`), and
+     * only while the user is looking at it
      * ([ShellDecisions.mayType]: resumed, focused, unlocked): a script running
      * in a page nobody is looking at — the screen off, another app or the
      * other half of a split screen in use, the notification shade down —
@@ -1787,6 +1793,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun onScreenFor(id: String?): Boolean {
         val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         val error = when {
+            !page.keyboardAllowed() -> KeyboardError.NotEnabled
             KeyboardRuntime.secretDialogOpen -> KeyboardError.Busy
             !ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, secretDialogOpen = false) ->
                 KeyboardError.NotInFront

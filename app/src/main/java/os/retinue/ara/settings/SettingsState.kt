@@ -67,6 +67,16 @@ data class CallsInfo(
     val telephony: Boolean,
 )
 
+/**
+ * Typing on other devices for the current endpoint (KeyboardLogic.serverMayType):
+ * whether its page may make the phone's keyboard type at all. The keyboard's
+ * own state, the phone's, is [SettingsPageState.keyboard].
+ */
+data class TypingInfo(
+    /** The current endpoint's switch: its page's keyboard requests are taken (and then asked about per device). */
+    val allowed: Boolean,
+)
+
 /** The wake phrase card: the instance shown, its phrase on this phone, and what the phone needs for it. */
 data class WakeInfo(
     /** [os.retinue.ara.wake.WakeMode.key], of the instance shown. */
@@ -192,6 +202,8 @@ data class SettingsPageState(
     val usageAccess: Boolean = false,
     /** The keyboard for other devices: its card shows whether it is on and the device it types into. */
     val keyboard: KeyboardStatus = KeyboardStatus(),
+    /** Whether the current endpoint's page may type on other devices ([typingInfo]). */
+    val typing: TypingInfo = TypingInfo(allowed = false),
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         put("version", version)
@@ -258,6 +270,7 @@ data class SettingsPageState(
                 put("telephony", calls.telephony)
             },
         )
+        put("typing", buildJsonObject { put("allowed", typing.allowed) })
         put(
             "wake",
             buildJsonObject {
@@ -385,5 +398,11 @@ data class SettingsPageState(
             permissionGranted = permissionGranted,
             telephony = telephony,
         )
+
+        /**
+         * The card for typing on other devices: the switch of the endpoint
+         * shown, its own and no other's (off with none set up).
+         */
+        fun typingInfo(settings: ShellSettings) = TypingInfo(allowed = settings.current?.typeOnDevices == true)
     }
 }

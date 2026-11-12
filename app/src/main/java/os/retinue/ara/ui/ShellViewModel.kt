@@ -166,6 +166,11 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         store.updateEndpoints { set -> set.update(id) { it.copy(directCalls = on) } }
     }
 
+    /** The settings page's typing switch: the endpoint [id]'s page may type on other devices, or not. */
+    fun setTypeOnDevices(id: String, on: Boolean) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(typeOnDevices = on) } }
+    }
+
     /** The sign-in dialog's "Remember": the endpoint [id] keeps this user name and (sealed) password. */
     fun rememberCredentials(id: String, username: String, password: String) = viewModelScope.launch {
         val user = username.trim()

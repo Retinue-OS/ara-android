@@ -269,7 +269,7 @@ function renderUpdates() {
 
 function renderEndpointSection() {
   const cur = state.current;
-  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-wake-card]', '[data-calls]', '[data-notifications]']) $(sel).hidden = !cur;
+  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-wake-card]', '[data-calls]', '[data-typing]', '[data-notifications]']) $(sel).hidden = !cur;
   if (!cur) return;
   $('[data-endpoint-name]').textContent = cur.label;
   $('[data-wake-name]').textContent = cur.label;
@@ -290,6 +290,10 @@ function renderEndpointSection() {
   $('[data-calls-available]').hidden = !c.telephony;
   $('[data-calls-direct]').checked = !!c.direct;
   $('[data-calls-notes]').replaceChildren(...L.callNotes(c).map(noteBox));
+  // The switch is the current endpoint's own; the keyboard is the phone's.
+  const t = state.typing || {};
+  $('[data-typing-allowed]').checked = !!t.allowed;
+  $('[data-typing-notes]').replaceChildren(...L.typingNotes(t, state.keyboard).map(noteBox));
 }
 
 // The instance's own section: its settings-instance.html in a frame, shown once
@@ -622,6 +626,7 @@ function onHealthEvent(d) {
 }
 
 $('[data-calls-direct]').addEventListener('change', (e) => send({ type: 'calls.direct', on: e.target.checked }));
+$('[data-typing-allowed]').addEventListener('change', (e) => send({ type: 'typing.allowed', on: e.target.checked }));
 
 // ── Start ────────────────────────────────────────────────────────────────────
 

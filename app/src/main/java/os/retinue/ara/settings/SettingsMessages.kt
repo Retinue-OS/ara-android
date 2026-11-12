@@ -72,6 +72,9 @@ sealed class SettingsAction {
     /** Ask for Android's permission to place calls again, or show where it is given once Android no longer asks. */
     data object CallsPermission : SettingsAction()
 
+    /** The current endpoint's switch for typing on other devices: its page's keyboard requests are taken, or refused. */
+    data class TypeOnDevices(val on: Boolean) : SettingsAction()
+
     /** The launcher bar's own editor (native: it is the bar's). */
     data object LauncherEdit : SettingsAction()
 
@@ -172,6 +175,7 @@ object SettingsMessages {
             "split.recents" -> SettingsAction.SplitRecents(obj.bool("on") ?: return null)
             "calls.direct" -> SettingsAction.DirectCalls(obj.bool("on") ?: return null)
             "calls.permission" -> SettingsAction.CallsPermission
+            "typing.allowed" -> SettingsAction.TypeOnDevices(obj.bool("on") ?: return null)
             "launcher.edit" -> SettingsAction.LauncherEdit
             "launcher.usageAccess" -> SettingsAction.LauncherUsageAccess
             "keyboard.open" -> SettingsAction.KeyboardOpen

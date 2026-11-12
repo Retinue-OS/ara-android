@@ -115,6 +115,7 @@ internal fun settingsPageState(
         device = settings.deviceWebSettings,
         usageAccess = usageAccess,
         keyboard = keyboard,
+        typing = SettingsPageState.typingInfo(settings),
     )
 }
 

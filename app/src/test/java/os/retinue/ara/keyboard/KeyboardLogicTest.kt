@@ -8,6 +8,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Test
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointSet
 
 class KeyboardLogicTest {
 
@@ -98,6 +100,33 @@ class KeyboardLogicTest {
         // The host by name only: its Bluetooth address stays in the app.
         assertEquals(setOf("name"), j["host"]!!.jsonObject.keys)
         assertEquals(JsonNull, KeyboardStatus().toJson()["host"])
+    }
+
+    @Test
+    fun aPageTypesOnlyWhereItsServerMayAndOtherwiseLearnsNothingOfTheDevice() {
+        val home = Endpoint("home", "https://agents.example.com", typeOnDevices = true)
+        val admin = Endpoint("admin", "https://admin.example.com")
+        val set = EndpointSet(listOf(home, admin), "home")
+        assertTrue(KeyboardLogic.serverMayType(set, "home"))
+        // Admin's switch is off; and home's never answers for admin's page, nor for a page left behind.
+        assertFalse(KeyboardLogic.serverMayType(set.select("admin"), "admin"))
+        assertFalse(KeyboardLogic.serverMayType(set.select("admin"), "home"))
+        assertFalse(KeyboardLogic.serverMayType(set, null))
+        assertFalse(KeyboardLogic.serverMayType(EndpointSet.EMPTY, null))
+        assertFalse(KeyboardLogic.serverMayType(set.update("home") { it.copy(typeOnDevices = false) }, "home"))
+
+        val connected = ready.copy(layout = "de-CH")
+        assertEquals(connected, KeyboardLogic.statusForPage(connected, serverAllows = true))
+        // Not allowed: not enabled, and nothing of the device, its layout or whether one is connected.
+        val hidden = KeyboardLogic.statusForPage(connected, serverAllows = false).toJson()
+        assertEquals(KeyboardStatus(available = true).toJson(), hidden)
+        assertEquals("false", hidden["enabled"].toString())
+        assertEquals("false", hidden["connected"].toString())
+        assertEquals(JsonNull, hidden["host"])
+        assertEquals(KeyLayouts.US, hidden["layout"]!!.jsonPrimitive.content)
+        // The same shape as ever (values only change).
+        assertEquals(connected.toJson().keys, hidden.keys)
+        assertFalse(hidden.toString().contains("Quest") || hidden.toString().contains("de-CH"))
     }
 
     @Test

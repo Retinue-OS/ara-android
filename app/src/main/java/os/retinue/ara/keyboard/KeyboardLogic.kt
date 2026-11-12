@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import os.retinue.ara.data.EndpointSet
 
 /** A device Ara can type into: a Bluetooth host it is paired with. */
 data class KeyboardHost(val name: String, val address: String)
@@ -146,6 +147,24 @@ object KeyboardLogic {
         lastHost == null -> true
         else -> address == lastHost
     }
+
+    /**
+     * Whether the page loaded for [pageEndpointId] may type on other devices:
+     * its endpoint's own switch (Endpoint.typeOnDevices), decided as for its
+     * calls ([EndpointSet.pageEndpoint]) — while that endpoint is shown, and
+     * off otherwise. The device-wide keyboard switch must be on as well.
+     */
+    fun serverMayType(endpoints: EndpointSet, pageEndpointId: String?): Boolean =
+        endpoints.pageEndpoint(pageEndpointId)?.typeOnDevices == true
+
+    /**
+     * What `keyboardStatus()` tells a page: everything, when its server may
+     * type ([serverAllows]); otherwise that the keyboard is not enabled — and
+     * nothing of the device, its layout or whether one is connected. The
+     * shape stays the contract's.
+     */
+    fun statusForPage(status: KeyboardStatus, serverAllows: Boolean): KeyboardStatus =
+        if (serverAllows) status else KeyboardStatus(available = status.available)
 
     /** The `count` of a `typed` event: the text's characters, a CRLF line break as one. */
     fun charCount(text: CharSequence): Int {

@@ -10,7 +10,9 @@ import androidx.compose.runtime.setValue
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.keyboard.KeyboardListener
+import os.retinue.ara.keyboard.KeyboardLogic
 import os.retinue.ara.keyboard.KeyboardRuntime
+import os.retinue.ara.keyboard.KeyboardStatus
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncListener
 import os.retinue.ara.health.HealthSyncRuntime
@@ -75,7 +77,8 @@ object ShellPage {
      * The endpoint the start page was loaded for: two endpoints may share an
      * address (and certificate) and differ in their sign-in, so a switch
      * between them loads the start page afresh too. It is the endpoint whose
-     * call switch answers the page's `placeCall` (CallLogic.directCalls).
+     * call switch answers the page's `placeCall` (CallLogic.directCalls), and
+     * whose typing switch its keyboard requests ([keyboardAllowed]).
      */
     var loadedEndpointId: String? = null
 
@@ -88,6 +91,15 @@ object ShellPage {
         val labels = EndpointLabels.labels(settings.endpoints)
         return settings.endpoints.map { EndpointLabel(it.id, labels[it.id] ?: it.hostLabel, it.id == current) }
     }
+
+    /**
+     * Whether the page may type on other devices: its endpoint's own switch
+     * ([KeyboardLogic.serverMayType], decided like its calls).
+     */
+    fun keyboardAllowed(): Boolean = KeyboardLogic.serverMayType(settings.endpointSet, loadedEndpointId)
+
+    /** The keyboard status as the page may see it (nothing of the device while its server may not type). */
+    private fun keyboardStatus(): KeyboardStatus = KeyboardLogic.statusForPage(KeyboardRuntime.status.value, keyboardAllowed())
 
     /** The main frame finished loading a page of the configured origin. */
     var pageReady = false
@@ -267,7 +279,7 @@ object ShellPage {
         view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         configureShellWebView(view)
         bind(view, window)
-        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }, { settings.deviceWebSettings }, { KeyboardRuntime.status.value }) { message ->
+        bridge = ShellBridge(window, view, { router }, { HealthSyncRuntime.status.value }, { endpointLabels() }, { settings.deviceWebSettings }, ::keyboardStatus) { message ->
             owner?.onWebMessage(message)
         }
         owner = window

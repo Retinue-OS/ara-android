@@ -2,8 +2,8 @@
 // be saved as and what closing the editor does with it, what a certificate
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
-// health line, the notes of the phone calls, and the wake phrase's notes and
-// model rows. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs
+// health line, the notes of the phone calls and of typing on other devices,
+// and the wake phrase's notes and model rows. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs
 // runs it under Node. The page itself is page.mjs; the app's side is
 // os.retinue.ara.settings (SettingsBridge, SettingsMessages, SettingsState).
 
@@ -273,6 +273,19 @@ export function callNotes(c) {
   return [{
     text: 'Android has not allowed Ara to make calls, so calls open the dialer.',
     action: 'calls.permission', label: 'Allow phone calls',
+  }];
+}
+
+// ── Typing on other devices ─────────────────────────────────────────────────
+// Like the call switch: `t.allowed` is the current endpoint's own switch (not
+// part of an endpoint draft), the keyboard (`k`, state.keyboard) is the
+// phone's. Both must be on for anything to be typed: what stands in the way,
+// with the action that fixes it.
+export function typingNotes(t, k) {
+  if (!t || !t.allowed || (k && k.available === false) || (k && k.enabled)) return [];
+  return [{
+    text: 'The keyboard for other devices is off on this phone, so nothing is typed.',
+    action: 'keyboard.open', label: 'Open keyboard',
   }];
 }
 

@@ -76,14 +76,12 @@ object CallLogic {
      * Whether direct calls are on for the page that asks. Each endpoint has
      * its own switch ([Endpoint.directCalls]), so what counts is the one of
      * the endpoint the page was loaded for ([pageEndpointId]), and only while
-     * the shell still shows that endpoint: one server's switch never answers
-     * for another's page. No endpoint, no page of one loaded, an endpoint
+     * the shell still shows that endpoint ([EndpointSet.pageEndpoint]): one
+     * server's switch never answers for another's page. No endpoint, no page of one loaded, an endpoint
      * removed or left meanwhile: off, and the dialer opens.
      */
-    fun directCalls(endpoints: EndpointSet, pageEndpointId: String?): Boolean {
-        val shown = endpoints.current ?: return false
-        return shown.id == pageEndpointId && shown.directCalls
-    }
+    fun directCalls(endpoints: EndpointSet, pageEndpointId: String?): Boolean =
+        endpoints.pageEndpoint(pageEndpointId)?.directCalls == true
 
     /**
      * What a `placeCall` comes to. In this order: no valid number, or no phone
