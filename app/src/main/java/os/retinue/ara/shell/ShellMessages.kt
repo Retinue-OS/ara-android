@@ -140,7 +140,8 @@ object ShellMessages {
                 WebMessage.HealthSyncInterval(minutes.toInt())
             }
             "health.auto" -> WebMessage.HealthAutoSync(obj.bool("on") ?: return null)
-            "call.place" -> WebMessage.PlaceCall(obj.str("number")?.takeIf { it.isNotBlank() } ?: return null)
+            // Any string goes on, an empty one too: CallLogic refuses what is no number, and the page hears why.
+            "call.place" -> WebMessage.PlaceCall(obj.str("number") ?: return null)
             else -> null
         }
     }

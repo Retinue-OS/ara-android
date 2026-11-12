@@ -213,8 +213,10 @@ behaves as in a browser tab.
 `RetinueShell.placeCall(number)` is how a call the user asked for by voice
 gets made without a hand on the phone (the web app sends it for Ara's
 `[[call: …]]` in a spoken conversation). It returns at once; the outcome comes
-as the `call` event above. The shell decides (`shell/CallLogic.kt`), in this
-order:
+as the `call` event above. A call with no number at all (`placeCall()`,
+`placeCall(null)`) sends nothing and gets no event; an empty string is
+answered like any other that is no number, with `invalid-number`. The shell
+decides (`shell/CallLogic.kt`), in this order:
 
 1. The number is normalized — spaces, dashes, dots, parentheses, slashes and a
    leading `tel:` dropped, and the `(0)` of `+44 (0)20 …` — and must then be

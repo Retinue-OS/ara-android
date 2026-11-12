@@ -36,6 +36,7 @@ class CallLogicTest {
     fun refusesWhatIsNotANumber() {
         assertNull(CallLogic.normalize(null))
         assertNull(CallLogic.normalize(""))
+        assertNull(CallLogic.normalize("  "))
         assertNull(CallLogic.normalize("Anna"))
         assertNull(CallLogic.normalize("12"))
         assertNull(CallLogic.normalize("1".repeat(21)))
@@ -126,8 +127,12 @@ class CallLogicTest {
     @Test
     fun bridgeMessageAndEvent() {
         assertEquals(WebMessage.PlaceCall("+41 79 123 45 67"), ShellMessages.parse("""{"type":"call.place","number":"+41 79 123 45 67"}"""))
-        assertNull(ShellMessages.parse("""{"type":"call.place","number":"  "}"""))
+        // An empty or blank number is passed on like any other string that is no number: the page is told so.
+        assertEquals(WebMessage.PlaceCall("  "), ShellMessages.parse("""{"type":"call.place","number":"  "}"""))
+        assertEquals(WebMessage.PlaceCall(""), ShellMessages.parse("""{"type":"call.place","number":""}"""))
+        // Without a number, or with one that is no string, the message is malformed and ignored.
         assertNull(ShellMessages.parse("""{"type":"call.place"}"""))
+        assertNull(ShellMessages.parse("""{"type":"call.place","number":null}"""))
         assertNull(ShellMessages.parse("""{"type":"call.place","number":112}"""))
 
         val placed = ShellMessages.callEvent(CallOutcome.Call("+41791234567"))
@@ -136,6 +141,9 @@ class CallLogicTest {
         assertTrue(dialer.contains("""{"type":"call","state":"dialer","reason":"emergency","number":"112"}"""), dialer)
         val refused = ShellMessages.callEvent(CallOutcome.Refused(CallLogic.NOT_IN_VOICE))
         assertTrue(refused.contains("""{"type":"call","state":"refused","reason":"not-in-voice"}"""), refused)
+        // The answer to a blank number.
+        val blank = ShellMessages.callEvent(decide(number = CallLogic.normalize("  ")))
+        assertTrue(blank.contains("""{"type":"call","state":"refused","reason":"invalid-number"}"""), blank)
         val code = ShellMessages.callEvent(CallOutcome.Dial("*21*0791234567#", CallLogic.SERVICE_CODE))
         assertTrue(code.contains("""{"type":"call","state":"dialer","reason":"service-code","number":"*21*0791234567#"}"""), code)
         val failed = ShellMessages.callEvent(CallOutcome.Call("+41791234567"), failed = true)
