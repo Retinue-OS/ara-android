@@ -19,7 +19,6 @@ import kotlinx.coroutines.withContext
 import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.CredentialVault
-import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
@@ -116,36 +115,17 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     // --- Endpoints -----------------------------------------------------------
 
     /**
-     * Save what the editor holds (see [EndpointDraft]): a new endpoint, or the
-     * old one with its fields replaced. A typed password is sealed first; an
-     * empty field keeps the stored one unless the draft says to forget it. A
-     * changed address drops the fetched name, and the name is fetched afresh.
+     * Save what the editor holds (see [EndpointDraft.toEndpoint]): a new
+     * endpoint, or the old one with its fields replaced. A typed password is
+     * sealed first; an empty field keeps the stored one unless the draft says
+     * to forget it. A changed address drops the fetched name, and the name is
+     * fetched afresh.
      */
     fun saveEndpoint(draft: EndpointDraft) = viewModelScope.launch {
-        val user = draft.username.trim().takeIf { it.isNotEmpty() }
-        val typed = draft.password.takeIf { user != null && it.isNotEmpty() }
+        val typed = draft.password.takeIf { draft.user != null && it.isNotEmpty() }
         val sealed = typed?.let { withContext(Dispatchers.IO) { CredentialVault.seal(it) } }
         store.updateEndpoints { set ->
-            val existing = set.endpoints.firstOrNull { it.id == draft.id }
-            val sameAddress = existing != null && existing.base == draft.base
-            val secret = when {
-                user == null -> null
-                sealed != null -> sealed
-                draft.forgetPassword -> null
-                else -> existing?.secret
-            }
-            set.upsert(
-                Endpoint(
-                    id = draft.id,
-                    baseUrl = draft.baseUrl.trim(),
-                    certificateAlias = draft.certificateAlias,
-                    username = user,
-                    secret = secret,
-                    healthUpload = draft.healthUpload,
-                    name = if (sameAddress) existing?.name else null,
-                    nameFetchedAt = if (sameAddress) existing?.nameFetchedAt ?: 0L else 0L,
-                ),
-            )
+            set.upsert(draft.toEndpoint(set.endpoints.firstOrNull { it.id == draft.id }, sealed))
         }
         refreshEndpointNames(force = true, onlyId = draft.id)
     }
@@ -166,6 +146,11 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     /** The settings page's health switch: the endpoint [id] takes health data, or not. */
     fun setHealthUpload(id: String, on: Boolean) = viewModelScope.launch {
         store.updateEndpoints { set -> set.update(id) { it.copy(healthUpload = on) } }
+    }
+
+    /** The settings page's call switch: the endpoint [id]'s page may place calls directly, or not. */
+    fun setDirectCalls(id: String, on: Boolean) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(directCalls = on) } }
     }
 
     /** The sign-in dialog's "Remember": the endpoint [id] keeps this user name and (sealed) password. */

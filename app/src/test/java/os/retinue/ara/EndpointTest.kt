@@ -14,7 +14,9 @@ import os.retinue.ara.net.EndpointNames
 /** The endpoint list: its stored form, the migration from one base URL, the set operations and the labels. */
 class EndpointTest {
 
-    private val home = Endpoint("home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, name = "Retinue")
+    private val home = Endpoint(
+        "home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, directCalls = true, name = "Retinue",
+    )
     private val admin = Endpoint("admin", "https://admin.example.com", username = "reto", secret = "c2VhbGVk", name = "Admin")
 
     @Test
@@ -25,6 +27,25 @@ class EndpointTest {
         // The sealed password and the user name are stored as they are; nothing else is derived.
         assertTrue(raw.contains("\"secret\":\"c2VhbGVk\""))
         assertTrue(raw.contains("\"healthUpload\":true"))
+        // Each endpoint's call switch is stored with it: on for home, off for admin.
+        assertTrue(raw.contains("\"directCalls\":true") && raw.contains("\"directCalls\":false"), raw)
+    }
+
+    @Test
+    fun anEndpointStoredBeforeTheCallSwitchReadsAsOff() {
+        // An endpoint as builds without the switch stored it: all their fields, no directCalls.
+        val old = """{"version":1,"endpoints":[{"id":"home","baseUrl":"https://agents.example.com",""" +
+            """"certificateAlias":"ara-phone","username":null,"secret":null,"healthUpload":true,""" +
+            """"name":"Retinue","nameFetchedAt":1730000000000}]}"""
+        val decoded = EndpointCodec.decode(old)!!.single()
+        assertFalse(decoded.directCalls)
+        // The rest reads as it was stored, health data on included.
+        assertEquals(home.copy(directCalls = false, nameFetchedAt = 1730000000000), decoded)
+        // Written again, the document is the old one with the switch in it, off.
+        assertEquals(
+            old.replace("\"healthUpload\":true,", "\"healthUpload\":true,\"directCalls\":false,"),
+            EndpointCodec.encode(listOf(decoded)),
+        )
     }
 
     @Test
@@ -43,6 +64,7 @@ class EndpointTest {
         assertEquals(listOf("a"), decoded.map { it.id })
         assertEquals("https://a.example", decoded[0].baseUrl)
         assertFalse(decoded[0].healthUpload)
+        assertFalse(decoded[0].directCalls)
     }
 
     @Test
@@ -54,6 +76,8 @@ class EndpointTest {
         assertEquals("ara-phone", migrated[0].certificateAlias)
         // The phone synced health data to this server until now: it goes on doing so.
         assertTrue(migrated[0].healthUpload)
+        // Calls were never placed directly for it: that takes the user's own switch.
+        assertFalse(migrated[0].directCalls)
         assertNull(migrated[0].username)
         assertEquals(emptyList(), EndpointCodec.legacy(null, "alias"))
         assertEquals(emptyList(), EndpointCodec.legacy("  ", null))
@@ -82,6 +106,16 @@ class EndpointTest {
         set = set.update("home") { it.copy(name = "Home") }
         assertEquals("Home", set.endpoints[0].name)
         assertNull(set.remove("home").current)
+    }
+
+    @Test
+    fun aSwitchIsSetForOneEndpointOnly() {
+        // As the settings page's switches are (ShellViewModel.setDirectCalls, setHealthUpload).
+        val set = EndpointSet(listOf(home, admin), "home")
+        assertEquals(listOf(home, admin.copy(directCalls = true)), set.update("admin") { it.copy(directCalls = true) }.endpoints)
+        assertEquals(listOf(home.copy(directCalls = false), admin), set.update("home") { it.copy(directCalls = false) }.endpoints)
+        // An endpoint removed meanwhile: nothing is switched.
+        assertEquals(set, set.update("gone") { it.copy(directCalls = true) })
     }
 
     @Test

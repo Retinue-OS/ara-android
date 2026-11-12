@@ -15,6 +15,7 @@ import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.net.CertificateImport
 import os.retinue.ara.settings.AppPage
+import os.retinue.ara.settings.CallsInfo
 import os.retinue.ara.settings.CurrentEndpoint
 import os.retinue.ara.settings.PageDraft
 import os.retinue.ara.settings.SettingsAction
@@ -83,6 +84,8 @@ class SettingsPageTest {
         assertEquals(SettingsAction.WakeThreshold(0.35f), p("""{"type":"wake.threshold","value":0.35}"""))
         assertEquals(SettingsAction.UpdateChannelSet(UpdateChannel.Release), p("""{"type":"update.channel","channel":"release"}"""))
         assertEquals(SettingsAction.DeviceSet("retinue.shelf.size", "9"), p("""{"type":"device.set","key":"retinue.shelf.size","value":"9"}"""))
+        assertEquals(SettingsAction.DirectCalls(true), p("""{"type":"calls.direct","on":true}"""))
+        assertEquals(SettingsAction.CallsPermission, p("""{"type":"calls.permission"}"""))
         assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
         assertEquals(SettingsAction.LauncherUsageAccess, p("""{"type":"launcher.usageAccess"}"""))
         assertEquals(SettingsAction.ChooseCertificate("r3", "https://agents.example.com", null), p("""{"type":"endpoint.certificate","request":"r3","baseUrl":"https://agents.example.com","current":null}"""))
@@ -96,7 +99,7 @@ class SettingsPageTest {
         for (bad in listOf(
             null, "", "nope", "[]", """{"type":"unknown"}""", """{"type":"endpoint.select","id":"a b"}""",
             """{"type":"health.interval","minutes":0}""", """{"type":"health.interval","minutes":"5"}""",
-            """{"type":"health.upload","on":"true"}""", """{"type":"wake.mode","mode":"sometimes"}""",
+            """{"type":"health.upload","on":"true"}""", """{"type":"calls.direct"}""", """{"type":"calls.direct","on":1}""", """{"type":"wake.mode","mode":"sometimes"}""",
             """{"type":"update.channel","channel":"beta"}""", """{"type":"device.set","key":"k","value":3}""",
             """{"type":"endpoint.save","request":"r 1","draft":{"id":"x"}}""", """{"type":"endpoint.save","request":"r1"}""",
             """{"type":"endpoint.certificateImport"}""", """{"type":"endpoint.certificateImport","request":"r 4"}""",
@@ -117,6 +120,13 @@ class SettingsPageTest {
         assertNull(draft.problem, "the stored password counts")
         // The same draft for an endpoint the app does not know: a user name without a password.
         assertEquals(EndpointDraft.Problem.Password, SettingsMessages.toEndpointDraft(page, null).problem)
+        // The call switch is not the editor's: whatever a draft says of it, a save stores the endpoint's own.
+        val sent = SettingsMessages.parse(
+            """{"type":"endpoint.save","request":"r1","draft":{"id":"admin","baseUrl":"https://admin.example.com","username":"reto","directCalls":true}}""",
+        ) as SettingsAction.SaveEndpoint
+        assertFalse(SettingsMessages.toEndpointDraft(sent.draft, stored).toEndpoint(stored, sealed = null).directCalls)
+        val allowed = stored.copy(directCalls = true)
+        assertEquals(allowed, SettingsMessages.toEndpointDraft(page, allowed).toEndpoint(allowed, sealed = null))
         assertEquals("""{"type":"saved","request":"r1","ok":true}""", SettingsMessages.saved("r1", null))
         assertEquals("""{"type":"saved","request":"r2","ok":false,"problem":"user"}""", SettingsMessages.saved("r2", EndpointDraft.Problem.UserName))
         assertEquals("""{"type":"certificate","request":"r3","alias":null}""", SettingsMessages.certificate("r3", null))
@@ -128,7 +138,9 @@ class SettingsPageTest {
 
     @Test
     fun theStateListsEndpointsUnderTheirNamesWithoutSecrets() {
-        val home = Endpoint("home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, name = "Retinue")
+        val home = Endpoint(
+            "home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, directCalls = true, name = "Retinue",
+        )
         val admin = Endpoint("admin", "https://admin.example.com/", username = "reto", secret = "sealed", name = "Admin")
         val settings = ShellSettings(endpoints = listOf(home, admin), currentEndpointId = "home", deviceWebSettings = mapOf("retinue.shelf.size" to "7"))
         val rows = SettingsPageState.endpointRows(settings)
@@ -157,6 +169,7 @@ class SettingsPageTest {
             isDefaultHome = true,
             splitLaunch = false,
             keepSplitInRecents = true,
+            calls = SettingsPageState.callsInfo(settings, permissionGranted = false, telephony = true),
             wake = WakeInfo("off", 0.5f, "Not listening.", true, false, true, true, true, false, false, false, "https://x/hey.onnx", false, null),
             updates = UpdatesInfo("Installed: a local build.", false, "nightly", "Not checked yet.", false, null, null, false, true, true),
             device = settings.deviceWebSettings,
@@ -169,10 +182,30 @@ class SettingsPageTest {
         assertEquals("Admin", json["endpoints"]!!.jsonArray[1].jsonObject["label"]!!.jsonPrimitive.content)
         assertEquals("null", json["failure"].toString())
         assertEquals("true", json["home"]!!.jsonObject["isDefault"].toString())
+        // The current endpoint's call switch, for its card; the list the editor's drafts come from has none.
+        assertEquals("""{"direct":true,"permissionGranted":false,"telephony":true}""", json["calls"].toString())
+        assertFalse(json["endpoints"].toString().contains("directCalls"))
         assertEquals("true", json["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("false", state.copy(usageAccess = false).toJson()["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("""{"type":"state","state":{}}""", SettingsMessages.state(JsonObject(emptyMap())))
         assertEquals(SettingsPageState.frameKey(home), json["current"]!!.jsonObject["frameKey"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun theCallSwitchShownIsTheCurrentEndpointsOwn() {
+        val home = Endpoint("home", "https://agents.example.com", directCalls = true)
+        val admin = Endpoint("admin", "https://admin.example.com")
+        fun shown(current: String?) = SettingsPageState.callsInfo(
+            ShellSettings(endpoints = listOf(home, admin), currentEndpointId = current), permissionGranted = true, telephony = true,
+        )
+        assertEquals(CallsInfo(direct = true, permissionGranted = true, telephony = true), shown("home"))
+        // On for home says nothing about admin: with admin shown, the switch is off.
+        assertEquals(CallsInfo(direct = false, permissionGranted = true, telephony = true), shown("admin"))
+        // No endpoint: nothing is on. What the phone allows is passed on as it is.
+        assertEquals(
+            CallsInfo(direct = false, permissionGranted = false, telephony = true),
+            SettingsPageState.callsInfo(ShellSettings(), permissionGranted = false, telephony = true),
+        )
     }
 
     @Test
@@ -188,8 +221,8 @@ class SettingsPageTest {
         )) {
             assertNotEquals(key, SettingsPageState.frameKey(changed), changed.toString())
         }
-        // What does not sign it in changes nothing: the health switch, the fetched name.
-        assertEquals(key, SettingsPageState.frameKey(home.copy(healthUpload = true, name = "Home")))
+        // What does not sign it in changes nothing: the health and call switches, the fetched name.
+        assertEquals(key, SettingsPageState.frameKey(home.copy(healthUpload = true, directCalls = true, name = "Home")))
         assertFalse(key.contains("sealed"), "nothing of the password")
     }
 }

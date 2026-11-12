@@ -72,7 +72,8 @@ load. It has three parts, from the phone outwards:
    endpoints themselves, voice timing and the shelf, home screen, split screen,
    the wake phrase, the launcher bar and updates.
 2. **This app with *endpoint*** — what this phone does with the endpoint shown
-   now: its health data (and, once the app receives them, its notifications).
+   now: its health data, and whether a call asked for by voice there is placed
+   directly (and, once the app receives them, its notifications).
 3. **This instance** — the endpoint's own settings (its name and colour, agent
    models, the system pages), embedded from the server's
    `/settings-instance.html`, which the server lets only itself and this page
@@ -93,6 +94,7 @@ On first start there is no endpoint yet, so the page opens at a new one.
 | **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
+| **Phone calls** (with the endpoint) | **Call directly by voice**: whether a call you ask for in a voice conversation with the endpoint shown is placed without a tap, instead of opening the dialer. Each endpoint has its own switch, off for a new endpoint (see [Phone calls](#phone-calls)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -107,9 +109,10 @@ server.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/4 (Android)` (4: the app has a settings
-  page of its own and holds the dashboard's per-device preferences; 3: the
-  endpoint members of the bridge exist; 2: the Health Connect members).
+- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5:
+  reserved for the keyboard for other devices; 4: the app has a settings page
+  of its own and holds the dashboard's per-device preferences; 3: the endpoint
+  members of the bridge exist; 2: the Health Connect members).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -161,6 +164,7 @@ The web app detects the shell and talks to it through:
   the app's page) and the per-device preferences: `deviceSettings()` → a JSON
   string of them, `setDeviceSetting(key, value)` (`null` removes one); see
   [Per-device preferences](#per-device-preferences).
+  RetinueShell/6 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -187,6 +191,10 @@ The web app detects the shell and talks to it through:
   `disabled`); a changed endpoint list sends `type` `endpoints`, changed
   per-device preferences `type` `device-settings` with the `keys` that
   changed. Nobody has to take these.
+  A `placeCall` is answered with `type` `call`: `state` `placed` (with
+  `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
+  `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,
+  `not-in-voice`, `no-telephony`, or `failed` with `number`).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -199,6 +207,71 @@ Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
 (`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
 origin). A WebView without `addWebMessageListener` gets no bridge: the page
 behaves as in a browser tab.
+
+### Phone calls
+
+`RetinueShell.placeCall(number)` is how a call the user asked for by voice
+gets made without a hand on the phone (the web app sends it for Ara's
+`[[call: …]]` in a spoken conversation). It returns at once; the outcome comes
+as the `call` event above. A call with no number at all (`placeCall()`,
+`placeCall(null)`) sends nothing and gets no event; an empty string is
+answered like any other that is no number, with `invalid-number`. The shell
+decides (`shell/CallLogic.kt`), in this order:
+
+1. The number is normalized — spaces, dashes, dots, parentheses, slashes and a
+   leading `tel:` dropped, and the `(0)` of `+44 (0)20 …` — and must then be
+   an optional `+` followed by digits, `*` and `#` with 3 to 20 digits and at
+   most 32 characters (no `,` pauses or `;` extensions). Otherwise: refused,
+   `invalid-number`. A phone without telephony: refused, `no-telephony`.
+2. **Only inside a spoken conversation**: the page must hold
+   `setVoiceActive(true)`, as the web app does for a whole continuous
+   conversation (a microphone grant to the page counts for its 10 s too).
+   Otherwise nothing starts, not even the dialer: refused, `not-in-voice`.
+   The page reports this itself, so it keeps a number in a typed chat or on
+   a page just loading from dialling; it is no barrier against the page,
+   which the bridge trusts as the configured origin's main frame. A new
+   document starts outside a conversation.
+3. **Emergency numbers always open the dialer** (`reason` `emergency`;
+   `TelephonyManager.isEmergencyNumber`, a failed check counts as one).
+   Android lets no third-party app call them directly. Hands-free, use
+   "Hey Google" or the phone's Emergency SOS for those.
+4. **Service codes always open the dialer** (`service-code`): anything with
+   `*` or `#`, such as `*21*…#` (forward every call) or a USSD request like
+   `*123#`. Placed directly the phone would carry them out unseen; in the
+   dialer the user sees the code and starts it.
+5. **Call directly by voice** off for the endpoint whose page asks (each
+   endpoint has its own switch, see below): the dialer opens with the number
+   (`disabled`). On without Android's `CALL_PHONE` permission, which turning
+   it on asks for: the dialer (`no-permission`); the settings say so and
+   offer to ask again, or open Android's page for Ara once it no longer asks.
+6. Otherwise `ACTION_CALL`: the call starts, **on speakerphone**
+   (`TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE`) — the user asked by
+   voice and may not be holding the phone. An intent that fails to start is
+   reported as refused, `failed`.
+
+**The switch is each endpoint's own.** *Call directly by voice* is on the
+settings page under **This app with *endpoint*** → *Phone calls*, for the
+endpoint shown, and is stored with it (`Endpoint.directCalls`): off for a new
+endpoint, gone with the endpoint, and left as it is when the endpoint is
+edited (the editor has no such switch; like the certificate and the password,
+it stays the endpoint's at a new address too). On for one server, it gives
+the others nothing: the bridge takes messages from the current endpoint's
+origin only, and the shell answers with the switch of the endpoint the page
+was loaded for, as long as that is still the endpoint shown
+(`CallLogic.directCalls`). With no endpoint, no page of one loaded, or one
+removed or left meanwhile, it counts as off. Two endpoints at the same origin
+are one server to the bridge: a page there is answered with the switch of
+whichever of them is shown. Only the app's own settings page sets the switch,
+so no dashboard page can give itself the right. Android's `CALL_PHONE`
+permission, and whether the phone can make calls at all, are the phone's: the
+same for every endpoint.
+
+The web app gives the user 5 s before it sends `placeCall`, with the mic open:
+speech cancels the call (unless Ara marked a second attempt `no-voice-cancel`,
+for a loud room). It closes its mic before it sends, so the call has it.
+Once the call is dialling the shell cannot hear the user any more, nor tell
+when the other side answers (only the default phone app can), so there is no
+voice cancel after that.
 
 ### Per-device preferences
 
@@ -223,7 +296,7 @@ nothing. The page sends `hello` once loaded and one message per action
 `state` whenever anything in it changes (`settings/SettingsState.kt`), plus
 the answers to an endpoint save, to the certificate chooser and to a
 certificate import, and health sync events. Unlike a dashboard page, it may change the endpoints, their
-certificates and passwords and the health switch; the app still checks every
+certificates and passwords, the health switch and the call switch; the app still checks every
 endpoint it saves, and what is stored already (a password) never goes to the
 page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
 a frame of the current endpoint's origin (the page loads afresh when that
@@ -636,9 +709,9 @@ never asked for.
 The shell keeps a list of Retinue servers (`data/Endpoint.kt`, stored as JSON in
 the preferences) and shows one, the **current** endpoint; everything that is
 "the configured origin" above — the bridge, the microphone, the certificate,
-the password, the letterbox — is the current endpoint's. Switching (*Use* on
-the settings page, a link for another endpoint, or
-`RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
+the password, the letterbox, the switch for direct calls — is the current
+endpoint's. Switching (*Use* on the settings page, a link for another endpoint,
+or `RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
 and loads its start page; the settings page stays open and shows the new
 endpoint's parts. Health Connect sync follows the current endpoint
 only: a sync still running for the old one stops, and its round, if any,
