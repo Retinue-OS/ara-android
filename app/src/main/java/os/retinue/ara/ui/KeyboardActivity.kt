@@ -68,8 +68,9 @@ import os.retinue.ara.keyboard.KeyboardStatus
  * the device at once, as key presses (the user's own typing: never asked about).
  *
  * A page can open this screen just before a tap it provoked: the controls
- * that act — the key buttons, Connect and Disconnect, the choice of layout,
- * the choice of what is asked — take no tap for [ConfirmTypeActivity.ARM_MS] after the screen
+ * that act — the switch (to turn on), the key buttons, Connect and
+ * Disconnect, the choice of layout, the choice of what is asked — take no
+ * tap for [ConfirmTypeActivity.ARM_MS] after the screen
  * appears and after every touch on it that is not on one of them, nor one
  * that came through another window laid over it; as [ConfirmTypeActivity]'s Type.
  */
@@ -186,7 +187,14 @@ class KeyboardActivity : ComponentActivity() {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.keyboard_enable), modifier = Modifier.weight(1f))
-                    Switch(checked = status.enabled, onCheckedChange = ::enable)
+                    // Turning on starts the service and lifts a Disconnect, so it is
+                    // armed as the other controls that act; turning off stays at once.
+                    Switch(
+                        checked = status.enabled,
+                        onCheckedChange = { on -> if (!on || mayAct()) enable(on) },
+                        enabled = armed || status.enabled,
+                        modifier = actsHere(),
+                    )
                 }
                 Text(statusLine(status), style = MaterialTheme.typography.bodyMedium)
                 if (!status.enabled) {

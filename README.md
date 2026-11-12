@@ -1134,8 +1134,9 @@ meets a confirmation. What the phone asks is set for each device, next to
 its layout on the keyboard screen: *Ask every time*; *One-line text by
 itself* (where every device starts: it asks when a request acts); or *Never
 ask*, which the screen asks about once more, since a page can open that
-screen (for the same reason its keys, Connect and Disconnect, the choice of
-layout and this choice take no tap for 0.6 s after it appears and after any other touch on it).
+screen (for the same reason its switch, when it turns the keyboard on, its
+keys, Connect and Disconnect, the choice of layout and this choice take no
+tap for 0.6 s after it appears and after any other touch on it).
 After *Stop* on the strip, the next request asks, whatever the mode, until
 the user approves one (a confirmation or the password dialog's *Type*). The confirmation is a small window of the app's own
 (`ConfirmTypeActivity`, `FLAG_SECURE`): it names the device and the host of
