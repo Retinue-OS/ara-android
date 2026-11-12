@@ -46,6 +46,11 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Direct calls (Settings → Phone calls, a switch for each endpoint): a
+         call the user asked for in a voice conversation starts without a tap
+         (see shell/CallLogic). Asked for at runtime when a switch is turned
+         on; emergency numbers only ever open the dialer. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
 
     <!-- Keyboard for other devices (keyboard/KeyboardRuntime): the phone as a
          Bluetooth HID keyboard. Connect to register and type, advertise to be
@@ -64,6 +69,10 @@
         android:required="false" />
     <uses-feature
         android:name="android.hardware.microphone"
+        android:required="false" />
+    <!-- CALL_PHONE would otherwise make telephony a requirement. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
         android:required="false" />
 
     <!-- Package visibility (Android 11+): the app drawer lists launchable apps,

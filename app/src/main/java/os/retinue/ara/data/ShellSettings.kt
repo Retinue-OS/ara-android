@@ -1,7 +1,6 @@
 package os.retinue.ara.data
 
 import os.retinue.ara.update.UpdateChannel
-import os.retinue.ara.wake.WakeMode
 
 /**
  * The shell's device-local configuration. The one secret in it, an endpoint's
@@ -13,11 +12,6 @@ data class ShellSettings(
     val endpoints: List<Endpoint> = emptyList(),
     /** The endpoint the shell shows (see [EndpointSet.current]). */
     val currentEndpointId: String? = null,
-    val wakeMode: WakeMode = WakeMode.Off,
-    /** Score at or above which the phrase counts as heard (openWakeWord's default 0.5). */
-    val wakeThreshold: Float = DEFAULT_WAKE_THRESHOLD,
-    /** Where "Download phrase model" fetches the keyword model from. */
-    val wakeModelUrl: String = DEFAULT_WAKE_MODEL_URL,
     /** Check the update channel on its own and install what it offers (see UpdateRuntime). Off until the user turns it on. */
     val autoUpdate: Boolean = false,
     /** Which builds count as updates. */
@@ -42,6 +36,9 @@ data class ShellSettings(
     /** The endpoint the shell shows, or null when none is set up. */
     val current: Endpoint? get() = endpointSet.current
 
+    /** What [endpoint] is to the phone now: shown, working in the background, or resting. */
+    fun stateOf(endpoint: Endpoint): InstanceState = endpointSet.stateOf(endpoint)
+
     /** The current endpoint's base URL as the user typed it ("" for none). */
     val baseUrl: String get() = current?.baseUrl ?: ""
 
@@ -52,12 +49,6 @@ data class ShellSettings(
     val base: String? get() = current?.base
 
     companion object {
-        const val DEFAULT_WAKE_THRESHOLD = 0.5f
-        const val OWW_RELEASE = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
-
-        /** A pre-trained phrase for testing until "Hey Retinue" is trained (plan §5). */
-        const val DEFAULT_WAKE_MODEL_URL = "$OWW_RELEASE/hey_jarvis_v0.1.onnx"
-        const val MELSPECTROGRAM_URL = "$OWW_RELEASE/melspectrogram.onnx"
-        const val EMBEDDING_URL = "$OWW_RELEASE/embedding_model.onnx"
+        const val DEFAULT_WAKE_THRESHOLD = EndpointWake.DEFAULT_THRESHOLD
     }
 }

@@ -9,11 +9,11 @@
 //     endpoints(), selectEndpoint(id), and (RetinueShell/4) the app's own
 //     settings page (settingsPage) and the dashboard's per-device
 //     preferences the app holds for every endpoint: deviceSettings(),
-//     setDeviceSetting(key, value), and (RetinueShell/5) the keyboard for
-//     other devices: keyboardStatus(), keyboardType(text, opts),
+//     setDeviceSetting(key, value), (RetinueShell/5) the keyboard for other
+//     devices: keyboardStatus(), keyboardType(text, opts),
 //     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(),
-//     keyboardCancel(). Shell -> web
-//     events arrive as
+//     keyboardCancel(), and (RetinueShell/6) placeCall(number), whose outcome
+//     comes as a `call` event. Shell -> web events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
 //
@@ -239,6 +239,15 @@
     keyboardOpen: function () { post({ type: 'keyboard.open' }); },
     // Stop what is being typed; its request ends with an `error` `cancelled`.
     keyboardCancel: function () { post({ type: 'keyboard.cancel' }); },
+    // A call the user asked for in a spoken conversation: placed at once when
+    // direct calls are on for this endpoint (each has its own switch in the
+    // app's settings), else the dialer opens (always for emergency numbers
+    // and service codes with * or #); refused outside a voice conversation.
+    // Returns at once, the outcome comes as a `call` event.
+    placeCall: function (number) {
+      if (number === undefined || number === null) return;
+      post({ type: 'call.place', number: String(number) });
+    },
   };
   try {
     Object.defineProperty(window, 'RetinueShell', { value: shell, configurable: true, enumerable: true, writable: false });

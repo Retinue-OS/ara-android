@@ -73,9 +73,11 @@ load. It has three parts, from the phone outwards:
 
 1. **This app** — what holds on this phone whichever endpoint is shown: the
    endpoints themselves, voice timing and the shelf, home screen, split screen,
-   the wake phrase, the launcher bar and updates.
+   the launcher bar and updates.
 2. **This app with *endpoint*** — what this phone does with the endpoint shown
-   now: its health data (and, once the app receives them, its notifications).
+   now: its health data, its wake phrase, and whether a call asked for by
+   voice there is placed directly (and, once the app receives them, its
+   notifications).
 3. **This instance** — the endpoint's own settings (its name and colour, agent
    models, the system pages), embedded from the server's
    `/settings-instance.html`, which the server lets only itself and this page
@@ -87,15 +89,16 @@ On first start there is no endpoint yet, so the page opens at a new one.
 
 | Setting | Meaning |
 |---|---|
-| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)) and the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint). The endpoint shown is marked *Active*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
+| **Retinue endpoints** | The Retinue servers this phone can show, one at a time. Each has a **base URL** (the web app's origin, e.g. `https://agents.example.com`; `https://` is assumed if omitted — pages on this origin stay in the shell, and nothing else gets the bridge, the microphone, the certificate or the password), an optional **client certificate** (the installed certificate Ara presents to that origin, mTLS; the editor also imports one from a `.p12` or `.pfx` file, see [Client certificate](#client-certificate-mutual-tls-and-sign-in)), an optional **sign-in** (user name and password for an edge that asks for one instead of a certificate; stored encrypted, see [Sign-in](#client-certificate-mutual-tls-and-sign-in)), the **health data** switch (whether Health Connect data goes to this endpoint's letterbox; off for a new endpoint) and **Keep working in the background** (see [Instance states](#instance-states); off for a new endpoint). The endpoint shown is marked *Active*, the others *Background* or *Disabled*; *Use* shows another and *Edit* edits one. Back from the editor saves what was changed; changes that cannot be saved as they are (no https address, a user name without a password or a password without a user name) are asked about, *Discard* or *Keep editing*, never dropped silently. The list shows each endpoint under the name its server gives itself: the `short_name` of its web manifest, which the dashboard's Settings › Instance sets; until that is fetched, the host stands in, and when two servers share a name the host is appended. There is no label of the shell's own. |
 | **Voice** | When speech recognition ends in a continuous conversation: the pause that ends a take, and how long the mic waits for speech at all. For every endpoint (see [Per-device preferences](#per-device-preferences)). |
 | **Shelf** | How many minimized threads, chats and projects the dashboard's shelf keeps. For every endpoint, as above. |
 | **Home screen** | Shows whether Ara is the default home app; the button asks Android to make it so. |
 | **Split screen** | Open apps beside Ara, and keep Ara in recent apps (both off by default; see [Split screen](#split-screen)). |
-| **Wake phrase** | Mode, with what each needs from Android, and the sensitivity; under *Advanced*, the models (see [Wake phrase](#wake-phrase)). |
 | **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
+| **Wake phrase** (with the endpoint) | The endpoint's own wake phrase on this phone: mode, with what each needs from Android, the sensitivity, and its phrase model, chosen from the phone's list of models (one list, kept for every endpoint), plus the other endpoints listened for in the background; under *Advanced*, a model from a URL and the feature models (see [Wake phrase](#wake-phrase)). |
+| **Phone calls** (with the endpoint) | **Call directly by voice**: whether a call you ask for in a voice conversation with the endpoint shown is placed without a tap, instead of opening the dialer. Each endpoint has its own switch, off for a new endpoint (see [Phone calls](#phone-calls)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -110,10 +113,10 @@ server.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/5 (Android)` (5: the keyboard for
-  other devices; 4: the app has a settings
-  page of its own and holds the dashboard's per-device preferences; 3: the
-  endpoint members of the bridge exist; 2: the Health Connect members).
+- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5: the
+  keyboard for other devices; 4: the app has a settings page of its own and
+  holds the dashboard's per-device preferences; 3: the endpoint members of the
+  bridge exist; 2: the Health Connect members).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -181,6 +184,7 @@ The web app detects the shell and talks to it through:
   `not-in-front` at once) — and not while a secret dialog is open (`busy`).
   An `id` is echoed when it is 1–64 of `A–Z a–z 0–9 . _ : -`, and dropped
   otherwise; invalid arguments throw.
+  RetinueShell/6 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -214,6 +218,10 @@ The web app detects the shell and talks to it through:
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
   it is current before any `keyboard` event arrives), each with the request's
   `id` where it had one. Nobody has to take these.
+  A `placeCall` is answered with `type` `call`: `state` `placed` (with
+  `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
+  `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,
+  `not-in-voice`, `no-telephony`, or `failed` with `number`).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -226,6 +234,71 @@ Implementation: `assets/retinue-shell.js` (page side) and `web/ShellBridge.kt`
 (`addWebMessageListener` + `addDocumentStartJavaScript`, restricted to the
 origin). A WebView without `addWebMessageListener` gets no bridge: the page
 behaves as in a browser tab.
+
+### Phone calls
+
+`RetinueShell.placeCall(number)` is how a call the user asked for by voice
+gets made without a hand on the phone (the web app sends it for Ara's
+`[[call: …]]` in a spoken conversation). It returns at once; the outcome comes
+as the `call` event above. A call with no number at all (`placeCall()`,
+`placeCall(null)`) sends nothing and gets no event; an empty string is
+answered like any other that is no number, with `invalid-number`. The shell
+decides (`shell/CallLogic.kt`), in this order:
+
+1. The number is normalized — spaces, dashes, dots, parentheses, slashes and a
+   leading `tel:` dropped, and the `(0)` of `+44 (0)20 …` — and must then be
+   an optional `+` followed by digits, `*` and `#` with 3 to 20 digits and at
+   most 32 characters (no `,` pauses or `;` extensions). Otherwise: refused,
+   `invalid-number`. A phone without telephony: refused, `no-telephony`.
+2. **Only inside a spoken conversation**: the page must hold
+   `setVoiceActive(true)`, as the web app does for a whole continuous
+   conversation (a microphone grant to the page counts for its 10 s too).
+   Otherwise nothing starts, not even the dialer: refused, `not-in-voice`.
+   The page reports this itself, so it keeps a number in a typed chat or on
+   a page just loading from dialling; it is no barrier against the page,
+   which the bridge trusts as the configured origin's main frame. A new
+   document starts outside a conversation.
+3. **Emergency numbers always open the dialer** (`reason` `emergency`;
+   `TelephonyManager.isEmergencyNumber`, a failed check counts as one).
+   Android lets no third-party app call them directly. Hands-free, use
+   "Hey Google" or the phone's Emergency SOS for those.
+4. **Service codes always open the dialer** (`service-code`): anything with
+   `*` or `#`, such as `*21*…#` (forward every call) or a USSD request like
+   `*123#`. Placed directly the phone would carry them out unseen; in the
+   dialer the user sees the code and starts it.
+5. **Call directly by voice** off for the endpoint whose page asks (each
+   endpoint has its own switch, see below): the dialer opens with the number
+   (`disabled`). On without Android's `CALL_PHONE` permission, which turning
+   it on asks for: the dialer (`no-permission`); the settings say so and
+   offer to ask again, or open Android's page for Ara once it no longer asks.
+6. Otherwise `ACTION_CALL`: the call starts, **on speakerphone**
+   (`TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE`) — the user asked by
+   voice and may not be holding the phone. An intent that fails to start is
+   reported as refused, `failed`.
+
+**The switch is each endpoint's own.** *Call directly by voice* is on the
+settings page under **This app with *endpoint*** → *Phone calls*, for the
+endpoint shown, and is stored with it (`Endpoint.directCalls`): off for a new
+endpoint, gone with the endpoint, and left as it is when the endpoint is
+edited (the editor has no such switch; like the certificate and the password,
+it stays the endpoint's at a new address too). On for one server, it gives
+the others nothing: the bridge takes messages from the current endpoint's
+origin only, and the shell answers with the switch of the endpoint the page
+was loaded for, as long as that is still the endpoint shown
+(`CallLogic.directCalls`). With no endpoint, no page of one loaded, or one
+removed or left meanwhile, it counts as off. Two endpoints at the same origin
+are one server to the bridge: a page there is answered with the switch of
+whichever of them is shown. Only the app's own settings page sets the switch,
+so no dashboard page can give itself the right. Android's `CALL_PHONE`
+permission, and whether the phone can make calls at all, are the phone's: the
+same for every endpoint.
+
+The web app gives the user 5 s before it sends `placeCall`, with the mic open:
+speech cancels the call (unless Ara marked a second attempt `no-voice-cancel`,
+for a loud room). It closes its mic before it sends, so the call has it.
+Once the call is dialling the shell cannot hear the user any more, nor tell
+when the other side answers (only the default phone app can), so there is no
+voice cancel after that.
 
 ### Per-device preferences
 
@@ -248,9 +321,9 @@ The page talks to the app through `window.AraSettingsNative`, injected by
 nothing. The page sends `hello` once loaded and one message per action
 (`settings/SettingsMessages.kt` lists them); the app answers with the whole
 `state` whenever anything in it changes (`settings/SettingsState.kt`), plus
-the answers to an endpoint save and to the certificate chooser, and health
-sync events. Unlike a dashboard page, it may change the endpoints, their
-certificates and passwords and the health switch; the app still checks every
+the answers to an endpoint save, to the certificate chooser and to a
+certificate import, and health sync events. Unlike a dashboard page, it may change the endpoints, their
+certificates and passwords, the health switch and the call switch; the app still checks every
 endpoint it saves, and what is stored already (a password) never goes to the
 page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
 a frame of the current endpoint's origin (the page loads afresh when that
@@ -259,7 +332,8 @@ never loads anything from its address. A policy cannot name an IPv6 address,
 so an endpoint at one gets the way into its dashboard instead of the frame.
 The frame signs in as the dashboard does (certificate, stored password) and
 loads afresh when the endpoint, its certificate or its sign-in changes. The page's decisions live in
-`assets/settings/logic.mjs`, tested with `node app/src/test/js/settings-page.test.mjs`.
+`assets/settings/logic.mjs`, tested with `node app/src/test/js/settings-page.test.mjs`,
+which also checks that the page has every element its script (`page.mjs`) works on.
 
 ---
 
@@ -316,6 +390,14 @@ from Health Connect for that endpoint and nothing is sent, not even on
 request: a deliberate sync reports `skipped`/`disabled`, and the status's
 `enabled` is false. Only the app's own page sets the switch: it decides which
 server receives the data, so no dashboard page may.
+
+**Endpoints in the background.** An endpoint that keeps working in the
+background (see [Instance states](#instance-states)) and has its switch on is
+synced too, by the automatic syncs only: after the shown endpoint's sync, each
+such server gets its own, with its own interval and back-off (kept per origin),
+silently — the status, the events and the settings page's line stay the shown
+endpoint's. A deliberate sync is for the endpoint shown only. Tokens and
+rounds work for them exactly as for the shown one.
 
 **When.** When Ara comes to the front, at most every 5 minutes (adjustable,
 `setHealthSyncInterval`; counted from the last sync that ran; off with
@@ -605,10 +687,37 @@ remembered by the system, so later apps open on the other side.
 
 ## Client certificate (mutual TLS) and sign-in
 
-1. Install the certificate as a *VPN & app user certificate* (Settings →
-   Security → Encryption & credentials → Install a certificate), or via MDM.
-2. In the endpoint's editor (Settings → the endpoint's *Edit*), **Select
-   certificate** and pick its alias.
+The certificate lives in the Android KeyChain, as a *VPN & app user
+certificate*. There are two ways to put it there:
+
+- **Import it in Ara.** In the endpoint's editor (Settings → the endpoint's
+  *Edit*, or *Add endpoint*), **Import certificate…** and pick a PKCS#12 file
+  (`.p12` or `.pfx`) that holds the certificate and its private key, copied
+  to the device in any way (Syncthing, a download, a USB transfer). Android's
+  own certificate installer asks for the file's password and a name for the
+  certificate (where it asks what the certificate is for: *VPN and apps*).
+  Android's chooser then opens on it; picking it there selects it for the
+  endpoint, saved with the endpoint as always. This needs no developer mode,
+  adb or system settings page, so it also works on devices whose settings
+  offer no *Install a certificate*, such as a Meta Quest.
+- **Install it in Android's settings** (Settings → Security → Encryption &
+  credentials → Install a certificate), or via MDM; then, in the endpoint's
+  editor, **Select certificate** and pick its alias.
+
+Ara keeps no key store of its own. An imported file is read into memory only,
+checked to look like a PKCS#12 store of at most 256 KB
+(`net/CertificateImport.kt`; the installer, which has the password, reads the
+whole store), handed to the installer in its intent
+(`KeyChain.createInstallIntent()` with `EXTRA_PKCS12`, and the file's name as
+`EXTRA_NAME`) and wiped (`net/CertificateInstaller.kt`); the key is Android's
+from then on.
+Installing does not give Ara the key: Android grants it only through its
+chooser, which is why the import ends there. The editor says how an import
+ended: not a PKCS#12 file, unreadable or too large; installing certificates
+turned off on the device (a device policy, `DISALLOW_CONFIG_CREDENTIALS`); no
+certificate installer Ara can open; or nothing installed, when the installer
+was left, or closed at once on a device that withholds it from apps. Whether
+Meta Quest OS lets apps open the installer has not been verified yet.
 
 Ara stores only the **alias**, per endpoint. When the configured origin asks
 for a client certificate (`onReceivedClientCertRequest`), the key and chain are
@@ -636,12 +745,13 @@ never asked for.
 The shell keeps a list of Retinue servers (`data/Endpoint.kt`, stored as JSON in
 the preferences) and shows one, the **current** endpoint; everything that is
 "the configured origin" above — the bridge, the microphone, the certificate,
-the password, the letterbox — is the current endpoint's. Switching (*Use* on
-the settings page, a link for another endpoint, or
-`RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
+the password, the letterbox, the switch for direct calls — is the current
+endpoint's. Switching (*Use* on the settings page, a link for another endpoint,
+or `RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
 and loads its start page; the settings page stays open and shows the new
 endpoint's parts. Health Connect sync follows the current endpoint
-only: a sync still running for the old one stops, and its round, if any,
+(and, for automatic syncs, the endpoints working in the background, see
+[Instance states](#instance-states)): a sync still running for the old one stops, and its round, if any,
 waits on the device for that server (see "Health Connect" above); each
 server's Changes token is its own, so a server shown again gets what changed
 since its last delivery.
@@ -654,6 +764,22 @@ at receives the bridge, the microphone, the certificate and the password, so a
 page must not be able to point it anywhere. A change to the list while a page
 is open is pushed to it (`endpoints.status`) and announced with an `endpoints`
 event.
+
+### Instance states
+
+Every endpoint is in one of three states on the phone (`InstanceState`):
+
+- **Foreground** — the one shown (*Active*). Everything above is its.
+- **Background** — not shown, but still working for the phone: its health
+  data is synced (where its switch is on, see
+  [Health Connect sync](#health-connect-sync)) and its wake phrase is still
+  listened for; hearing it brings that endpoint to the front.
+- **Disabled** — not shown, and nothing runs for it until it is shown again.
+
+Which of the last two an endpoint is while another is shown is its editor's
+**Keep working in the background** switch (`Endpoint.background`, off for a new
+endpoint and for the endpoints of earlier builds). Showing another endpoint
+moves the one shown so far into its own state: background or disabled.
 
 **Names.** An endpoint is shown under the name its server gives itself: the
 `short_name` of its web manifest (`<base>/manifest.webmanifest`), which the
@@ -751,8 +877,30 @@ settings), `update/UpdateInstaller.kt` and `update/UpdateReceiver.kt` (the
 
 ## Wake phrase
 
-Say the phrase and the web app opens a thread in continuous voice mode. Ara
-runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
+Say the phrase and the web app opens a thread in continuous voice mode.
+
+**Per instance.** The wake phrase is set per endpoint on this phone
+(`Endpoint.wake`: mode, threshold, phrase model), on the settings page under
+*This app with* that endpoint, so a phrase always wakes the instance it
+belongs to. The endpoint shown and those working in the background
+([Instance states](#instance-states)) are listened for at once, each with its
+own phrase model and threshold, in one listener: the audio, the melspectrogram
+and the embedding models run once, and every distinct phrase model scores the
+same embeddings. A phrase of a background endpoint brings that endpoint to the
+front (the wake waits until its page has loaded); when two listening endpoints
+share a phrase model, the one shown takes it, else the first in the list,
+whichever of their thresholds the score reaches (so the lowest of them is the
+one that counts). The card's *Also listening* line names the background
+endpoints a phrase heard now would bring to the front, so not one that shares
+its model with the endpoint shown or with one before it. The service
+of mode *Always* runs while any listening endpoint is in that mode. The one
+device-wide wake setting of earlier builds becomes every endpoint's own on
+update, with the phrase model that was in use, so the endpoint shown keeps
+waking as before. An endpoint added later starts with its wake phrase off and
+without a model, and editing an endpoint leaves its wake phrase as it is: the
+editor does not hold it.
+
+Ara runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
 with ONNX Runtime: 16 kHz mono audio in 80 ms frames → `melspectrogram.onnx`
 (scaled `x/10 + 2`) → 76-frame windows → `embedding_model.onnx` → the last 16
 embeddings → the phrase model → a score. A score at or above the threshold
@@ -791,18 +939,60 @@ visible* (runs only while Ara is in front) · *Always* (a foreground service of
 type microphone with an ongoing notification; Android 14 lets it start only
 while Ara is in front, so it starts when you open Ara; if it is refused, it is
 retried later with a growing delay). Detection pauses while the web app
-reports the mic in use. A microphone error stops detection for 30 s (doubling
-up to 10 min on repeated errors), or until Ara is opened again.
+reports the mic in use. A listener error (the microphone, or a model that
+cannot be run) stops detection for 30 s (doubling up to 10 min on repeated
+errors), or until Ara is opened again or the endpoints listen with other
+phrase models than before (another one chosen for an endpoint, or an
+endpoint no longer listened for).
 
-**Models are not bundled** (licence and size). On the settings page, under the wake phrase's *Advanced*:
+**Models are not bundled** (licence and size). The phrase models are the
+phone's: one list, the same in every endpoint's wake phrase card. Which of
+them wakes an endpoint is that endpoint's own choice (`Endpoint.wake.modelId`),
+and the card marks the model of the endpoint shown as *Active*:
 
-1. **Download feature models** — `melspectrogram.onnx` and
-   `embedding_model.onnx` from openWakeWord's v0.5.1 release.
-2. **Phrase model** — download from a URL (default: the release's
-   `hey_jarvis_v0.1.onnx`, for testing) or **Choose file…** to import an
-   `.onnx` from the device.
+- **Downloadable models** — Hey Jarvis (listed first, for testing), Hey
+  Mycroft, Hey Rhasspy and Alexa from openWakeWord's v0.5.1 release. Tap
+  **Download** first, then **Use this model**, which is the choice of the
+  endpoint shown; a downloaded model can be deleted again while no endpoint
+  uses it.
+- **Your own** — **Upload a model file…** imports an `.onnx` from the phone;
+  it is listed under its file name and is in use at once, for the endpoint
+  that was shown when you started (should another come to the front
+  meanwhile). Under *Advanced*, **Add from URL** does the same for a model on a
+  server (a model on the shown endpoint's origin is fetched with that
+  endpoint's client certificate). Your models stay on the list when you choose
+  another, so you can switch back; **Remove** deletes one. **Stop using**
+  leaves the endpoint shown without a model.
 
-A downloaded or imported model replaces the old one only after it loads.
+A model that another endpoint uses says so on its row (*Also used by …*,
+whatever that endpoint's mode or state) and cannot be deleted or removed from
+the card of the endpoint shown; the app refuses it as well, so that no
+endpoint is left with a model that is gone. Stop using it on that endpoint's
+own card first.
+
+The list and the job that changes it (a download, an upload, a removal) are
+the phone's as well, the same in the home screen's and the split-screen
+window's card: one job runs at a time, whichever window started it, and no
+card offers another meanwhile. One that is asked for all the same (a file
+picked in a picker that was open already, a removal confirmed in its dialog)
+waits its turn. A removal asks who uses the model as its last step before the
+file goes, and a model is chosen only while its file is on the phone and no
+job works on it.
+
+An endpoint without a model is not listened for, whatever its mode, and its
+card says so; the same holds for one whose model is no longer on the list or
+not downloaded.
+
+The feature models (`melspectrogram.onnx`, `embedding_model.onnx`) come with
+the first phrase model; *Advanced* can download them again. A downloaded or
+uploaded model is only added after it loads and gives a score for a window of
+silence, so a file that is no phrase model (one of the feature models, picked
+by mistake) is refused instead of stopping the listener. The single phrase model of
+earlier builds is moved into the list on update (as Hey Jarvis when it is that
+file, otherwise as "Earlier model") and stays in use, for every endpoint, as
+that one file was; so does the one model chosen for the whole phone by a build
+that had the list before the endpoints had their own choice. Where a phone has
+both, the file counts: it was written after that choice was made.
 
 ### Recommended phrase: "Hey Retinue"
 
@@ -819,7 +1009,7 @@ To train it: open openWakeWord's
 thousands of variations with Piper TTS and trains the small classifier), and
 export the `.onnx`. Put the file somewhere the phone can reach — e.g. on the
 Retinue host, where the client certificate is used for the download — and enter
-its URL, or copy it to the phone and use **Choose file…**. Raise the threshold
+its URL under **Add from URL**, or copy it to the phone and use **Upload a model file…**. Raise the threshold
 if it wakes too easily, lower it if it is hard to trigger.
 
 ## Keyboard for other devices
@@ -1016,6 +1206,8 @@ web/       ShellWebView, ShellWebClients,           — the WebView, its setup a
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
 data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
+           CertificateImport                        — pure: which file goes to the installer, its name (unit-tested)
+           CertificateInstaller                     — reading the picked file, Android's certificate installer
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
            LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor),

@@ -88,6 +88,9 @@ sealed class WebMessage {
 
     /** `keyboardCancel()`: stop what is being typed. */
     data object KeyboardCancel : WebMessage()
+
+    /** `placeCall(number)`: call [number] — as it came from the page, see CallLogic. */
+    data class PlaceCall(val number: String) : WebMessage()
 }
 
 /** A voice the stand-in exposes as a `SpeechSynthesisVoice`. */
@@ -175,6 +178,8 @@ object ShellMessages {
             )
             "keyboard.open" -> WebMessage.KeyboardOpen
             "keyboard.cancel" -> WebMessage.KeyboardCancel
+            // Any string goes on, an empty one too: CallLogic refuses what is no number, and the page hears why.
+            "call.place" -> WebMessage.PlaceCall(obj.str("number") ?: return null)
             else -> null
         }
     }
@@ -216,6 +221,39 @@ object ShellMessages {
 
     /** The type of the `retinue-shell` events about Health Connect sync. */
     const val HEALTH_SYNC_EVENT = "health-sync"
+
+    /** The type of the `retinue-shell` events about a `placeCall` (see [callEvent]). */
+    const val CALL_EVENT = "call"
+
+    /**
+     * What came of a `placeCall`: `placed`, `dialer` (with `reason`) or
+     * `refused` (with `reason`), and the number as dialled when there was one.
+     */
+    fun callEvent(outcome: CallOutcome, failed: Boolean = false): String = eventScript(
+        CALL_EVENT,
+        buildJsonObject {
+            when {
+                failed -> {
+                    put("state", "refused")
+                    put("reason", CallLogic.FAILED)
+                }
+                outcome is CallOutcome.Call -> put("state", "placed")
+                outcome is CallOutcome.Dial -> {
+                    put("state", "dialer")
+                    put("reason", outcome.reason)
+                }
+                outcome is CallOutcome.Refused -> {
+                    put("state", "refused")
+                    put("reason", outcome.reason)
+                }
+            }
+            when (outcome) {
+                is CallOutcome.Call -> put("number", outcome.number)
+                is CallOutcome.Dial -> put("number", outcome.number)
+                is CallOutcome.Refused -> Unit
+            }
+        },
+    )
 
     /** The sync status the page's `healthSyncStatus()` and `healthConnectAvailable()` answer from. */
     fun healthStatus(status: HealthSyncStatus): String = receiveScript(

@@ -390,3 +390,31 @@ console.log('device settings bridge tests passed');
   assert.deepEqual(JSON.parse(window.RetinueShell.keyboardStatus()), { available: false, enabled: false, connected: false, host: null, layout: 'us' });
 }
 console.log('keyboard bridge tests passed');
+
+// placeCall (RetinueShell/6): the number goes to the shell as a string, an empty
+// one too (the shell answers it with invalid-number); nothing without one.
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  const shell = ctx.RetinueShell;
+  assert.equal(typeof shell.placeCall, 'function');
+  shell.placeCall('+41 79 123 45 67');
+  shell.placeCall(112);
+  shell.placeCall('');
+  shell.placeCall('  ');
+  shell.placeCall();
+  shell.placeCall(null);
+  assert.deepEqual(posts, [
+    { type: 'call.place', number: '+41 79 123 45 67' },
+    { type: 'call.place', number: '112' },
+    { type: 'call.place', number: '' },
+    { type: 'call.place', number: '  ' },
+  ]);
+}
+console.log('call bridge tests passed');

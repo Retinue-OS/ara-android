@@ -11,7 +11,9 @@ import os.retinue.ara.keyboard.KeyboardStatus
 import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
+import os.retinue.ara.data.InstanceState
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.wake.WakeModelEntry
 
 /** One endpoint in the page's list. */
 data class EndpointRow(
@@ -28,6 +30,10 @@ data class EndpointRow(
     val current: Boolean,
     /** The instance's name as last fetched, for the editor's title. */
     val name: String?,
+    /** It keeps working while another is shown (Endpoint.background). */
+    val background: Boolean = false,
+    /** [InstanceState.key]: foreground (shown), background or disabled. */
+    val state: String = InstanceState.Disabled.key,
 )
 
 /** The endpoint shown, and where its own parts of the page come from. */
@@ -47,8 +53,23 @@ data class CurrentEndpoint(
 /** Why the dashboard did not load, for the banner at the top. */
 data class FailureInfo(val reason: String, val url: String?, val consoleErrors: List<String>)
 
+/**
+ * Direct calls by voice (`RetinueShell.placeCall`, see shell/CallLogic): the
+ * current endpoint's switch, and what the phone allows whichever endpoint
+ * is shown.
+ */
+data class CallsInfo(
+    /** The current endpoint's switch: a call its page asks for in a voice conversation is placed without a tap. */
+    val direct: Boolean,
+    /** Android lets Ara place calls (`CALL_PHONE`); without it calls open the dialer. */
+    val permissionGranted: Boolean,
+    /** The phone can make calls at all. */
+    val telephony: Boolean,
+)
+
+/** The wake phrase card: the instance shown, its phrase on this phone, and what the phone needs for it. */
 data class WakeInfo(
-    /** [os.retinue.ara.wake.WakeMode.key]. */
+    /** [os.retinue.ara.wake.WakeMode.key], of the instance shown. */
     val mode: String,
     val threshold: Float,
     val status: String,
@@ -59,11 +80,75 @@ data class WakeInfo(
     val overlayAllowed: Boolean,
     val melspectrogram: Boolean,
     val embedding: Boolean,
-    val phrase: Boolean,
-    val modelUrl: String,
+    /** The phone's phrase models, in the list's order; the active one is the shown instance's. */
+    val models: List<WakeModelRow>,
     val busy: Boolean,
+    /** The model a job works on, while [busy]. */
+    val busyId: String?,
     val message: String?,
+    /**
+     * The other instances a phrase heard now would wake (labels): they work
+     * in the background. One that shares its phrase model with the instance
+     * shown, or with one before it, is not among them: that phrase wakes the
+     * other one.
+     */
+    val alsoListening: List<String> = emptyList(),
 )
+
+/** One phrase model of the wake phrase's list. */
+data class WakeModelRow(
+    val id: String,
+    val name: String,
+    /** [os.retinue.ara.wake.WakeModelSource.key]. */
+    val source: String,
+    /** Where it downloads from (catalog and URL models). */
+    val url: String?,
+    val downloaded: Boolean,
+    /** The model the instance shown listens for. */
+    val active: Boolean,
+    /** The user's own: taken off the list by removing it. */
+    val removable: Boolean,
+    /**
+     * The other instances whose model this is (their labels), whatever their
+     * mode or state: while there are any, it is not deleted or removed here.
+     */
+    val usedBy: List<String> = emptyList(),
+)
+
+/**
+ * The list's rows; [activeId] is the model the instance shown listens for (its
+ * row is active only while downloaded), [usedBy] the other instances that use
+ * a model, by its id.
+ */
+fun wakeModelRows(
+    library: List<WakeModelEntry>,
+    activeId: String?,
+    usedBy: (modelId: String) -> List<String> = { emptyList() },
+): List<WakeModelRow> = library.map { e ->
+    WakeModelRow(
+        id = e.model.id,
+        name = e.model.name,
+        source = e.model.source.key,
+        url = e.model.url,
+        downloaded = e.downloaded,
+        active = e.downloaded && e.model.id == activeId,
+        removable = e.model.removable,
+        usedBy = usedBy(e.model.id),
+    )
+}
+
+/**
+ * The list's rows on the card of the instance shown in [settings]: its model
+ * is the active one, and a model of other instances names them (the same
+ * instances that keep it from being removed, EndpointSet.otherUsersOfWakeModel).
+ */
+fun wakeModelRows(library: List<WakeModelEntry>, settings: ShellSettings): List<WakeModelRow> {
+    val set = settings.endpointSet
+    val labels = EndpointLabels.labels(settings.endpoints)
+    return wakeModelRows(library, set.current?.wake?.modelId) { id ->
+        set.otherUsersOfWakeModel(id).map { labels[it.id] ?: it.hostLabel }
+    }
+}
 
 data class UpdatesInfo(
     val installed: String,
@@ -97,6 +182,8 @@ data class SettingsPageState(
     val isDefaultHome: Boolean,
     val splitLaunch: Boolean,
     val keepSplitInRecents: Boolean,
+    /** Direct calls for the current endpoint ([callsInfo]). */
+    val calls: CallsInfo,
     val wake: WakeInfo,
     val updates: UpdatesInfo,
     /** The dashboard's per-device preferences (DeviceWebSettings). */
@@ -124,6 +211,8 @@ data class SettingsPageState(
                             put("healthUpload", e.healthUpload)
                             put("current", e.current)
                             put("name", e.name.json())
+                            put("background", e.background)
+                            put("state", e.state)
                         },
                     )
                 }
@@ -162,6 +251,14 @@ data class SettingsPageState(
             },
         )
         put(
+            "calls",
+            buildJsonObject {
+                put("direct", calls.direct)
+                put("permissionGranted", calls.permissionGranted)
+                put("telephony", calls.telephony)
+            },
+        )
+        put(
             "wake",
             buildJsonObject {
                 put("mode", wake.mode)
@@ -174,10 +271,29 @@ data class SettingsPageState(
                 put("overlayAllowed", wake.overlayAllowed)
                 put("melspectrogram", wake.melspectrogram)
                 put("embedding", wake.embedding)
-                put("phrase", wake.phrase)
-                put("modelUrl", wake.modelUrl)
+                put(
+                    "models",
+                    buildJsonArray {
+                        wake.models.forEach { m ->
+                            add(
+                                buildJsonObject {
+                                    put("id", m.id)
+                                    put("name", m.name)
+                                    put("source", m.source)
+                                    put("url", m.url.json())
+                                    put("downloaded", m.downloaded)
+                                    put("active", m.active)
+                                    put("removable", m.removable)
+                                    put("usedBy", buildJsonArray { m.usedBy.forEach { add(JsonPrimitive(it)) } })
+                                },
+                            )
+                        }
+                    },
+                )
                 put("busy", wake.busy)
+                put("busyId", wake.busyId.json())
                 put("message", wake.message.json())
+                put("alsoListening", buildJsonArray { wake.alsoListening.forEach { add(JsonPrimitive(it)) } })
             },
         )
         put(
@@ -216,6 +332,7 @@ data class SettingsPageState(
         fun endpointRows(settings: ShellSettings): List<EndpointRow> {
             val labels = EndpointLabels.labels(settings.endpoints)
             val current = settings.current?.id
+            val set = settings.endpointSet
             return settings.endpoints.map { e ->
                 EndpointRow(
                     id = e.id,
@@ -228,6 +345,8 @@ data class SettingsPageState(
                     healthUpload = e.healthUpload,
                     current = e.id == current,
                     name = e.knownName,
+                    background = e.background,
+                    state = set.stateOf(e).key,
                 )
             }
         }
@@ -256,5 +375,15 @@ data class SettingsPageState(
          */
         fun frameKey(e: Endpoint): String =
             listOf(e.id, e.base, e.certificateAlias, e.username, e.secret).hashCode().toUInt().toString(16)
+
+        /**
+         * The phone calls card: the switch of the endpoint shown, its own and
+         * no other's (off with none set up), beside what holds for the phone.
+         */
+        fun callsInfo(settings: ShellSettings, permissionGranted: Boolean, telephony: Boolean) = CallsInfo(
+            direct = settings.current?.directCalls == true,
+            permissionGranted = permissionGranted,
+            telephony = telephony,
+        )
     }
 }

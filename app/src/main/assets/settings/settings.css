@@ -137,7 +137,16 @@ details.advanced[open] summary { margin-bottom: 6px; }
 .endpoint .url, .endpoint .summary { color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .endpoint .active { color: var(--accent); font-size: .85rem; font-weight: 600; white-space: nowrap; }
 .endpoint .active::before { content: "\2713\00a0"; }
+.endpoint .state { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+.endpoint .state.background { color: var(--fg); }
 .endpoint .btn { min-height: 36px; padding: 0 12px; }
+
+.card h4.sub { font-size: .9rem; font-weight: 600; margin: 14px 0 4px; }
+.endpoint.model { flex-wrap: wrap; }
+.endpoint.model .actions { flex-basis: 100%; margin: 0; gap: 8px; }
+.endpoint.model.current { outline: 1px solid var(--accent); }
+/* Why the row offers no removal: never cut short. */
+.endpoint.model .summary.used { white-space: normal; }
 
 .notes p { margin: 8px 0 4px; font-size: .9rem; }
 

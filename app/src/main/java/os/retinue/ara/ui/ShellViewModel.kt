@@ -19,7 +19,8 @@ import kotlinx.coroutines.withContext
 import os.retinue.ara.R
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.CredentialVault
-import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointLabels
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.AppInfo
@@ -31,6 +32,7 @@ import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.net.EndpointNames
 import os.retinue.ara.update.UpdateChannel
 import os.retinue.ara.wake.WakeMode
+import os.retinue.ara.wake.WakeModelEntry
 import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeRuntime
@@ -72,14 +74,24 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             trayItems(apps, shortcuts, bar, launches, usage)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _models = MutableStateFlow(WakeModelFiles.status(app))
-    val models: StateFlow<WakeModelStatus> = _models.asStateFlow()
+    // The models and the job that changes them are the phone's, the same in
+    // every window (WakeModelFiles.state); what a job reported is this window's.
 
-    /** A model download or import in progress, or its last result (shown in settings). */
+    /** The feature models' files (its `phrase` is not used: see [library]). */
+    val models: StateFlow<WakeModelStatus> = WakeModelFiles.state.features
+
+    /** The phone's phrase models (the list), with whether each is downloaded. */
+    val library: StateFlow<List<WakeModelEntry>> = WakeModelFiles.state.library
+
+    /** The list's model a job is working on (a download, a removal), for its row. */
+    val modelBusyId: StateFlow<String?> = WakeModelFiles.state.busyId
+
+    /** The last result of a model job started in this window (shown in settings). */
     private val _modelMessage = MutableStateFlow<String?>(null)
     val modelMessage: StateFlow<String?> = _modelMessage.asStateFlow()
-    private val _modelBusy = MutableStateFlow(false)
-    val modelBusy: StateFlow<Boolean> = _modelBusy.asStateFlow()
+
+    /** A model download, import or removal is in progress, in whichever window. */
+    val modelBusy: StateFlow<Boolean> = WakeModelFiles.state.busy
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
 
@@ -116,36 +128,17 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     // --- Endpoints -----------------------------------------------------------
 
     /**
-     * Save what the editor holds (see [EndpointDraft]): a new endpoint, or the
-     * old one with its fields replaced. A typed password is sealed first; an
-     * empty field keeps the stored one unless the draft says to forget it. A
-     * changed address drops the fetched name, and the name is fetched afresh.
+     * Save what the editor holds (see [EndpointDraft.toEndpoint]): a new
+     * endpoint, or the old one with its fields replaced. A typed password is
+     * sealed first; an empty field keeps the stored one unless the draft says
+     * to forget it. A changed address drops the fetched name, and the name is
+     * fetched afresh.
      */
     fun saveEndpoint(draft: EndpointDraft) = viewModelScope.launch {
-        val user = draft.username.trim().takeIf { it.isNotEmpty() }
-        val typed = draft.password.takeIf { user != null && it.isNotEmpty() }
+        val typed = draft.password.takeIf { draft.user != null && it.isNotEmpty() }
         val sealed = typed?.let { withContext(Dispatchers.IO) { CredentialVault.seal(it) } }
         store.updateEndpoints { set ->
-            val existing = set.endpoints.firstOrNull { it.id == draft.id }
-            val sameAddress = existing != null && existing.base == draft.base
-            val secret = when {
-                user == null -> null
-                sealed != null -> sealed
-                draft.forgetPassword -> null
-                else -> existing?.secret
-            }
-            set.upsert(
-                Endpoint(
-                    id = draft.id,
-                    baseUrl = draft.baseUrl.trim(),
-                    certificateAlias = draft.certificateAlias,
-                    username = user,
-                    secret = secret,
-                    healthUpload = draft.healthUpload,
-                    name = if (sameAddress) existing?.name else null,
-                    nameFetchedAt = if (sameAddress) existing?.nameFetchedAt ?: 0L else 0L,
-                ),
-            )
+            set.upsert(draft.toEndpoint(set.endpoints.firstOrNull { it.id == draft.id }, sealed))
         }
         refreshEndpointNames(force = true, onlyId = draft.id)
     }
@@ -166,6 +159,11 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     /** The settings page's health switch: the endpoint [id] takes health data, or not. */
     fun setHealthUpload(id: String, on: Boolean) = viewModelScope.launch {
         store.updateEndpoints { set -> set.update(id) { it.copy(healthUpload = on) } }
+    }
+
+    /** The settings page's call switch: the endpoint [id]'s page may place calls directly, or not. */
+    fun setDirectCalls(id: String, on: Boolean) = viewModelScope.launch {
+        store.updateEndpoints { set -> set.update(id) { it.copy(directCalls = on) } }
     }
 
     /** The sign-in dialog's "Remember": the endpoint [id] keeps this user name and (sealed) password. */
@@ -199,9 +197,15 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Other settings ------------------------------------------------------
 
-    fun setWakeMode(mode: WakeMode) = viewModelScope.launch { store.setWakeMode(mode) }
-    fun setWakeThreshold(value: Float) = viewModelScope.launch { store.setWakeThreshold(value) }
-    fun setWakeModelUrl(url: String) = viewModelScope.launch { store.setWakeModelUrl(url) }
+    /** The wake mode of the instance [endpointId] on this phone. */
+    fun setWakeMode(endpointId: String, mode: WakeMode) = viewModelScope.launch {
+        store.updateEndpointWake(endpointId) { it.copy(mode = mode.key) }
+    }
+
+    /** The wake threshold of the instance [endpointId] on this phone. */
+    fun setWakeThreshold(endpointId: String, value: Float) = viewModelScope.launch {
+        store.updateEndpointWake(endpointId) { EndpointWake.of(it.wakeMode, value, it.modelId) }
+    }
     fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
@@ -270,38 +274,102 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         return before to after
     }
 
-    fun downloadFeatureModels() = modelJob {
+    fun downloadFeatureModels() = modelJob(null) {
         WakeModelFiles.downloadFeatureModels(appCtx, store.settingsNow())
-        WakeModelFiles.validate(appCtx)
+        // With the phrase model of the instance shown, whose card asked for them.
+        WakeModelFiles.validate(appCtx, store.settingsNow().current?.wake?.modelId)
+        appCtx.getString(R.string.wake_models_done)
     }
 
-    fun downloadPhraseModel(url: String) = modelJob {
-        store.setWakeModelUrl(url)
-        WakeModelFiles.downloadPhraseModel(appCtx, store.settingsNow(), url)
+    /** Download the list's model [id]; using it is a choice of its own ([useModel]). */
+    fun downloadModel(id: String) = modelJob(id) {
+        WakeModelFiles.downloadModel(appCtx, store.settingsNow(), id)
+        appCtx.getString(R.string.wake_model_downloaded, nameOf(id))
     }
 
-    fun importPhraseModel(uri: Uri) = modelJob {
-        WakeModelFiles.importPhraseModel(appCtx, uri)
+    /**
+     * Add a model from [url] to the list, download it, and use it for the
+     * instance [endpointId]: the one shown when this was asked for, not one
+     * shown since (a download takes its time). Null: for none.
+     */
+    fun addModelFromUrl(url: String, endpointId: String?) = modelJob(null) {
+        val id = WakeModelFiles.addFromUrl(appCtx, store.settingsNow(), url)
+        addedFor(endpointId, id)
     }
 
-    fun refreshModels() {
-        _models.value = WakeModelFiles.status(appCtx)
+    /** Add the picked file to the list, under its name, and use it for the instance [endpointId] (as [addModelFromUrl]). */
+    fun importModel(uri: Uri, endpointId: String?) = modelJob(null) {
+        val id = WakeModelFiles.importModel(appCtx, store.settingsNow(), uri)
+        addedFor(endpointId, id)
     }
 
-    private fun modelJob(block: suspend () -> Unit) {
-        if (_modelBusy.value) return
-        _modelBusy.value = true
+    /**
+     * The model [id], new on the list, becomes the phrase of the instance it
+     * was added for, if that is still there; returns what to report.
+     */
+    private suspend fun addedFor(endpointId: String?, id: String): String {
+        val name = nameOf(id)
+        val after = endpointId?.let { store.updateEndpointWake(it) { wake -> wake.copy(modelId = id) } }
+        val endpoint = after?.endpoints?.firstOrNull { it.id == endpointId }
+            ?: return appCtx.getString(R.string.wake_model_added_unused, name)
+        return appCtx.getString(R.string.wake_model_added, name, EndpointLabels.label(endpoint, after.endpoints))
+    }
+
+    /**
+     * The instance [endpointId] listens for the downloaded model [id], or for
+     * none (null). Whether the model can be chosen is asked of the files and
+     * of the phone's one job, not of the list this window shows: the other
+     * window may have removed it, or be removing it now, and no instance is
+     * to be left with a model that is gone. The choice is on its way to the
+     * store before any later job can begin.
+     */
+    fun useModel(endpointId: String, id: String?) {
+        if (id != null && !WakeModelFiles.mayUse(appCtx, id)) {
+            // The row that offered it goes, where the list shown was behind the files.
+            refreshModels()
+            return
+        }
         _modelMessage.value = null
+        viewModelScope.launch { store.updateEndpointWake(endpointId) { it.copy(modelId = id) } }
+    }
+
+    /**
+     * Delete model [id]'s file; the user's own leave the list. The instance
+     * shown lets go of it first. A model that another instance uses stays,
+     * whatever the page offered: no instance is left with a model that is gone.
+     */
+    fun removeModel(id: String) = modelJob(id) {
+        val name = nameOf(id)
+        val users = WakeModelFiles.remove(appCtx, id) { store.releaseWakeModel(id) }
+        if (users.isNotEmpty()) return@modelJob appCtx.getString(R.string.wake_model_in_use, name, users.joinToString())
+        appCtx.getString(R.string.wake_model_removed, name)
+    }
+
+    private fun nameOf(id: String) = WakeModelFiles.model(appCtx, id)?.name ?: id
+
+    /** Read the model files again, for both windows' cards. */
+    fun refreshModels() = WakeModelFiles.refreshState(appCtx)
+
+    /**
+     * One model job at a time for the phone, whichever window starts it ([id]:
+     * the list's model it works on); [block] returns what to report here. One
+     * asked for while another runs waits its turn (WakeModelState.beginInTurn):
+     * a file picked or a removal confirmed is not dropped, and reports here.
+     */
+    private fun modelJob(id: String?, block: suspend () -> String) {
+        // Begun inside the coroutine: a window that is closing starts none, and so leaves none unfinished.
         viewModelScope.launch {
             val app = appCtx
+            // Waited for outside the try: a window that closes meanwhile has begun no job, and ends none.
+            WakeModelFiles.beginJob(id)
+            _modelMessage.value = null
             _modelMessage.value = try {
                 block()
-                app.getString(R.string.wake_models_done)
             } catch (e: Exception) {
                 app.getString(R.string.wake_models_failed, e.message ?: e.javaClass.simpleName)
             } finally {
-                _modelBusy.value = false
-                refreshModels()
+                // Also when the window closed under the job (cancelled): the phone's job is over.
+                WakeModelFiles.endJob(app)
                 WakeRuntime.refresh()
             }
         }
