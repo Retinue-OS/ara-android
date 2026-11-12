@@ -113,6 +113,26 @@ class KeyboardGateTest {
     }
 
     @Test
+    fun aStopIsAnsweredOnlyByTheUsersApproval() {
+        val stop = StopPending()
+        for (mode in listOf(ConfirmMode.OneLine, ConfirmMode.Never)) {
+            stop.stopped()
+            // Stop, then a request: it asks.
+            assertEquals(PageDecision.Confirm, decide(withEnter, mode = mode, stopPending = stop.pending), mode.toString())
+            // The page cancels its own confirmation (keyboardCancel: not approved, nothing on the Stop):
+            // what it sends next still asks.
+            assertEquals(PageDecision.Cancel, decide(PageRequest.Cancel, stopPending = stop.pending))
+            assertEquals(PageDecision.Confirm, decide(plain, mode = mode, stopPending = stop.pending), mode.toString())
+            // The password dialog asks as well, and leaves the Stop until its Type.
+            assertEquals(PageDecision.OpenSecret, decide(secret, mode = mode, stopPending = stop.pending))
+            assertTrue(stop.pending)
+            // Approved: back to the device's mode.
+            stop.approved()
+            assertEquals(PageDecision.TypeNow, decide(plain, mode = mode, stopPending = stop.pending), mode.toString())
+        }
+    }
+
+    @Test
     fun whileConfirmationsArePausedWhatWouldAskIsCancelledWithoutAWindow() {
         assertEquals(refused(KeyboardError.Cancelled), decide(withEnter, confirmPaused = true))
         assertEquals(refused(KeyboardError.Cancelled), decide(plain, mode = ConfirmMode.Always, confirmPaused = true))

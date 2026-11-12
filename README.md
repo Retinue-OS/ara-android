@@ -179,8 +179,9 @@ The web app detects the shell and talks to it through:
   `escape`, `up`, `down`, `left`, `right`, `home`, `end`, `delete`, `space`;
   `keyboardSecret(opts)` with `{id, label, enter}` (opens the native secret
   dialog); `keyboardOpen()` (the native keyboard screen); `keyboardCancel()`
-  (stops a text being typed and closes an open secret dialog; never a secret
-  being typed). Typing, keys and the secret dialog are taken only from a
+  (stops a text being typed and closes an open secret dialog or
+  confirmation, which then ends as `cancelled`; never a secret being
+  typed). Typing, keys and the secret dialog are taken only from a
   page whose endpoint may type on other devices (otherwise `not-enabled`,
   and `keyboardStatus()` says the keyboard is not enabled and nothing of the
   device), only while the user is looking at the dashboard — resumed,
@@ -224,7 +225,8 @@ The web app detects the shell and talks to it through:
   `not-enabled`, `not-connected`, `not-in-front`, `too-long`,
   `unsupported-char`, `busy`, `cancelled`, `failed`),
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
-  it is current before any `keyboard` event arrives), each with the request's
+  it is current before any `keyboard` event arrives; while the page's
+  endpoint may not type, only when that switch changes), each with the request's
   `id` where it had one. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
   `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
@@ -1096,7 +1098,7 @@ goes away mid-text, Ara releases all keys and reports `failed`; *Stop typing*
 on the keyboard screen stops anything, a password too, before the next
 character (never between a dead key and its letter) and reports `cancelled`.
 The page's `keyboardCancel()` stops a text and closes an open password
-dialog, but not a password being typed — a page cutting that short would
+dialog or confirmation (which ends as `cancelled`), but not a password being typed — a page cutting that short would
 learn its length, and leave part of it on the device.
 
 **From the dashboard.** The page asks with `keyboardType(text, {id, enter})`
@@ -1132,8 +1134,10 @@ meets a confirmation. What the phone asks is set for each device, next to
 its layout on the keyboard screen: *Ask every time*; *One-line text by
 itself* (where every device starts: it asks when a request acts); or *Never
 ask*, which the screen asks about once more, since a page can open that
-screen. After *Stop* on the strip, the next request asks once, whatever the
-mode. The confirmation is a small window of the app's own
+screen (for the same reason its keys, Connect and Disconnect and this choice
+take no tap for 0.6 s after it appears and after any other touch on it).
+After *Stop* on the strip, the next request asks, whatever the mode, until
+the user approves one (a confirmation or the password dialog's *Type*). The confirmation is a small window of the app's own
 (`ConfirmTypeActivity`, `FLAG_SECURE`): it names the device and the host of
 the server that asked, as the app's settings have it (never the name the
 server gives itself); shows the text exactly, in a box that scrolls, with
@@ -1146,9 +1150,10 @@ any touch on it that is not on the button, and for a text longer than its
 box not before the box was scrolled to its end. An approval covers exactly
 that request, once, on that device: if another device is connected by then,
 nothing is typed (`not-connected`). Declined, left, or not answered within
-25 s (12 s for a key), it ends as `cancelled`; after three in a row that were
-not approved, requests that would ask are `cancelled` without a window for
-a minute. While a page types, and for three seconds after its last key, a
+25 s (12 s for a key), or closed by the page's own `keyboardCancel()`, it
+ends as `cancelled`; after three in a row that were not approved (the page's
+cancel counts as one), requests that would ask are `cancelled` without a
+window for a minute. While a page types, and for three seconds after its last key, a
 strip of the app's own above the launcher bar says *Typing on* the device,
 with *Stop*.
 
@@ -1157,7 +1162,8 @@ type plain one-line text without Enter on a device set to *One-line text by
 itself* or *Never ask* — characters land wherever the device's focus is, and
 a letter can be an app's shortcut there; do everything on a device set to
 *Never ask*; raise the confirmation at any time with any text, for the user
-to decline; and raise the password dialog. Nothing of it while the
+to decline, and close it again with `keyboardCancel()`; and raise the
+password dialog. Nothing of it while the
 endpoint's switch is off.
 
 **Passwords — the secret path.** `keyboardSecret({id, label, enter})` opens a

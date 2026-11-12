@@ -168,6 +168,16 @@ object KeyboardLogic {
     fun statusForPage(status: KeyboardStatus, serverAllows: Boolean): KeyboardStatus =
         if (serverAllows) status else KeyboardStatus(available = status.available)
 
+    /**
+     * Whether [event] goes to the page: a `status` event only when its server
+     * may type ([serverAllows]) — otherwise it would tell the page when the
+     * keyboard is switched or a device comes and goes, which its
+     * keyboardStatus() keeps from it. The answers to its own requests (an id,
+     * `not-enabled`) always go.
+     */
+    fun eventForPage(event: KeyboardEvent, serverAllows: Boolean): Boolean =
+        serverAllows || event.state != KeyboardEvent.STATUS
+
     /** The `count` of a `typed` event: the text's characters, a CRLF line break as one. */
     fun charCount(text: CharSequence): Int {
         val s = text.toString()
@@ -239,7 +249,7 @@ object KeyboardLogic {
     /**
      * Whether a page's request needs the user's approval on the phone first:
      * by the device's [mode] (every time; when it acts; never), and in every
-     * mode once after the strip's Stop ([stopPending]).
+     * mode after the strip's Stop, until the user approves one ([stopPending], [StopPending]).
      */
     fun needsConfirmation(mode: ConfirmMode, onlyWrites: Boolean, stopPending: Boolean): Boolean = stopPending || when (mode) {
         ConfirmMode.Always -> true

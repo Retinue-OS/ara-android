@@ -127,6 +127,13 @@ class KeyboardLogicTest {
         // The same shape as ever (values only change).
         assertEquals(connected.toJson().keys, hidden.keys)
         assertFalse(hidden.toString().contains("Quest") || hidden.toString().contains("de-CH"))
+
+        // Nor does it hear when the keyboard or a device changes; the answers to its own requests it does.
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.status, serverAllows = true))
+        assertFalse(KeyboardLogic.eventForPage(KeyboardEvent.status, serverAllows = false))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = false))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.typed("t1", 3), serverAllows = false))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, "s1"), serverAllows = false))
     }
 
     @Test

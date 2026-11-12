@@ -1,6 +1,10 @@
 package os.retinue.ara.ui
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,6 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,10 +39,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import android.widget.EditText
 import android.text.Editable
 import android.text.InputFilter
@@ -56,8 +66,29 @@ import os.retinue.ara.keyboard.KeyboardStatus
  * and connect a device, pick its layout and what the phone asks before the
  * dashboard types there, and type live — every change in the field goes to
  * the device at once, as key presses (the user's own typing: never asked about).
+ *
+ * A page can open this screen just before a tap it provoked: the controls
+ * that act — the key buttons, Connect and Disconnect, the choice of what is
+ * asked — take no tap for [ConfirmTypeActivity.ARM_MS] after the screen
+ * appears and after every touch on it that is not on one of them, nor one
+ * that came through another window laid over it; as [ConfirmTypeActivity]'s Type.
  */
 class KeyboardActivity : ComponentActivity() {
+
+    /** The controls that act take a tap from then on (elapsedRealtime). */
+    private var armedAt = Long.MAX_VALUE
+
+    /** What they show (by the time only); [mayAct] decides. */
+    private var armed by mutableStateOf(false)
+
+    /** The touch that started the current gesture came through a window over this one. */
+    private var downObscured = false
+
+    /** Where the controls that act are, in window coordinates ([actsHere]). */
+    private val acting = HashMap<Any, Rect>()
+
+    private val timer = Handler(Looper.getMainLooper())
+    private val arm = Runnable { armed = SystemClock.elapsedRealtime() >= armedAt }
 
     // An empty result (the request was dismissed) grants nothing: ask the runtime.
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -90,7 +121,46 @@ class KeyboardActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        hold()
         KeyboardRuntime.retry()
+    }
+
+    override fun onDestroy() {
+        timer.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downObscured = ev.flags and (MotionEvent.FLAG_WINDOW_IS_OBSCURED or MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED) != 0
+                if (acting.values.none { it.contains(Offset(ev.x, ev.y)) }) hold()
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> hold()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** The controls that act take no tap for [ConfirmTypeActivity.ARM_MS] from now. */
+    private fun hold() {
+        armedAt = SystemClock.elapsedRealtime() + ConfirmTypeActivity.ARM_MS
+        armed = false
+        timer.removeCallbacks(arm)
+        timer.postDelayed(arm, ConfirmTypeActivity.ARM_MS)
+    }
+
+    /** Checked again in the click itself: the shown state may lag a frame behind. */
+    private fun mayAct(): Boolean = !downObscured && SystemClock.elapsedRealtime() >= armedAt
+
+    /** [action], if the controls that act take a tap now. */
+    private fun acts(action: () -> Unit): () -> Unit = { if (mayAct()) action() }
+
+    /** Marks a control that acts: a touch on it does not hold the others. */
+    @Composable
+    private fun actsHere(): Modifier {
+        val key = remember { Any() }
+        DisposableEffect(key) { onDispose { acting.remove(key) } }
+        return Modifier.onGloballyPositioned { acting[key] = it.boundsInWindow() }
     }
 
     private fun enable(on: Boolean) {
@@ -135,9 +205,13 @@ class KeyboardActivity : ComponentActivity() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(host.name, modifier = Modifier.weight(1f))
                             if (isConnected) {
-                                OutlinedButton(onClick = KeyboardRuntime::disconnect) { Text(stringResource(R.string.keyboard_disconnect)) }
+                                OutlinedButton(onClick = acts(KeyboardRuntime::disconnect), enabled = armed, modifier = actsHere()) {
+                                    Text(stringResource(R.string.keyboard_disconnect))
+                                }
                             } else {
-                                OutlinedButton(onClick = { KeyboardRuntime.connect(host.address) }) { Text(stringResource(R.string.keyboard_connect)) }
+                                OutlinedButton(onClick = acts { KeyboardRuntime.connect(host.address) }, enabled = armed, modifier = actsHere()) {
+                                    Text(stringResource(R.string.keyboard_connect))
+                                }
                             }
                         }
                     }
@@ -172,7 +246,9 @@ class KeyboardActivity : ComponentActivity() {
                             "up" to R.string.key_up, "down" to R.string.key_down,
                         ).forEach { (name, label) ->
                             // In order with the live field's edits, never dropped as busy.
-                            Button(onClick = { KeyboardRuntime.liveKey(name) }) { Text(stringResource(label)) }
+                            Button(onClick = acts { KeyboardRuntime.liveKey(name) }, enabled = armed, modifier = actsHere()) {
+                                Text(stringResource(label))
+                            }
                         }
                     }
                 }
@@ -183,7 +259,8 @@ class KeyboardActivity : ComponentActivity() {
     /**
      * What the phone asks before the dashboard types on this device. "Never
      * ask" is asked about once more here: a page can open this screen, and a
-     * tap aimed at it must not end up there.
+     * tap aimed at it must not end up there. The dialog's Yes, in a window of
+     * its own, takes no tap for [ConfirmTypeActivity.ARM_MS] after it appears.
      */
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
@@ -198,24 +275,37 @@ class KeyboardActivity : ComponentActivity() {
             ).forEach { (m, label) ->
                 FilterChip(
                     selected = mode == m,
-                    onClick = {
+                    onClick = acts {
                         if (m == ConfirmMode.Never && mode != m) askNever = true else KeyboardRuntime.setConfirmMode(address, m)
                     },
                     label = { Text(stringResource(label)) },
+                    enabled = armed,
+                    modifier = actsHere(),
                 )
             }
         }
         Text(stringResource(R.string.keyboard_confirm_hint), style = MaterialTheme.typography.bodySmall)
         if (askNever) {
+            val shownAt = remember { SystemClock.elapsedRealtime() }
+            var yesArmed by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                delay(ConfirmTypeActivity.ARM_MS)
+                yesArmed = true
+            }
             AlertDialog(
                 onDismissRequest = { askNever = false },
                 title = { Text(stringResource(R.string.keyboard_confirm_never_title, name)) },
                 text = { Text(stringResource(R.string.keyboard_confirm_never_text)) },
                 confirmButton = {
-                    TextButton(onClick = {
-                        askNever = false
-                        KeyboardRuntime.setConfirmMode(address, ConfirmMode.Never)
-                    }) { Text(stringResource(R.string.keyboard_confirm_never_yes)) }
+                    TextButton(
+                        onClick = {
+                            if (SystemClock.elapsedRealtime() - shownAt >= ConfirmTypeActivity.ARM_MS) {
+                                askNever = false
+                                KeyboardRuntime.setConfirmMode(address, ConfirmMode.Never)
+                            }
+                        },
+                        enabled = yesArmed,
+                    ) { Text(stringResource(R.string.keyboard_confirm_never_yes)) }
                 },
                 dismissButton = {
                     TextButton(onClick = { askNever = false }) { Text(stringResource(R.string.keyboard_confirm_never_no)) }

@@ -152,9 +152,12 @@ object ShellPage {
         }
     }
 
-    /** Keyboard events (and the status before them) go to the page, whichever window shows it. */
+    /**
+     * Keyboard events (and the status before them) go to the page, whichever
+     * window shows it — `status` only while its server may type.
+     */
     private val keyboardListener = KeyboardListener { event ->
-        if (webView != null) bridge.keyboardEvent(event)
+        if (webView != null && KeyboardLogic.eventForPage(event, keyboardAllowed())) bridge.keyboardEvent(event)
     }
 
     /** [window] was created: the first one creates the page and shows it. */

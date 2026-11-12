@@ -88,6 +88,28 @@ class ConfirmStreak(private val clock: () -> Long) {
 }
 
 /**
+ * The strip's Stop was pressed: the next page request asks first, whatever
+ * the device's mode ([KeyboardLogic.needsConfirmation]). Only the user's
+ * approval — of a confirmation or in the password dialog — answers it: a
+ * confirmation declined, timed out or closed by the page's own
+ * keyboardCancel leaves it pending, or the page could raise a window, cancel
+ * it at once and type on unasked. The pause after three not approved
+ * ([ConfirmStreak]) bounds the repeats.
+ */
+class StopPending {
+    var pending = false
+        private set
+
+    fun stopped() {
+        pending = true
+    }
+
+    fun approved() {
+        pending = false
+    }
+}
+
+/**
  * Per device (Bluetooth address), how many characters were typed for a page
  * without a confirmation since the last approval: a count only, nothing of
  * what was typed. An approval and a disconnect reset it. In memory only.

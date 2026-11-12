@@ -141,8 +141,8 @@ object KeyboardRuntime {
     /** Characters typed for a page without a confirmation, per device, since the last approval. */
     private val unconfirmed = UnconfirmedCounts()
 
-    /** The strip's Stop was pressed: the next page request asks first, whatever the device's mode. */
-    private var stopPending = false
+    /** The strip's Stop was pressed: the next page request asks first, until the user approves one. */
+    private val stop = StopPending()
 
     /** The request waiting for the user's approval, while there is one. */
     private var pending: PendingConfirmation? = null
@@ -594,7 +594,7 @@ object KeyboardRuntime {
             inFront = facts.inFront,
             windowOpen = windows.open,
             mode = status.confirmMode,
-            stopPending = stopPending,
+            stopPending = stop.pending,
             confirmPaused = streak.paused,
         )
         return when (decision) {
@@ -613,8 +613,6 @@ object KeyboardRuntime {
             }
             PageDecision.OpenSecret -> {
                 windows.ask()
-                // The dialog asks: that is the one question a Stop called for.
-                stopPending = false
                 PageOutcome.OpenSecret(status.host?.address, facts.serverHost, unconfirmed.of(status.host?.address))
             }
             PageDecision.Confirm -> confirm(request, status, facts)
@@ -625,7 +623,6 @@ object KeyboardRuntime {
     private fun confirm(request: PageRequest, status: KeyboardStatus, facts: PageFacts): PageOutcome {
         val host = status.host ?: return PageOutcome.Done.also { emit(KeyboardEvent.error(request.id, KeyboardError.NotConnected)) }
         windows.ask()
-        stopPending = false
         val token = UUID.randomUUID().toString()
         pending = PendingConfirmation(
             token = token,
@@ -665,6 +662,7 @@ object KeyboardRuntime {
         if (!pendingShown) windows.abandon()
         if (approved) {
             streak.approved()
+            stop.approved()
             unconfirmed.reset(p.hostAddress)
             typeForPage(p.request, expectedHost = p.hostAddress)
         } else {
@@ -675,7 +673,7 @@ object KeyboardRuntime {
 
     /** The strip's Stop: what is being typed stops, and the next request of the page asks first. */
     fun stopFromStrip() {
-        stopPending = true
+        stop.stopped()
         cancelTyping()
     }
 
@@ -757,8 +755,9 @@ object KeyboardRuntime {
      * user sees on the phone why it failed.
      */
     fun typeSecret(secret: CharArray, enter: Boolean, id: String?, expectedHost: String?) {
-        // Typed with the user's own say: what the page typed there unasked is behind them.
+        // Typed with the user's own say: what the page typed there unasked is behind them, and so is a Stop.
         expectedHost?.let(unconfirmed::reset)
+        stop.approved()
         scope.launch {
             val error = try {
                 typeSecretNow(secret, enter, expectedHost)
