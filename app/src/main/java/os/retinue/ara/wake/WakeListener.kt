@@ -11,8 +11,8 @@ import java.io.File
 
 /**
  * One phrase listened for: the instance it wakes, its model file and threshold.
- * Phrases are in [WakeTargets] order, so a frame in which several are heard
- * wakes the first of them.
+ * Phrases are in [WakeTargets] order, which decides between instances that
+ * share a model (see [WakePhraseScorers]).
  */
 data class WakePhrase(val endpointId: String, val file: File, val threshold: Float)
 
@@ -92,8 +92,7 @@ class WakeListener(
             models = OnnxWakeModels(melFile, embeddingFile, files)
             val m = models
             val features = WakeFeatures(m::melspectrogram, m::embedding, m.maxKeywordFrames)
-            val modelOf = phrases.map { files.indexOf(it.file) }
-            val scorers = phrases.map { WakeScorer(threshold = it.threshold) }
+            val scorers = WakePhraseScorers(phrases.map { it.threshold }, phrases.map { files.indexOf(it.file) })
             val scores = FloatArray(files.size)
 
             val minBuffer = AudioRecord.getMinBufferSize(
@@ -124,12 +123,7 @@ class WakeListener(
                 features.push(buf, n) { window ->
                     if (heard != null) return@push
                     for (i in files.indices) scores[i] = m.score(i, window)
-                    val now = SystemClock.elapsedRealtime()
-                    // Every scorer sees every frame (warm-up and refractory stay in step);
-                    // the first phrase heard, in WakeTargets order, takes the wake.
-                    for (p in phrases.indices) {
-                        if (scorers[p].onScore(scores[modelOf[p]], now) && heard == null) heard = phrases[p].endpointId
-                    }
+                    heard = scorers.onScores(scores, SystemClock.elapsedRealtime())?.let { phrases[it].endpointId }
                 }
                 val woken = heard
                 if (woken != null && running) {

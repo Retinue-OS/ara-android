@@ -1,6 +1,7 @@
 package os.retinue.ara
 
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.Test
 import os.retinue.ara.health.ChangesToken
@@ -26,6 +27,23 @@ class HealthBackgroundTest {
         )
         assertEquals(listOf("https://work.example"), HealthSyncLogic.backgroundTargets(null, listOf("https://work.example")))
         assertEquals(emptyList(), HealthSyncLogic.backgroundTargets("https://home.example", emptyList()))
+    }
+
+    @Test
+    fun aRunningSyncStopsOnlyForWhatItIsSyncing() {
+        fun stops(inBackground: Boolean, current: Boolean = false, off: Boolean = false, dropped: Boolean = false) =
+            HealthSyncLogic.stopsRunning(inBackground, currentChanged = current, switchedOff = off, backgroundDropped = dropped)
+        // Another endpoint shown stops either part.
+        assertTrue(stops(inBackground = false, current = true))
+        assertTrue(stops(inBackground = true, current = true))
+        // The shown endpoint's sync: its switch, not a background server dropped meanwhile.
+        assertTrue(stops(inBackground = false, off = true))
+        assertFalse(stops(inBackground = false, dropped = true))
+        // The background servers' sync: a server dropped, not the shown endpoint's switch.
+        assertTrue(stops(inBackground = true, dropped = true))
+        assertFalse(stops(inBackground = true, off = true))
+        assertFalse(stops(inBackground = false))
+        assertFalse(stops(inBackground = true))
     }
 
     @Test

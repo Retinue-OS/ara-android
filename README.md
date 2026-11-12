@@ -788,7 +788,8 @@ own phrase model and threshold, in one listener: the audio, the melspectrogram
 and the embedding models run once, and every distinct phrase model scores the
 same embeddings. A phrase of a background endpoint brings that endpoint to the
 front (the wake waits until its page has loaded); when two listening endpoints
-share a phrase, the one shown takes it, else the first in the list. The service
+share a phrase, the one shown takes it, else the first in the list, whichever
+of their thresholds the score reaches. The service
 of mode *Always* runs while any listening endpoint is in that mode. The one
 device-wide wake setting of earlier builds becomes every endpoint's own on
 update, so the endpoint shown keeps waking as before.

@@ -115,6 +115,9 @@ object HealthSyncRuntime {
     /** The one sync running. */
     private var job: Job? = null
 
+    /** The sync running is past the shown endpoint's part, at the background servers': the page knows nothing of it. */
+    private var inBackground = false
+
     /** When a deliberate sync was last asked for (epoch ms), for collapsing repeats. */
     private var lastDeliberateAt = 0L
 
@@ -155,18 +158,24 @@ object HealthSyncRuntime {
                 .distinctUntilChanged()
                 .collect { targets ->
                     val before = this@HealthSyncRuntime.targets
-                    // Another endpoint shown, the shown one's switch turned off, or a
-                    // background server dropped: what is running is stopped.
-                    val stale = before == null || targets.current != before.current ||
-                        (before.enabled && !targets.enabled) || !targets.background.containsAll(before.background)
+                    val switchedOff = before?.enabled == true && !targets.enabled
+                    // What is running is stopped when what it syncs is no longer to be synced.
+                    val stale = before == null || HealthSyncLogic.stopsRunning(
+                        inBackground = inBackground,
+                        currentChanged = targets.current != before.current,
+                        switchedOff = switchedOff,
+                        backgroundDropped = !targets.background.containsAll(before.background),
+                    )
                     this@HealthSyncRuntime.targets = targets
                     endpointOrigin = targets.current
                     uploadEnabled = targets.enabled
                     backgroundOrigins = targets.background
                     val running = job?.takeIf { it.isActive }
                     if (stale && running != null) {
+                        // Only the shown endpoint's sync was announced to the page.
+                        val announced = !inBackground
                         running.cancelAndJoin()
-                        if (before?.enabled == true && !targets.enabled) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
+                        if (announced && switchedOff) emit(HealthSyncEvent.Skipped(SkipReason.Disabled))
                     }
                     publish()
                     withContext(Dispatchers.IO) { rounds.retainOnly(targets.enabledOrigins) }
@@ -297,16 +306,30 @@ object HealthSyncRuntime {
      * between check and start.
      */
     private fun start(trigger: HealthTrigger, requester: HealthPermissionRequester?) {
-        val running = job?.isActive == true
+        val active = job?.takeIf { it.isActive }
+        // A sync of the background servers is none the page knows of: a deliberate
+        // one does not wait for it (and for an end that is never reported) but
+        // takes its place. The servers left get theirs with the next automatic sync.
+        val replaced = active?.takeIf { inBackground && trigger.deliberate }
+        val running = active != null && replaced == null
         val foreground = foregroundDue(trigger, running)
         // Background servers ride along with automatic syncs only: a deliberate
         // one is for the endpoint on screen.
         val background = trigger == HealthTrigger.Resume && !running && state.autoOnResume &&
             backgroundOrigins.isNotEmpty() && available && permissions != PermissionState.None
         if (!foreground && !background) return
+        inBackground = false
         job = scope.launch {
+            replaced?.cancelAndJoin()
             if (foreground) run(trigger, requester)
-            if (background) syncBackground()
+            if (background) {
+                inBackground = true
+                try {
+                    syncBackground()
+                } finally {
+                    inBackground = false
+                }
+            }
         }
     }
 

@@ -55,13 +55,6 @@ object WakeTargets {
             }
             .sortedByDescending { it.foreground }
     }
-
-    /**
-     * Of the instances whose phrase was heard in the same frame ([heard], ids),
-     * the one the wake goes to: the first of [targets] among them.
-     */
-    fun pick(targets: List<WakeTarget>, heard: Collection<String>): String? =
-        targets.firstOrNull { it.endpointId in heard }?.endpointId
 }
 
 /**
@@ -114,6 +107,33 @@ class WakeScorer(
     fun reset() {
         seen = 0
         run = 0
+    }
+}
+
+/**
+ * The scorers of the phrases one listener listens for, in [WakeTargets]
+ * order: phrase p has the threshold [thresholds]`[p]` and is scored by the
+ * model [modelOf]`[p]`. Instances that share a model share the phrase, and
+ * no score can tell which of them was meant: whichever of their thresholds
+ * the score reaches, the wake goes to the first of them (the one shown,
+ * else the first in the list). Otherwise the lowest threshold would always
+ * win, a score rising through it first.
+ */
+class WakePhraseScorers(thresholds: List<Float>, private val modelOf: List<Int>) {
+    init {
+        require(thresholds.size == modelOf.size) { "One model per phrase" }
+    }
+
+    private val scorers = thresholds.map { WakeScorer(threshold = it) }
+
+    /** Feed one frame's [scores] (one per model); the phrase (its index) the frame wakes, or null. */
+    fun onScores(scores: FloatArray, nowMs: Long): Int? {
+        var heard = -1
+        // Every scorer sees every frame, so warm-up and refractory stay in step.
+        for (p in scorers.indices) {
+            if (scorers[p].onScore(scores[modelOf[p]], nowMs) && heard < 0) heard = p
+        }
+        return if (heard < 0) null else modelOf.indexOf(modelOf[heard])
     }
 }
 

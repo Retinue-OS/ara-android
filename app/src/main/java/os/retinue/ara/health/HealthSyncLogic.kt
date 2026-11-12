@@ -354,6 +354,18 @@ object HealthSyncLogic {
     fun backgroundTargets(currentOrigin: String?, backgroundOrigins: List<String>): List<String> =
         backgroundOrigins.distinct().filter { it != currentOrigin }
 
+    /**
+     * Whether a change to the endpoints stops the sync that is running.
+     * Another endpoint shown ([currentChanged]) always does. Otherwise the
+     * part it is at decides: the shown endpoint's stops when its switch was
+     * turned off ([switchedOff]) and not for a background server that was
+     * dropped (those are read afresh once it gets to them); the background
+     * servers' ([inBackground]) stops when one of them was dropped
+     * ([backgroundDropped]).
+     */
+    fun stopsRunning(inBackground: Boolean, currentChanged: Boolean, switchedOff: Boolean, backgroundDropped: Boolean): Boolean =
+        currentChanged || if (inBackground) backgroundDropped else switchedOff
+
     /** The one token of builds before per-origin tokens, as the map: for its origin, if it had one. */
     fun legacyTokens(token: String?, types: String?, origin: String?): Map<String, ChangesToken> =
         if (token.isNullOrEmpty() || types == null || origin.isNullOrBlank()) emptyMap() else mapOf(origin to ChangesToken(token, types))

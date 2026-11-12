@@ -21,7 +21,12 @@ import os.retinue.ara.settings.SettingsPageState
 import os.retinue.ara.settings.UpdatesInfo
 import os.retinue.ara.settings.WakeInfo
 import os.retinue.ara.shell.ShellDecisions
+import os.retinue.ara.ui.WakeConditions
+import os.retinue.ara.ui.shownWakeStatus
 import os.retinue.ara.wake.WakeMode
+import os.retinue.ara.wake.WakeModelStatus
+import os.retinue.ara.wake.WakePhraseScorers
+import os.retinue.ara.wake.WakeStatus
 import os.retinue.ara.wake.WakeTarget
 import os.retinue.ara.wake.WakeTargets
 import os.retinue.ara.wake.WakeTicket
@@ -101,13 +106,34 @@ class InstanceStateTest {
         assertEquals(emptyList(), WakeTargets.of(ShellSettings()))
     }
 
+    /** Scores past the scorers' warm-up, then [frames], each one frame's scores (one per model); what each frame wakes. */
+    private fun wakes(scorers: WakePhraseScorers, models: Int, vararg frames: FloatArray): List<Int?> {
+        var now = 0L
+        repeat(5) { scorers.onScores(FloatArray(models), now++) }
+        return frames.map { scorers.onScores(it, now++) }
+    }
+
     @Test
-    fun aPhraseHeardForSeveralInstancesWakesTheFirstOfThem() {
-        val targets = WakeTargets.of(ShellSettings(endpoints = listOf(work, home), currentEndpointId = "home"))
-        assertEquals("home", WakeTargets.pick(targets, setOf("work", "home")))
-        assertEquals("work", WakeTargets.pick(targets, listOf("work")))
-        assertNull(WakeTargets.pick(targets, emptyList()))
-        assertNull(WakeTargets.pick(targets, listOf("club")))
+    fun aPhraseTwoInstancesShareWakesTheFirstOfThemWhicheverThresholdIsReached() {
+        // The shown one (first) is less sensitive than the background one: a
+        // score rising through the lower threshold must not bring that one to the front.
+        assertEquals(
+            listOf(null, 0),
+            wakes(WakePhraseScorers(listOf(0.5f, 0.3f), listOf(0, 0)), 1, floatArrayOf(0.1f), floatArrayOf(0.4f)),
+        )
+        assertEquals(listOf<Int?>(0), wakes(WakePhraseScorers(listOf(0.5f, 0.5f), listOf(0, 0)), 1, floatArrayOf(0.9f)))
+    }
+
+    @Test
+    fun aPhraseOfItsOwnWakesItsInstanceAtItsOwnThreshold() {
+        val scorers = WakePhraseScorers(listOf(0.5f, 0.6f, 0.3f), listOf(0, 1, 0))
+        assertEquals(
+            listOf(null, 1),
+            wakes(scorers, 2, floatArrayOf(0.2f, 0.55f), floatArrayOf(0.2f, 0.7f)),
+        )
+        // Both phrases in one frame: the first in order.
+        assertEquals(listOf<Int?>(0), wakes(WakePhraseScorers(listOf(0.5f, 0.5f), listOf(0, 1)), 2, floatArrayOf(0.9f, 0.9f)))
+        assertEquals(listOf<Int?>(null), wakes(WakePhraseScorers(listOf(0.5f), listOf(0)), 1, floatArrayOf(Float.NaN)))
     }
 
     @Test
@@ -175,6 +201,21 @@ class InstanceStateTest {
         assertEquals(listOf("foreground", "background"), list.map { it["state"]!!.jsonPrimitive.content })
         assertEquals(listOf("false", "true"), list.map { it["background"]!!.jsonPrimitive.content })
         assertEquals(0, json["wake"]!!.jsonObject["alsoListening"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun theWakeCardsStatusIsTheShownInstancesNotTheDetectors() {
+        fun conditions(status: WakeStatus, listening: Set<String>) =
+            WakeConditions(status, true, true, true, true, WakeModelStatus(true, true, true), false, null, listening)
+        assertEquals(WakeStatus.Listening, shownWakeStatus(conditions(WakeStatus.Listening, setOf("home", "work")), "home", WakeMode.Always))
+        // Only a background instance is listened for: the shown one is not.
+        assertEquals(WakeStatus.Idle, shownWakeStatus(conditions(WakeStatus.Listening, setOf("work")), "home", WakeMode.WhileVisible))
+        assertEquals(WakeStatus.Idle, shownWakeStatus(conditions(WakeStatus.Listening, setOf("work")), "home", WakeMode.Off))
+        // What holds the detector back holds the shown one back too, unless its phrase is off.
+        assertEquals(WakeStatus.PausedForVoice, shownWakeStatus(conditions(WakeStatus.PausedForVoice, emptySet()), "home", WakeMode.Always))
+        assertEquals(WakeStatus.Error("mic"), shownWakeStatus(conditions(WakeStatus.Error("mic"), emptySet()), "home", WakeMode.Always))
+        assertEquals(WakeStatus.Idle, shownWakeStatus(conditions(WakeStatus.Error("mic"), emptySet()), "home", WakeMode.Off))
+        assertEquals(WakeStatus.Idle, shownWakeStatus(conditions(WakeStatus.Listening, setOf("work")), null, WakeMode.Always))
     }
 
     @Test
