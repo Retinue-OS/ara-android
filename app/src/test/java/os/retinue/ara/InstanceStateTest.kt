@@ -162,6 +162,16 @@ class InstanceStateTest {
     }
 
     @Test
+    fun aWakeIsDroppedForARemovedInstanceButNotBeforeTheSettingsAreRead() {
+        val known = listOf("home", "work")
+        assertTrue(ShellDecisions.wakeEndpointGone("club", settingsLoaded = true, endpoints = known))
+        assertFalse(ShellDecisions.wakeEndpointGone("work", settingsLoaded = true, endpoints = known))
+        assertFalse(ShellDecisions.wakeEndpointGone(null, settingsLoaded = true, endpoints = known))
+        // A window the wake brought up knows no endpoint yet: the wake waits for the settings.
+        assertFalse(ShellDecisions.wakeEndpointGone("work", settingsLoaded = false, endpoints = emptyList()))
+    }
+
+    @Test
     fun theSettingsPageListsEachEndpointsStateAndSavesTheSwitch() {
         val settings = ShellSettings(endpoints = listOf(home, work, club), currentEndpointId = "home")
         val rows = SettingsPageState.endpointRows(settings)

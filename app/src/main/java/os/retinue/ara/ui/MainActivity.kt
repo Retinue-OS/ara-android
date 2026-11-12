@@ -1101,6 +1101,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
         page.settings = s
         settingsLoaded = true
+        // A wake accepted before the settings were read, or whose instance was removed since.
+        if (pendingWakeAt != 0L && wakeEndpointGone(pendingWakeEndpoint)) endWake()
         page.router = UrlRouter(s.baseUrl)
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
@@ -1152,8 +1154,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      */
     private fun acceptWake(fromIntent: Boolean, endpointId: String?) {
         // A wake for an instance that was removed meanwhile is dropped: it must
-        // not open the page of the instance shown instead.
-        if (endpointId != null && settings.endpoints.none { it.id == endpointId }) return
+        // not open the page of the instance shown instead. A window the wake
+        // itself brought up has not read the settings yet: [applySettings] checks then.
+        if (wakeEndpointGone(endpointId)) return
         // The page answers in this window.
         page.take(this)
         closeOverlays()
@@ -1174,6 +1177,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
         tryDeliverWake()
     }
+
+    private fun wakeEndpointGone(endpointId: String?): Boolean =
+        ShellDecisions.wakeEndpointGone(endpointId, settingsLoaded, settings.endpoints.map { it.id })
 
     /** A wake for the instance [endpointId], heard while this window is visible (see [ShellPage]). */
     internal fun onDirectWake(endpointId: String) = acceptWake(fromIntent = false, endpointId = endpointId)
