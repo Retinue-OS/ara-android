@@ -205,6 +205,7 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     fun setAutoUpdate(on: Boolean) = viewModelScope.launch { store.setAutoUpdate(on) }
     fun setUpdateChannel(channel: UpdateChannel) = viewModelScope.launch { store.setUpdateChannel(channel) }
     fun setSplitLaunch(on: Boolean) = viewModelScope.launch { store.setSplitLaunch(on) }
+    fun setOpensFullScreen(key: String, on: Boolean) = viewModelScope.launch { store.setOpensFullScreen(key, on) }
     fun setKeepSplitInRecents(on: Boolean) = viewModelScope.launch { store.setKeepSplitInRecents(on) }
 
     /**

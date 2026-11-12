@@ -113,13 +113,41 @@ object ShellDecisions {
 
     /**
      * Where a launcher entry opened in [splitWindow] (or else the home screen)
-     * is started. [splitLaunch] is the setting; [alternate] is the long-press
-     * choice, the other of the two on the home screen.
+     * is started. [splitLaunch] is the setting, which [prefersFullScreen] (the
+     * entry's own preference, see [fullScreenPreference]) overrules;
+     * [alternate] is the long-press choice, the other of the two on the home
+     * screen.
      */
-    fun launchTarget(splitWindow: Boolean, splitLaunch: Boolean, alternate: Boolean): LaunchTarget = when {
+    fun launchTarget(
+        splitWindow: Boolean,
+        splitLaunch: Boolean,
+        alternate: Boolean,
+        prefersFullScreen: Boolean = false,
+    ): LaunchTarget = when {
         splitWindow -> LaunchTarget.Beside
-        splitLaunch != alternate -> LaunchTarget.ThroughSplitWindow
+        opensBeside(splitLaunch, prefersFullScreen) != alternate -> LaunchTarget.ThroughSplitWindow
         else -> LaunchTarget.Here
+    }
+
+    /**
+     * Whether a tap on the home screen opens an entry beside Ara: the setting
+     * is on and the entry is not one the user chose to open full screen.
+     */
+    fun opensBeside(splitLaunch: Boolean, prefersFullScreen: Boolean): Boolean =
+        splitLaunch && !prefersFullScreen
+
+    /**
+     * What opening an entry at [target] does to its full-screen preference:
+     * true to store it, false to forget it, null to leave it. Only the
+     * long-press choice ([alternate]) changes it: *Open full screen* stores
+     * the preference, so the entry opens that way on a tap from then on, and
+     * *Open beside Ara*, offered in its place, forgets it again.
+     */
+    fun fullScreenPreference(target: LaunchTarget, alternate: Boolean): Boolean? = when {
+        !alternate -> null
+        target == LaunchTarget.Here -> true
+        target == LaunchTarget.ThroughSplitWindow -> false
+        else -> null
     }
 
     /** What an intent asks of the split-screen window. */

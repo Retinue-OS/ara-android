@@ -62,6 +62,8 @@ import os.retinue.ara.R
 import os.retinue.ara.launcher.AppCatalog
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.LauncherLinks
+import os.retinue.ara.launcher.launchKey
+import os.retinue.ara.shell.ShellDecisions
 
 /** Height of the launcher bar (plan §1: about 64 dp, above the gesture inset). */
 val LauncherBarHeight = 68.dp
@@ -90,8 +92,8 @@ internal fun slotWidth(available: Dp, slots: Int): Dp =
 fun LauncherBar(
     entries: List<LauncherEntry>,
     onOpen: (LauncherEntry) -> Unit,
-    /** The long-press item for the other way of opening an app or link (see [AlternateOpenItem]); null for none. */
-    alternateOpen: Int?,
+    /** The long-press item for the other way of opening an app or link (see [AlternateOpen]); null for none. */
+    alternateOpen: AlternateOpen?,
     onOpenAlternate: (LauncherEntry) -> Unit,
     onEdit: (LauncherEntry) -> Unit,
     onRemove: (LauncherEntry) -> Unit,
@@ -128,7 +130,7 @@ fun LauncherBar(
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             // What Android starts: apps, web apps and links (not pages of the web app, not folders).
                             if (alternateOpen != null && (entry is LauncherEntry.Launchable || entry is LauncherEntry.Link)) {
-                                AlternateOpenItem(alternateOpen) { menu = false; onOpenAlternate(entry) }
+                                AlternateOpenItem(alternateOpen.item(entry.launchKey)) { menu = false; onOpenAlternate(entry) }
                             }
                             MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
                             if (index > 0) {
@@ -177,6 +179,22 @@ fun LauncherBar(
             }
         }
     }
+}
+
+/**
+ * Which long-press item opens an entry the other way than a tap does, on the
+ * home screen. A tap opens it beside Ara when the setting ([splitLaunch]) is
+ * on, unless the entry is one the user chose to open full screen
+ * ([fullScreen], by [launchKey]).
+ */
+internal data class AlternateOpen(val splitLaunch: Boolean, val fullScreen: Set<String>) {
+    /** The item for the entry stored by [key]: [R.string.launcher_open_full] or [R.string.launcher_open_beside]. */
+    fun item(key: String?): Int =
+        if (ShellDecisions.opensBeside(splitLaunch, key != null && key in fullScreen)) {
+            R.string.launcher_open_full
+        } else {
+            R.string.launcher_open_beside
+        }
 }
 
 /**

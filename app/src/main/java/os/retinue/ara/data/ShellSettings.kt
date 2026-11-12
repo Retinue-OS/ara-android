@@ -27,6 +27,12 @@ data class ShellSettings(
      * split-screen window (see SplitShellActivity), rather than full screen.
      */
     val splitLaunch: Boolean = false,
+    /**
+     * The apps, web apps and links (by [os.retinue.ara.launcher.launchKey])
+     * the user chose to open full screen: a tap opens them that way even
+     * while [splitLaunch] is on.
+     */
+    val fullScreenApps: Set<String> = emptySet(),
     /** The home screen keeps the split-screen window among the recent apps, ready to pair. */
     val keepSplitInRecents: Boolean = false,
     /**

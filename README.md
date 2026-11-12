@@ -555,8 +555,11 @@ Settings → **Split screen**:
 - **Open apps beside Ara** (off by default): a tap on the home screen opens the
   app in split screen. The home screen brings up the split-screen window, which
   starts the app beside itself once it is in front. Long-press an app, web app
-  or link on the bar, in a folder or in All apps for the other way (*Open full
-  screen*, or *Open beside Ara* while the setting is off). An app that does not
+  or link on the bar, in a folder, in the tray or in All apps for the other way
+  (*Open full screen*, or *Open beside Ara* while the setting is off). *Open
+  full screen* is **remembered for that app**: from then on a tap opens it full
+  screen, and its long-press menu offers *Open beside Ara* instead, which opens
+  it in split screen and forgets the preference again. An app that does not
   get there (one that refuses split screen, or Android 12) covers Ara full
   screen, and Ara's window goes to the back, so Back from the app leads home.
 - **Keep Ara in recent apps** (off by default): whenever the home screen comes

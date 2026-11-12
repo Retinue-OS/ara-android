@@ -105,6 +105,7 @@ import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.launcher.LauncherEntry
 import os.retinue.ara.launcher.PinnedShortcut
 import os.retinue.ara.launcher.TrayLogic
+import os.retinue.ara.launcher.launchKey
 import os.retinue.ara.net.BasicCredentials
 import os.retinue.ara.net.CertificateImport
 import os.retinue.ara.net.CertificateInstaller
@@ -399,10 +400,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 val voiceActive by WakeRuntime.voiceActive.collectAsStateWithLifecycle()
                 KeepScreenOn(voiceActive)
                 // A long-press offers the other way of opening: beside Ara or full screen (home screen only).
-                val alternateOpen = when {
-                    isSplitWindow -> null
-                    stored?.splitLaunch == true -> R.string.launcher_open_full
-                    else -> R.string.launcher_open_beside
+                val alternateOpen = if (isSplitWindow) {
+                    null
+                } else {
+                    AlternateOpen(stored?.splitLaunch == true, stored?.fullScreenApps.orEmpty())
                 }
                 // The tray needs the apps before it is first pulled up (it only comes up as far as they go).
                 LaunchedEffect(Unit) { viewModel.refreshApps() }
@@ -572,7 +573,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * item for the other way of opening an app (null for none).
      */
     @Composable
-    private fun ShellLayout(launcher: LauncherConfig, trayItems: List<DrawerItem>, alternateOpen: Int?) {
+    private fun ShellLayout(launcher: LauncherConfig, trayItems: List<DrawerItem>, alternateOpen: AlternateOpen?) {
         val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         // The bar hides while the keyboard is up, and the tray with it.
         LaunchedEffect(imeVisible) { if (imeVisible) tray.snapCollapsed() }
@@ -1346,7 +1347,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * Open a launcher entry: a folder over the bar, a page of the web app in
      * the WebView, anything else through Android — here, beside this window,
      * or through the split-screen window ([ShellDecisions.launchTarget]).
-     * [alternate] is the long-press choice, the other way of opening it.
+     * [alternate] is the long-press choice, the other way of opening it;
+     * choosing full screen there makes that the entry's way on a tap too.
      */
     private fun openEntry(entry: LauncherEntry, alternate: Boolean = false) {
         // Whatever opens, the tray goes down (an app may open beside Ara, which stays in view).
@@ -1361,7 +1363,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             webView?.loadUrl(ShellUrls.webPathUrl(base, entry.path))
             return
         }
-        val target = ShellDecisions.launchTarget(isSplitWindow, settings.splitLaunch, alternate)
+        val key = entry.launchKey
+        val prefersFullScreen = key != null && key in settings.fullScreenApps
+        val target = ShellDecisions.launchTarget(isSplitWindow, settings.splitLaunch, alternate, prefersFullScreen)
+        // "Open full screen" is remembered for the entry; "Open beside Ara", offered in its place, forgets it.
+        if (key != null) {
+            ShellDecisions.fullScreenPreference(target, alternate)?.let { viewModel.setOpensFullScreen(key, it) }
+        }
         if (target == ShellDecisions.LaunchTarget.ThroughSplitWindow) {
             // The split-screen window starts it, and counts it.
             openInSplitWindow(entry)

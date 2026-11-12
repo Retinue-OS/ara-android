@@ -255,8 +255,8 @@ internal fun LauncherTray(
     topMenuPx: Float?,
     onOpened: () -> Unit,
     onLaunch: (DrawerItem) -> Unit,
-    /** The long-press item for the other way of opening an app (see [AlternateOpenItem]); null for none. */
-    alternateOpen: Int?,
+    /** The long-press item for the other way of opening an app (see [AlternateOpen]); null for none. */
+    alternateOpen: AlternateOpen?,
     onLaunchAlternate: (DrawerItem) -> Unit,
     onPin: (DrawerItem) -> Unit,
     onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
@@ -367,7 +367,7 @@ private fun TrayLines(
     columns: Int,
     folders: List<LauncherEntry.Folder>,
     onLaunch: (DrawerItem) -> Unit,
-    alternateOpen: Int?,
+    alternateOpen: AlternateOpen?,
     onLaunchAlternate: (DrawerItem) -> Unit,
     onPin: (DrawerItem) -> Unit,
     onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
@@ -395,7 +395,7 @@ private fun TrayLines(
                 item = item,
                 folders = folders,
                 onLaunch = { onLaunch(item) },
-                alternateOpen = alternateOpen,
+                alternateOpen = alternateOpen?.item(item.key),
                 onLaunchAlternate = { onLaunchAlternate(item) },
                 onPin = { onPin(item) },
                 onAddToFolder = onAddToFolder,

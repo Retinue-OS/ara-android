@@ -122,8 +122,8 @@ fun AppDrawer(
     onLaunchShortcut: (PinnedShortcut) -> Unit,
     onPinShortcut: (PinnedShortcut) -> Unit,
     onRemoveShortcut: (PinnedShortcut) -> Unit,
-    /** The long-press item for the other way of opening an app (see [AlternateOpenItem]); null for none. */
-    alternateOpen: Int?,
+    /** The long-press item for the other way of opening an app (see [AlternateOpen]); null for none. */
+    alternateOpen: AlternateOpen?,
     onLaunchAlternate: (LauncherEntry.Launchable) -> Unit,
     onDismiss: () -> Unit,
     onSettings: () -> Unit,
@@ -165,7 +165,7 @@ fun AppDrawer(
                             folders = folders,
                             pinned = isPinned(item.app),
                             onLaunch = { onLaunch(item.app) },
-                            alternateOpen = alternateOpen,
+                            alternateOpen = alternateOpen?.item(item.key),
                             onLaunchAlternate = { onLaunchAlternate(item.toEntry()) },
                             onPin = { onPin(item.app) },
                             onAddToFolder = onAddToFolder,
@@ -177,7 +177,7 @@ fun AppDrawer(
                             folders = folders,
                             pinned = isShortcutPinned(item.shortcut),
                             onLaunch = { onLaunchShortcut(item.shortcut) },
-                            alternateOpen = alternateOpen,
+                            alternateOpen = alternateOpen?.item(item.key),
                             onLaunchAlternate = { onLaunchAlternate(item.toEntry()) },
                             onPin = { onPinShortcut(item.shortcut) },
                             onAddToFolder = onAddToFolder,
