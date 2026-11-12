@@ -1,10 +1,12 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
 // endpoint draft rules and what closing the editor does, the certificate
 // import's notes, the per-device values with the dashboard's bounds, the
-// health and wake lines, the phrase model rows, and the instance frame's
-// message. No dependencies:
+// health, phone call and wake lines, the phrase model rows, and the instance
+// frame's message; and that the page (index.html) has the elements its script
+// (page.mjs) works on. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as L from '../../main/assets/settings/logic.mjs';
 
 let passed = 0;
@@ -207,6 +209,33 @@ ok('the model a job works on is not chosen while the job runs', () => {
   assert.ok(!row.actions[0].disabled && row.actions[1].disabled);
 });
 
+ok('direct calls say when Android has not allowed them, for the endpoint shown', () => {
+  // `direct` is the current endpoint's own switch (SettingsPageState.callsInfo). Off for it,
+  // the missing permission stands in nobody's way, whatever another endpoint has switched on.
+  for (const quiet of [undefined, null, {}, { direct: false, permissionGranted: false }, { direct: true, permissionGranted: true }]) {
+    assert.deepEqual(L.callNotes(quiet), []);
+  }
+  const notes = L.callNotes({ direct: true, permissionGranted: false, telephony: true });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].text, /calls open the dialer/);
+  assert.equal(notes[0].action, 'calls.permission');
+});
+
+ok("the call switch is its card's: an endpoint's draft neither carries nor changes it", () => {
+  // The list's rows have no call switch; one that slipped into a row would still not reach
+  // the editor, so a save sends none and the app keeps the endpoint's own (EndpointDraft.toEndpoint).
+  const row = { ...home, directCalls: true };
+  const d = L.draftOf(row);
+  assert.equal('directCalls' in d, false);
+  assert.equal('directCalls' in L.newDraft('n'), false);
+  d.healthUpload = false;
+  assert.deepEqual(L.onClose(d), { action: 'save' });
+  // What is sent is the editor's own, its background switch included; no card's setting is.
+  assert.deepEqual(Object.keys(L.draftMessage(d)).sort(), [
+    'background', 'baseUrl', 'certificateAlias', 'forgetPassword', 'healthUpload', 'id', 'isNew', 'password', 'username',
+  ]);
+});
+
 ok('the wake notes follow the mode, with the action that fixes each', () => {
   assert.deepEqual(L.wakeNotes({ mode: 'off', micGranted: false, modelsReady: false }), []);
   const visible = L.wakeNotes({ mode: 'visible', micGranted: false, modelsReady: false, notificationsAllowed: false });
@@ -267,6 +296,26 @@ ok("only the instance section's own message sizes its frame", () => {
   for (const bad of [null, 'x', { type: 'other', height: 10 }, { type: 'retinue-instance-settings', height: -1 }, { type: 'retinue-instance-settings' }]) {
     assert.equal(L.instanceHeight(bad), null);
   }
+});
+
+ok('the page has every element its script reaches for, and the script names every element that starts hidden', () => {
+  // page.mjs wires its elements up as it loads: one that index.html lacks stops the whole page
+  // there, and a card that starts hidden is never shown once the script no longer names it. A
+  // merge of two changes to the page that takes one side leaves either; nothing else loads page.mjs.
+  const asset = (name) => readFileSync(new URL(`../../main/assets/settings/${name}`, import.meta.url), 'utf8');
+  const page = asset('page.mjs');
+  const html = asset('index.html');
+  const selectors = [...new Set(page.match(/\[data-[a-z-]+(?:="[^"]*")?\]|input\[name="[^"]+"\]/g))];
+  assert.ok(selectors.includes('[data-close]') && selectors.includes('input[name="wake-mode"]'), 'the selectors are found');
+  const missing = selectors.filter((sel) => {
+    const [, attr, value] = /\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(sel);
+    return !(value === undefined ? new RegExp(`\\s${attr}[\\s=>]`).test(html) : html.includes(` ${attr}="${value}"`));
+  });
+  assert.deepEqual(missing, []);
+  const hidden = html.match(/<[a-z0-9]+\b[^>]*\shidden(?=[\s>])[^>]*>/g);
+  assert.ok(hidden.some((tag) => tag.includes('data-dialog')), 'the elements that start hidden are found');
+  const named = (tag) => (tag.match(/\sdata-[a-z-]+/g) || []).some((a) => page.includes(`[${a.trim()}]`) || page.includes(`[${a.trim()}=`));
+  assert.deepEqual(hidden.filter((tag) => !named(tag)), []);
 });
 
 console.log(`${passed} settings page checks passed`);

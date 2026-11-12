@@ -171,6 +171,18 @@ function renderHome() {
   $('[data-home-request]').textContent = isDefault ? 'Change home app' : 'Set as default home app';
 }
 
+// A note of a card (logic.mjs), with the button that fixes it where the app has one.
+function noteBox(n) {
+  const box = el('div', 'notes');
+  box.append(el('p', '', n.text));
+  if (n.action) {
+    const row = el('div', 'actions');
+    row.append(button(n.label, () => send({ type: n.action })));
+    box.append(row);
+  }
+  return box;
+}
+
 function renderSplit() {
   const s = state.split || {};
   $('[data-split-launch]').checked = !!s.launch;
@@ -185,16 +197,7 @@ function renderWake() {
   $('[data-wake-also]').textContent = also;
   $('[data-wake-also]').hidden = !also;
   const notes = $('[data-wake-notes]');
-  notes.replaceChildren(...L.wakeNotes(w).map((n) => {
-    const box = el('div', 'notes');
-    box.append(el('p', '', n.text));
-    if (n.action) {
-      const row = el('div', 'actions');
-      row.append(button(n.label, () => send({ type: n.action })));
-      box.append(row);
-    }
-    return box;
-  }));
+  notes.replaceChildren(...L.wakeNotes(w).map(noteBox));
   const threshold = $('[data-wake-threshold]');
   if (document.activeElement !== threshold && Number.isFinite(w.threshold)) threshold.value = String(w.threshold);
   $('[data-wake-threshold-value]').textContent = Number(threshold.value).toFixed(2);
@@ -261,7 +264,7 @@ function renderUpdates() {
 
 function renderEndpointSection() {
   const cur = state.current;
-  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-wake-card]', '[data-notifications]']) $(sel).hidden = !cur;
+  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-wake-card]', '[data-calls]', '[data-notifications]']) $(sel).hidden = !cur;
   if (!cur) return;
   $('[data-endpoint-name]').textContent = cur.label;
   $('[data-wake-name]').textContent = cur.label;
@@ -276,6 +279,12 @@ function renderEndpointSection() {
   $('[data-health-line]').textContent = ev || L.describeHealthSync(st);
   $('[data-health-auto]').checked = !!st.auto_on_resume;
   setValue($('[data-health-interval]'), String(st.min_interval_minutes || 5));
+  // The switch is the current endpoint's own; the permission and telephony are the phone's.
+  const c = state.calls || {};
+  $('[data-calls-unavailable]').hidden = !!c.telephony;
+  $('[data-calls-available]').hidden = !c.telephony;
+  $('[data-calls-direct]').checked = !!c.direct;
+  $('[data-calls-notes]').replaceChildren(...L.callNotes(c).map(noteBox));
 }
 
 // The instance's own section: its settings-instance.html in a frame, shown once
@@ -605,6 +614,8 @@ function onHealthEvent(d) {
   }
   $('[data-health-line]').textContent = text;
 }
+
+$('[data-calls-direct]').addEventListener('change', (e) => send({ type: 'calls.direct', on: e.target.checked }));
 
 // ── Start ────────────────────────────────────────────────────────────────────
 

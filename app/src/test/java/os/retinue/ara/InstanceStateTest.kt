@@ -15,6 +15,7 @@ import os.retinue.ara.data.EndpointSet
 import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.data.InstanceState
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.settings.CallsInfo
 import os.retinue.ara.settings.SettingsAction
 import os.retinue.ara.settings.SettingsMessages
 import os.retinue.ara.settings.SettingsPageState
@@ -223,7 +224,12 @@ class InstanceStateTest {
             """{"type":"endpoint.save","request":"r1","draft":{"id":"club","isNew":false,"baseUrl":"https://club.example","healthUpload":false,"background":true}}""",
         ) as SettingsAction.SaveEndpoint
         assertTrue(parsed.draft.background)
-        assertTrue(SettingsMessages.toEndpointDraft(parsed.draft, club).background)
+        val draft = SettingsMessages.toEndpointDraft(parsed.draft, club)
+        assertTrue(draft.background)
+        // And so it is stored (ShellViewModel.saveEndpoint): club works in the background, its wake phrase as it was.
+        val saved = draft.toEndpoint(club, sealed = null)
+        assertEquals(club.copy(background = true), saved)
+        assertEquals(InstanceState.Background, settings.endpointSet.upsert(saved).stateOf(saved))
         // A page that does not know the switch sends none: off.
         val older = SettingsMessages.parse(
             """{"type":"endpoint.save","request":"r1","draft":{"id":"club","isNew":false,"baseUrl":"https://club.example"}}""",
@@ -244,6 +250,7 @@ class InstanceStateTest {
             isDefaultHome = false,
             splitLaunch = false,
             keepSplitInRecents = false,
+            calls = CallsInfo(direct = false, permissionGranted = false, telephony = true),
             wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, emptyList(), false, null, null),
             updates = UpdatesInfo("Installed: a local build.", false, "nightly", "Not checked yet.", false, null, null, false, true, true),
             device = emptyMap(),
@@ -274,7 +281,8 @@ class InstanceStateTest {
         val wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, emptyList(), false, null, null, alsoListening = listOf("Work"))
         val settings = ShellSettings(endpoints = listOf(home), currentEndpointId = "home")
         val json = SettingsPageState(
-            "2.0", SettingsPageState.endpointRows(settings), null, null, JsonObject(emptyMap()), false, false, false, wake,
+            "2.0", SettingsPageState.endpointRows(settings), null, null, JsonObject(emptyMap()), false, false, false,
+            CallsInfo(direct = false, permissionGranted = false, telephony = true), wake,
             UpdatesInfo("i", false, "nightly", "s", false, null, null, false, true, true), emptyMap(),
         ).toJson()
         assertEquals("Work", json["wake"]!!.jsonObject["alsoListening"]!!.jsonArray.single().jsonPrimitive.content)

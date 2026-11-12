@@ -10,6 +10,7 @@ import os.retinue.ara.data.EndpointSet
 import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.settings.wakeModelRows
+import os.retinue.ara.ui.EndpointDraft
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelCatalog
 import os.retinue.ara.wake.WakeModelEntry
@@ -233,10 +234,14 @@ class WakeModelChoiceTest {
         // The first write of the list stores every endpoint's wake, model included.
         val migrated = Phone(listOf(bare("a"), bare("b")), always, 0.7f, earlierPhrase = jarvis).started().written()
         assertEquals(listOf<String?>(jarvis, jarvis), migrated.endpoints.map { it.wake?.modelId })
-        // "Stop using" for one of them, and a new endpoint: off, without a model.
+        // "Stop using" for one of them, and a new endpoint as the editor's save stores it
+        // (EndpointDraft.toEndpoint): off, without a model, whatever the phone's earlier keys still say.
+        val added = EndpointDraft(
+            id = "new", isNew = true, baseUrl = "https://new.example", certificateAlias = null, username = "", password = "",
+            hasStoredPassword = false, forgetPassword = false, healthUpload = false, name = null,
+        ).toEndpoint(existing = null, sealed = null)
         val changed = migrated.written { list ->
-            list.map { e -> if (e.id == "a") e.copy(wake = e.wake!!.copy(modelId = null)) else e } +
-                Endpoint("new", "https://new.example", wake = EndpointWake.OFF)
+            list.map { e -> if (e.id == "a") e.copy(wake = e.wake!!.copy(modelId = null)) else e } + added
         }
         assertEquals(listOf(null, jarvis, null), changed.models())
         assertEquals(changed, changed.started())
