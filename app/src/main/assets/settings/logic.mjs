@@ -2,9 +2,9 @@
 // be saved as and what closing the editor does with it, what a certificate
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
-// health line, and the wake phrase's notes. Kept free of DOM work, so
-// app/src/test/js/settings-page.test.mjs runs it under Node. The page itself
-// is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
+// health line, and the notes of the phone calls and the wake phrase. Kept free
+// of DOM work, so app/src/test/js/settings-page.test.mjs runs it under Node.
+// The page itself is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
 // SettingsMessages, SettingsState).
 
 // ── The dashboard's per-device preferences ──────────────────────────────────
@@ -237,6 +237,20 @@ export function describeHealthSyncEvent(d) {
     return `Health data update skipped${why ? `: ${why}` : ''}.`;
   }
   return '';
+}
+
+// ── Phone calls ─────────────────────────────────────────────────────────────
+// The card is the current endpoint's: `direct` is that endpoint's own switch
+// (not part of an endpoint draft: saving one leaves it alone), the permission
+// is the phone's. What stands between the switch and a call placed without a
+// tap, with the action that fixes it: the app asks again, or opens Android's
+// page for Ara once Android no longer asks.
+export function callNotes(c) {
+  if (!c || !c.direct || c.permissionGranted) return [];
+  return [{
+    text: 'Android has not allowed Ara to make calls, so calls open the dialer.',
+    action: 'calls.permission', label: 'Allow phone calls',
+  }];
 }
 
 // ── Wake phrase ─────────────────────────────────────────────────────────────

@@ -47,6 +47,8 @@ internal fun settingsPageState(
     page: PageState,
     health: HealthSyncStatus,
     isDefaultHome: Boolean,
+    callsGranted: Boolean,
+    telephony: Boolean,
     wake: WakeConditions,
     update: UpdateState,
     installAllowed: Boolean,
@@ -66,6 +68,7 @@ internal fun settingsPageState(
     isDefaultHome = isDefaultHome,
     splitLaunch = settings.splitLaunch,
     keepSplitInRecents = settings.keepSplitInRecents,
+    calls = SettingsPageState.callsInfo(settings, permissionGranted = callsGranted, telephony = telephony),
     wake = WakeInfo(
         mode = settings.wakeMode.key,
         threshold = settings.wakeThreshold,

@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
@@ -113,6 +115,8 @@ import os.retinue.ara.settings.SettingsAction
 import os.retinue.ara.settings.SettingsMessages
 import os.retinue.ara.settings.SettingsPageHost
 import os.retinue.ara.settings.SettingsWebView
+import os.retinue.ara.shell.CallLogic
+import os.retinue.ara.shell.CallOutcome
 import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
@@ -229,6 +233,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private var firstRunEditorShown = false
     private var isDefaultHome by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
+    private var callsGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
     private var notificationsAllowed by mutableStateOf(true)
@@ -318,6 +323,20 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
     }
 
+    // Direct calls: asked for when the user turns them on; without it calls open the dialer.
+    private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        callsGranted = granted
+        // Android no longer asks ("don't ask again"): only its page for Ara can allow calls now.
+        val notAsked = callSettingsIfNotAsked && !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callSettingsIfNotAsked = false
+        if (!granted && notAsked) {
+            startSystemPage(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
+    }
+
+    /** The settings page's own request for the call permission, made while Android may have stopped asking. */
+    private var callSettingsIfNotAsked = false
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -373,6 +392,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         page.open(this)
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
 
         onBackPressedDispatcher.addCallback(this, backCallback)
 
@@ -735,6 +755,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             page = page.state,
             health = health,
             isDefaultHome = isDefaultHome,
+            callsGranted = callsGranted,
+            telephony = hasTelephony(),
             wake = WakeConditions(
                 status = wakeStatus,
                 micGranted = micGranted,
@@ -795,6 +817,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             SettingsAction.HomeRequest -> requestHome()
             is SettingsAction.SplitLaunch -> viewModel.setSplitLaunch(action.on)
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
+            is SettingsAction.DirectCalls -> setDirectCalls(action.on)
+            SettingsAction.CallsPermission -> requestCallPermission()
             SettingsAction.LauncherEdit -> showLauncherEditor = true
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
@@ -866,6 +890,28 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         viewModel.setWakeMode(mode)
     }
 
+    /**
+     * The current endpoint's call switch, and Android's permission for it when
+     * it goes on (without it calls open the dialer).
+     */
+    private fun setDirectCalls(on: Boolean) {
+        val endpoint = settings.current ?: return
+        viewModel.setDirectCalls(endpoint.id, on)
+        if (on && !hasCallPermission()) callPermission.launch(Manifest.permission.CALL_PHONE)
+    }
+
+    /**
+     * The settings page's button for a missing permission. Android stops
+     * asking after two refusals and answers no by itself: then (no rationale
+     * to show before or after the request) its page for Ara opens instead.
+     */
+    private fun requestCallPermission() {
+        callsGranted = hasCallPermission()
+        if (callsGranted) return
+        callSettingsIfNotAsked = !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callPermission.launch(Manifest.permission.CALL_PHONE)
+    }
+
     private fun pickPhraseModel() {
         try {
             phraseModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
@@ -920,6 +966,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         super.onResume()
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
         overlayAllowed = WakeAlert.canDrawOverlays(this)
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -1654,7 +1701,63 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
+            is WebMessage.PlaceCall -> placeCall(message.number)
         }
+    }
+
+    /**
+     * The page's `placeCall`: [CallLogic] decides, this starts the call or the
+     * dialer and tells the page what came of it (a `call` event). The switch
+     * that counts is the one of the endpoint the page belongs to, as
+     * [ShellPage] holds it for both windows: the settings the page and its
+     * bridge were set up with, not the store's, which may be a step ahead.
+     * The bridge passes on only what that endpoint's origin sends, so once
+     * the shell has moved to another server, the page left behind no longer
+     * gets here.
+     */
+    private fun placeCall(raw: String) {
+        val number = CallLogic.normalize(raw)
+        val outcome = CallLogic.decide(
+            number = number,
+            voiceEngaged = WakeRuntime.voiceActive.value,
+            enabled = CallLogic.directCalls(settings.endpointSet, page.loadedEndpointId),
+            permissionGranted = hasCallPermission(),
+            isEmergency = number != null && isEmergencyNumber(number),
+            hasTelephony = hasTelephony(),
+        )
+        val action = when (outcome) {
+            is CallOutcome.Call -> Intent.ACTION_CALL to outcome.number
+            is CallOutcome.Dial -> Intent.ACTION_DIAL to outcome.number
+            is CallOutcome.Refused -> null
+        }
+        var failed = false
+        if (action != null) {
+            try {
+                startActivity(
+                    Intent(action.first, Uri.fromParts("tel", action.second, null)).apply {
+                        // The user asked by voice and may not be holding the phone: the call starts on
+                        // speaker. Telecom reads the extra from ACTION_CALL; the dialer ignores it.
+                        if (action.first == Intent.ACTION_CALL) {
+                            putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                // No dialer, a SecurityException for a permission revoked meanwhile …: never crash the shell.
+                Log.w(TAG, "could not start ${action.first}", e)
+                failed = true
+            }
+        }
+        bridge.run(ShellMessages.callEvent(outcome, failed))
+    }
+
+    private fun isEmergencyNumber(number: String): Boolean = try {
+        // No telephony service counts as a failed check, like one that throws.
+        getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number) ?: true
+    } catch (e: Exception) {
+        // It refused to answer: the number counts as one, so it is only dialled.
+        Log.w(TAG, "emergency number check failed", e)
+        true
     }
 
     /**
@@ -1773,6 +1876,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             webView?.loadUrl(url)
         }
     }
+
+    private fun hasTelephony() = packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+
+    private fun hasCallPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 
     private fun hasMic() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

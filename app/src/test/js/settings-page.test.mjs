@@ -1,7 +1,7 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
 // endpoint draft rules and what closing the editor does, the certificate
 // import's notes, the per-device values with the dashboard's bounds, the
-// health and wake lines, and the instance frame's message. No dependencies:
+// health, phone call and wake lines, and the instance frame's message. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
 import assert from 'node:assert/strict';
 import * as L from '../../main/assets/settings/logic.mjs';
@@ -162,6 +162,32 @@ ok('a phrase model is downloaded before it can be used, and stays listed after a
   assert.equal(L.wakeActiveLine({ models: [jarvis, { ...mine, active: true }] }), 'In use: hey_retinue.onnx');
   assert.equal(L.wakeActiveLine({ models: [jarvis] }), 'No phrase model in use.');
   assert.equal(L.wakeActiveLine(undefined), 'No phrase model in use.');
+});
+
+ok('direct calls say when Android has not allowed them, for the endpoint shown', () => {
+  // `direct` is the current endpoint's own switch (SettingsPageState.callsInfo). Off for it,
+  // the missing permission stands in nobody's way, whatever another endpoint has switched on.
+  for (const quiet of [undefined, null, {}, { direct: false, permissionGranted: false }, { direct: true, permissionGranted: true }]) {
+    assert.deepEqual(L.callNotes(quiet), []);
+  }
+  const notes = L.callNotes({ direct: true, permissionGranted: false, telephony: true });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].text, /calls open the dialer/);
+  assert.equal(notes[0].action, 'calls.permission');
+});
+
+ok("the call switch is its card's: an endpoint's draft neither carries nor changes it", () => {
+  // The list's rows have no call switch; one that slipped into a row would still not reach
+  // the editor, so a save sends none and the app keeps the endpoint's own (EndpointDraft.toEndpoint).
+  const row = { ...home, directCalls: true };
+  const d = L.draftOf(row);
+  assert.equal('directCalls' in d, false);
+  assert.equal('directCalls' in L.newDraft('n'), false);
+  d.healthUpload = false;
+  assert.deepEqual(L.onClose(d), { action: 'save' });
+  assert.deepEqual(Object.keys(L.draftMessage(d)).sort(), [
+    'baseUrl', 'certificateAlias', 'forgetPassword', 'healthUpload', 'id', 'isNew', 'password', 'username',
+  ]);
 });
 
 ok('the wake notes follow the mode, with the action that fixes each', () => {
