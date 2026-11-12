@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.update.UpdateRuntime
+import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeRuntime
 import os.retinue.ara.wake.WakeTargets
 
@@ -27,8 +28,16 @@ class AraApp : Application() {
         WakeRuntime.init(this)
         UpdateRuntime.init(this)
         HealthSyncRuntime.init(this)
+        val store = AraStore(this)
+        // The one phrase model of earlier builds joins the library first, and stays the one in use.
+        val migrated = WakeModelFiles.migrateLegacy(this)
         scope.launch {
-            AraStore(this@AraApp).settings
+            if (migrated != null) {
+                // The earlier file goes only once the choice is stored; a failure here must not stop the settings below.
+                runCatching { store.adoptWakeModelId(migrated) }
+                    .onSuccess { WakeModelFiles.legacyAdopted(this@AraApp) }
+            }
+            store.settings
                 // Each instance shown or working in the background listens for its own phrase.
                 .map { WakeTargets.of(it) }
                 .distinctUntilChanged()

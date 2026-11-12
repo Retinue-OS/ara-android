@@ -12,8 +12,6 @@ data class ShellSettings(
     val endpoints: List<Endpoint> = emptyList(),
     /** The endpoint the shell shows (see [EndpointSet.current]). */
     val currentEndpointId: String? = null,
-    /** Where "Download phrase model" fetches the keyword model from. */
-    val wakeModelUrl: String = DEFAULT_WAKE_MODEL_URL,
     /** Check the update channel on its own and install what it offers (see UpdateRuntime). Off until the user turns it on. */
     val autoUpdate: Boolean = false,
     /** Which builds count as updates. */
@@ -52,11 +50,5 @@ data class ShellSettings(
 
     companion object {
         const val DEFAULT_WAKE_THRESHOLD = EndpointWake.DEFAULT_THRESHOLD
-        const val OWW_RELEASE = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
-
-        /** A pre-trained phrase for testing until "Hey Retinue" is trained (plan §5). */
-        const val DEFAULT_WAKE_MODEL_URL = "$OWW_RELEASE/hey_jarvis_v0.1.onnx"
-        const val MELSPECTROGRAM_URL = "$OWW_RELEASE/melspectrogram.onnx"
-        const val EMBEDDING_URL = "$OWW_RELEASE/embedding_model.onnx"
     }
 }

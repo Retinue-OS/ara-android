@@ -11,6 +11,7 @@ import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.InstanceState
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.wake.WakeModelEntry
 
 /** One endpoint in the page's list. */
 data class EndpointRow(
@@ -50,6 +51,20 @@ data class CurrentEndpoint(
 /** Why the dashboard did not load, for the banner at the top. */
 data class FailureInfo(val reason: String, val url: String?, val consoleErrors: List<String>)
 
+/**
+ * Direct calls by voice (`RetinueShell.placeCall`, see shell/CallLogic): the
+ * current endpoint's switch, and what the phone allows whichever endpoint
+ * is shown.
+ */
+data class CallsInfo(
+    /** The current endpoint's switch: a call its page asks for in a voice conversation is placed without a tap. */
+    val direct: Boolean,
+    /** Android lets Ara place calls (`CALL_PHONE`); without it calls open the dialer. */
+    val permissionGranted: Boolean,
+    /** The phone can make calls at all. */
+    val telephony: Boolean,
+)
+
 /** The wake phrase card: the instance shown, its phrase on this phone, and what the phone needs for it. */
 data class WakeInfo(
     /** [os.retinue.ara.wake.WakeMode.key], of the instance shown. */
@@ -63,13 +78,43 @@ data class WakeInfo(
     val overlayAllowed: Boolean,
     val melspectrogram: Boolean,
     val embedding: Boolean,
-    val phrase: Boolean,
-    val modelUrl: String,
+    /** The phrase models of the list, in its order. */
+    val models: List<WakeModelRow>,
     val busy: Boolean,
+    /** The model a job works on, while [busy]. */
+    val busyId: String?,
     val message: String?,
     /** The other instances whose phrase is listened for now (labels): they work in the background. */
     val alsoListening: List<String> = emptyList(),
 )
+
+/** One phrase model of the wake phrase's list. */
+data class WakeModelRow(
+    val id: String,
+    val name: String,
+    /** [os.retinue.ara.wake.WakeModelSource.key]. */
+    val source: String,
+    /** Where it downloads from (catalog and URL models). */
+    val url: String?,
+    val downloaded: Boolean,
+    /** The model listened for. */
+    val active: Boolean,
+    /** The user's own: taken off the list by removing it. */
+    val removable: Boolean,
+)
+
+/** The list's rows; [activeId] is the model listened for (its row is active only while downloaded). */
+fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeModelRow> = library.map { e ->
+    WakeModelRow(
+        id = e.model.id,
+        name = e.model.name,
+        source = e.model.source.key,
+        url = e.model.url,
+        downloaded = e.downloaded,
+        active = e.downloaded && e.model.id == activeId,
+        removable = e.model.removable,
+    )
+}
 
 data class UpdatesInfo(
     val installed: String,
@@ -103,6 +148,8 @@ data class SettingsPageState(
     val isDefaultHome: Boolean,
     val splitLaunch: Boolean,
     val keepSplitInRecents: Boolean,
+    /** Direct calls for the current endpoint ([callsInfo]). */
+    val calls: CallsInfo,
     val wake: WakeInfo,
     val updates: UpdatesInfo,
     /** The dashboard's per-device preferences (DeviceWebSettings). */
@@ -168,6 +215,14 @@ data class SettingsPageState(
             },
         )
         put(
+            "calls",
+            buildJsonObject {
+                put("direct", calls.direct)
+                put("permissionGranted", calls.permissionGranted)
+                put("telephony", calls.telephony)
+            },
+        )
+        put(
             "wake",
             buildJsonObject {
                 put("mode", wake.mode)
@@ -180,9 +235,26 @@ data class SettingsPageState(
                 put("overlayAllowed", wake.overlayAllowed)
                 put("melspectrogram", wake.melspectrogram)
                 put("embedding", wake.embedding)
-                put("phrase", wake.phrase)
-                put("modelUrl", wake.modelUrl)
+                put(
+                    "models",
+                    buildJsonArray {
+                        wake.models.forEach { m ->
+                            add(
+                                buildJsonObject {
+                                    put("id", m.id)
+                                    put("name", m.name)
+                                    put("source", m.source)
+                                    put("url", m.url.json())
+                                    put("downloaded", m.downloaded)
+                                    put("active", m.active)
+                                    put("removable", m.removable)
+                                },
+                            )
+                        }
+                    },
+                )
                 put("busy", wake.busy)
+                put("busyId", wake.busyId.json())
                 put("message", wake.message.json())
                 put("alsoListening", buildJsonArray { wake.alsoListening.forEach { add(JsonPrimitive(it)) } })
             },
@@ -256,5 +328,15 @@ data class SettingsPageState(
          */
         fun frameKey(e: Endpoint): String =
             listOf(e.id, e.base, e.certificateAlias, e.username, e.secret).hashCode().toUInt().toString(16)
+
+        /**
+         * The phone calls card: the switch of the endpoint shown, its own and
+         * no other's (off with none set up), beside what holds for the phone.
+         */
+        fun callsInfo(settings: ShellSettings, permissionGranted: Boolean, telephony: Boolean) = CallsInfo(
+            direct = settings.current?.directCalls == true,
+            permissionGranted = permissionGranted,
+            telephony = telephony,
+        )
     }
 }

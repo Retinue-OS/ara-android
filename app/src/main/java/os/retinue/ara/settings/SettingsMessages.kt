@@ -63,6 +63,15 @@ sealed class SettingsAction {
     data class SplitLaunch(val on: Boolean) : SettingsAction()
     data class SplitRecents(val on: Boolean) : SettingsAction()
 
+    /**
+     * The current endpoint's call switch: calls its page asks for by voice are
+     * placed without a tap (the app asks for the permission when turned on).
+     */
+    data class DirectCalls(val on: Boolean) : SettingsAction()
+
+    /** Ask for Android's permission to place calls again, or show where it is given once Android no longer asks. */
+    data object CallsPermission : SettingsAction()
+
     /** The launcher bar's own editor (native: it is the bar's). */
     data object LauncherEdit : SettingsAction()
 
@@ -71,8 +80,14 @@ sealed class SettingsAction {
     data class WakeModeSet(val mode: WakeMode) : SettingsAction()
     data class WakeThreshold(val value: Float) : SettingsAction()
     data object WakeFeatures : SettingsAction()
+    /** Add a phrase model from a URL to the list (and use it). */
     data class WakePhrase(val url: String) : SettingsAction()
+    /** Add a picked file to the list (and use it). */
     data object WakePick : SettingsAction()
+    data class WakeModelDownload(val id: String) : SettingsAction()
+    /** Listen for model [id]; null: for none. */
+    data class WakeModelUse(val id: String?) : SettingsAction()
+    data class WakeModelRemove(val id: String) : SettingsAction()
     data object WakeFullScreen : SettingsAction()
     data object WakeOverlay : SettingsAction()
     data object WakeNotifications : SettingsAction()
@@ -152,6 +167,8 @@ object SettingsMessages {
             "home.request" -> SettingsAction.HomeRequest
             "split.launch" -> SettingsAction.SplitLaunch(obj.bool("on") ?: return null)
             "split.recents" -> SettingsAction.SplitRecents(obj.bool("on") ?: return null)
+            "calls.direct" -> SettingsAction.DirectCalls(obj.bool("on") ?: return null)
+            "calls.permission" -> SettingsAction.CallsPermission
             "launcher.edit" -> SettingsAction.LauncherEdit
             "launcher.usageAccess" -> SettingsAction.LauncherUsageAccess
             "wake.mode" -> {
@@ -166,6 +183,10 @@ object SettingsMessages {
             "wake.features" -> SettingsAction.WakeFeatures
             "wake.phrase" -> SettingsAction.WakePhrase(obj.text("url", MAX_URL)?.takeIf { it.isNotBlank() } ?: return null)
             "wake.pick" -> SettingsAction.WakePick
+            "wake.model.download" -> SettingsAction.WakeModelDownload(obj.text("id", MAX_TEXT)?.takeIf { it.isNotBlank() } ?: return null)
+            "wake.model.use" -> SettingsAction.WakeModelUse(obj.text("id", MAX_TEXT)?.takeIf { it.isNotBlank() } ?: return null)
+            "wake.model.none" -> SettingsAction.WakeModelUse(null)
+            "wake.model.remove" -> SettingsAction.WakeModelRemove(obj.text("id", MAX_TEXT)?.takeIf { it.isNotBlank() } ?: return null)
             "wake.fullScreen" -> SettingsAction.WakeFullScreen
             "wake.overlay" -> SettingsAction.WakeOverlay
             "wake.notifications" -> SettingsAction.WakeNotifications

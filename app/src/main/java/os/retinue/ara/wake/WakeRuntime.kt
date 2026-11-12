@@ -48,7 +48,7 @@ object WakeRuntime {
 
     private const val TAG = "WakeRuntime"
 
-    /** The wake intent's token extra (see [consumePendingWake]). */
+    /** The wake intent's token extra (see [takePendingWake]). */
     const val EXTRA_WAKE_TOKEN = "os.retinue.ara.extra.WAKE_TOKEN"
 
     private lateinit var app: Context
@@ -248,7 +248,7 @@ object WakeRuntime {
         val now = SystemClock.elapsedRealtime()
 
         val mic = micGranted()
-        val featuresReady = WakeModelFiles.status(app).featuresReady
+        val featuresReady = WakeModelFiles.status(app, null).featuresReady
         // The instances that could listen: those with their phrase model on the device.
         val phrases = if (!featuresReady) emptyMap() else targets.mapNotNull { t ->
             WakeModelFiles.phraseFileFor(app, t.modelId)?.let { t to WakePhrase(t.endpointId, it, t.threshold) }

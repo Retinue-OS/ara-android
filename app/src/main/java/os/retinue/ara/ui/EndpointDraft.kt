@@ -1,14 +1,16 @@
 package os.retinue.ara.ui
 
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.shell.ShellUrls
 
 /**
  * An endpoint as the settings page's editor sends it for saving (see
  * SettingsMessages.toEndpointDraft), checked here before ShellViewModel.saveEndpoint
- * turns it into an [os.retinue.ara.data.Endpoint]: the page decides what
- * closing its editor does, the app what it stores. The password is the one
- * field that is not round-tripped: a stored one never goes to the page, a
- * typed one replaces it, an empty field keeps it unless [forgetPassword].
+ * stores it as an [Endpoint] ([toEndpoint]): the page decides what closing
+ * its editor does, the app what it stores. The password is the one field
+ * that is not round-tripped: a stored one never goes to the page, a typed
+ * one replaces it, an empty field keeps it unless [forgetPassword].
  *
  * Framework-free and unit-tested.
  */
@@ -59,4 +61,37 @@ data class EndpointDraft(
 
     /** A usable https URL, and a user name and a password only together. */
     val canSave: Boolean get() = problem == null
+
+    /** The user name as it is stored: trimmed, null for none. */
+    val user: String? get() = username.trim().takeIf { it.isNotEmpty() }
+
+    /**
+     * The endpoint this draft is stored as: [existing], the one stored under
+     * its id (null for a new endpoint), with the editor's fields replaced.
+     * [sealed] is the password typed now, sealed (CredentialVault); without
+     * one the stored password stays, unless the draft forgets it or has no
+     * user name. A changed address drops the fetched name, the other
+     * server's. What else the editor does not hold stays the endpoint's as
+     * it is stored: its call switch (off for a new endpoint).
+     */
+    fun toEndpoint(existing: Endpoint?, sealed: String?): Endpoint {
+        val sameAddress = existing != null && existing.base == base
+        // A copy, so that a save cannot reset what the editor does not hold (the
+        // wake phrase among it: set on the settings page, off for a new endpoint).
+        return (existing ?: Endpoint(id, baseUrl, wake = EndpointWake.OFF)).copy(
+            baseUrl = baseUrl.trim(),
+            certificateAlias = certificateAlias,
+            username = user,
+            secret = when {
+                user == null -> null
+                sealed != null -> sealed
+                forgetPassword -> null
+                else -> existing?.secret
+            },
+            healthUpload = healthUpload,
+            name = if (sameAddress) existing?.name else null,
+            nameFetchedAt = if (sameAddress) existing?.nameFetchedAt ?: 0L else 0L,
+            background = background,
+        )
+    }
 }

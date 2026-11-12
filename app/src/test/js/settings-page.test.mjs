@@ -1,7 +1,7 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
 // endpoint draft rules and what closing the editor does, the certificate
 // import's notes, the per-device values with the dashboard's bounds, the
-// health and wake lines, and the instance frame's message. No dependencies:
+// health, phone call and wake lines, and the instance frame's message. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
 import assert from 'node:assert/strict';
 import * as L from '../../main/assets/settings/logic.mjs';
@@ -130,14 +130,78 @@ ok('health lines mirror the dashboard', () => {
   assert.equal(L.describeHealthSyncEvent({ state: 'other' }), '');
 });
 
+ok('a phrase model is downloaded before it can be used, and stays listed after another is chosen', () => {
+  const jarvis = { id: 'oww:hey_jarvis_v0.1', name: 'Hey Jarvis', source: 'builtin', url: 'https://x/hey_jarvis.onnx', downloaded: false, active: false, removable: false };
+  const types = (r) => r.actions.map((a) => a.msg.type);
+  let row = L.wakeModelRow(jarvis, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.download'], 'no Use before the download');
+  assert.equal(row.detail, 'openWakeWord · not downloaded');
+  row = L.wakeModelRow({ ...jarvis, downloaded: true }, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.use', 'wake.model.remove']);
+  assert.equal(row.actions[0].label, 'Use this model');
+  assert.equal(row.actions[1].label, 'Delete download');
+  row = L.wakeModelRow({ ...jarvis, downloaded: true, active: true }, { busy: false });
+  assert.ok(row.active);
+  assert.deepEqual(types(row), ['wake.model.none'], 'the model in use is not deleted from under the listener');
+
+  const mine = { id: 'user:1', name: 'hey_retinue.onnx', source: 'file', url: null, downloaded: true, active: false, removable: true };
+  row = L.wakeModelRow(mine, { busy: false });
+  assert.equal(row.name, 'hey_retinue.onnx', 'an upload is listed under its file name');
+  assert.deepEqual(types(row), ['wake.model.use', 'wake.model.remove']);
+  assert.ok(row.actions[1].confirm && row.actions[1].danger);
+  assert.equal(row.detail, 'Your file');
+
+  // While a job runs, choosing stays possible; downloads and removals wait.
+  row = L.wakeModelRow(jarvis, { busy: true, busyId: jarvis.id });
+  assert.equal(row.detail, 'openWakeWord · downloading…');
+  assert.ok(row.actions[0].disabled);
+  row = L.wakeModelRow(mine, { busy: true, busyId: 'other' });
+  assert.ok(!row.actions[0].disabled);
+  assert.ok(row.actions[1].disabled);
+
+  assert.equal(L.wakeActiveLine({ models: [jarvis, { ...mine, active: true }] }), 'In use: hey_retinue.onnx');
+  assert.equal(L.wakeActiveLine({ models: [jarvis] }), 'No phrase model in use.');
+  assert.equal(L.wakeActiveLine(undefined), 'No phrase model in use.');
+});
+
+ok('direct calls say when Android has not allowed them, for the endpoint shown', () => {
+  // `direct` is the current endpoint's own switch (SettingsPageState.callsInfo). Off for it,
+  // the missing permission stands in nobody's way, whatever another endpoint has switched on.
+  for (const quiet of [undefined, null, {}, { direct: false, permissionGranted: false }, { direct: true, permissionGranted: true }]) {
+    assert.deepEqual(L.callNotes(quiet), []);
+  }
+  const notes = L.callNotes({ direct: true, permissionGranted: false, telephony: true });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].text, /calls open the dialer/);
+  assert.equal(notes[0].action, 'calls.permission');
+});
+
+ok("the call switch is its card's: an endpoint's draft neither carries nor changes it", () => {
+  // The list's rows have no call switch; one that slipped into a row would still not reach
+  // the editor, so a save sends none and the app keeps the endpoint's own (EndpointDraft.toEndpoint).
+  const row = { ...home, directCalls: true };
+  const d = L.draftOf(row);
+  assert.equal('directCalls' in d, false);
+  assert.equal('directCalls' in L.newDraft('n'), false);
+  d.healthUpload = false;
+  assert.deepEqual(L.onClose(d), { action: 'save' });
+  assert.deepEqual(Object.keys(L.draftMessage(d)).sort(), [
+    'background', 'baseUrl', 'certificateAlias', 'forgetPassword', 'healthUpload', 'id', 'isNew', 'password', 'username',
+  ]);
+});
+
 ok('the wake notes follow the mode, with the action that fixes each', () => {
   assert.deepEqual(L.wakeNotes({ mode: 'off', micGranted: false, modelsReady: false }), []);
   const visible = L.wakeNotes({ mode: 'visible', micGranted: false, modelsReady: false, notificationsAllowed: false });
   assert.equal(visible.length, 2);
   assert.ok(visible.every((n) => !n.action), 'nothing to open for these');
+  assert.match(visible[1].text, /No phrase model is in use/);
+  const offline = L.wakeNotes({ mode: 'visible', micGranted: true, modelsReady: false, models: [{ id: 'user:1', active: true }] });
+  assert.match(offline[0].text, /feature models are missing/, 'a model in use is not reported as none');
   const always = L.wakeNotes({ mode: 'always', micGranted: true, modelsReady: true, notificationsAllowed: false, fullScreenAllowed: false, overlayAllowed: false });
   assert.deepEqual(always.map((n) => n.action), ['wake.notifications', 'wake.fullScreen', 'wake.overlay']);
-  assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false, phrase: true }), 'Melspectrogram: present · Embedding: missing · Phrase: present');
+  assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false }),
+    'Feature models: melspectrogram present · embedding missing. They are downloaded with the first phrase model.');
 });
 
 ok('every endpoint is shown, working in the background, or disabled', () => {

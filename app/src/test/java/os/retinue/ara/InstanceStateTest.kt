@@ -203,7 +203,8 @@ class InstanceStateTest {
             isDefaultHome = false,
             splitLaunch = false,
             keepSplitInRecents = false,
-            wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, true, "https://x/hey.onnx", false, null),
+            calls = SettingsPageState.callsInfo(settings, permissionGranted = false, telephony = true),
+            wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, emptyList(), false, null, null),
             updates = UpdatesInfo("Installed: a local build.", false, "nightly", "Not checked yet.", false, null, null, false, true, true),
             device = emptyMap(),
         ).toJson()
@@ -216,7 +217,7 @@ class InstanceStateTest {
     @Test
     fun theWakeCardsStatusIsTheShownInstancesNotTheDetectors() {
         fun conditions(status: WakeStatus, listening: Set<String>) =
-            WakeConditions(status, true, true, true, true, WakeModelStatus(true, true, true), false, null, listening)
+            WakeConditions(status, true, true, true, true, WakeModelStatus(true, true, true), emptyList(), false, null, null, listening)
         assertEquals(WakeStatus.Listening, shownWakeStatus(conditions(WakeStatus.Listening, setOf("home", "work")), "home", WakeMode.Always))
         // Only a background instance is listened for: the shown one is not.
         assertEquals(WakeStatus.Idle, shownWakeStatus(conditions(WakeStatus.Listening, setOf("work")), "home", WakeMode.WhileVisible))
@@ -230,10 +231,11 @@ class InstanceStateTest {
 
     @Test
     fun theWakeCardNamesTheOtherInstancesListenedFor() {
-        val wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, true, "u", false, null, alsoListening = listOf("Work"))
+        val wake = WakeInfo("always", 0.5f, "Listening.", true, true, true, true, true, true, true, emptyList(), false, null, null, alsoListening = listOf("Work"))
         val settings = ShellSettings(endpoints = listOf(home), currentEndpointId = "home")
         val json = SettingsPageState(
-            "2.0", SettingsPageState.endpointRows(settings), null, null, JsonObject(emptyMap()), false, false, false, wake,
+            "2.0", SettingsPageState.endpointRows(settings), null, null, JsonObject(emptyMap()), false, false, false,
+            SettingsPageState.callsInfo(settings, permissionGranted = false, telephony = true), wake,
             UpdatesInfo("i", false, "nightly", "s", false, null, null, false, true, true), emptyMap(),
         ).toJson()
         assertEquals("Work", json["wake"]!!.jsonObject["alsoListening"]!!.jsonArray.single().jsonPrimitive.content)

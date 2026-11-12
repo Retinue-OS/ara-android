@@ -46,7 +46,6 @@ class AraStore(context: Context) {
         ShellSettings(
             endpoints = endpoints.endpoints,
             currentEndpointId = endpoints.currentId,
-            wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
             splitLaunch = p[K.splitLaunch] ?: false,
@@ -119,6 +118,7 @@ class AraStore(context: Context) {
     private fun legacyWake(p: Preferences): EndpointWake = EndpointWake.of(
         WakeMode.fromKey(p[K.wakeMode]),
         p[K.wakeThreshold] ?: EndpointWake.DEFAULT_THRESHOLD,
+        p[K.wakeModel]?.takeIf { it.isNotBlank() },
     )
 
     /** The wake phrase of the endpoint [id] on this phone: [change] applied to what it has. */
@@ -126,7 +126,34 @@ class AraStore(context: Context) {
         updateEndpoints { set -> set.update(id) { e -> e.copy(wake = change(e.wake ?: EndpointWake.OFF)) } }
     }
 
-    suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
+    /** The phrase model the endpoint [id] listens for on this phone (null: none). */
+    suspend fun setEndpointWakeModel(id: String, modelId: String?) = updateEndpointWake(id) { it.copy(modelId = modelId) }
+
+    /** No endpoint listens for the model [modelId] any more (it was removed from the library). */
+    suspend fun clearWakeModel(modelId: String) {
+        updateEndpoints { set ->
+            EndpointSet(
+                set.endpoints.map { e -> e.wake?.takeIf { it.modelId == modelId }?.let { e.copy(wake = it.copy(modelId = null)) } ?: e },
+                set.currentId,
+            )
+        }
+    }
+
+    /**
+     * The earlier build's one phrase model, moved into the library as [id],
+     * stays the one in use: it becomes the device-wide model endpoints without
+     * their own wake setting start with, and the model of every stored
+     * endpoint wake that names none (none could be chosen per endpoint before).
+     */
+    suspend fun adoptWakeModelId(id: String) = edit { p ->
+        if (p[K.wakeModel] != null) return@edit
+        p[K.wakeModel] = id
+        val stored = EndpointCodec.decode(p[K.endpoints]) ?: return@edit
+        if (stored.none { it.wake?.let { w -> w.modelId == null } == true }) return@edit
+        p[K.endpoints] = EndpointCodec.encode(
+            stored.map { e -> e.wake?.takeIf { it.modelId == null }?.let { e.copy(wake = it.copy(modelId = id)) } ?: e },
+        )
+    }
 
     suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }
 
@@ -223,7 +250,8 @@ class AraStore(context: Context) {
         val currentEndpoint = stringPreferencesKey("current_endpoint")
         val wakeMode = stringPreferencesKey("wake_mode")
         val wakeThreshold = floatPreferencesKey("wake_threshold")
-        val wakeModelUrl = stringPreferencesKey("wake_model_url")
+        /** The phrase model of builds before per-instance wake phrases (now [EndpointWake.modelId], see legacyWake). */
+        val wakeModel = stringPreferencesKey("wake_model")
         val launcher = stringPreferencesKey("launcher_json")
         val launches = stringPreferencesKey("app_launches_json")
         val autoUpdate = booleanPreferencesKey("auto_update")

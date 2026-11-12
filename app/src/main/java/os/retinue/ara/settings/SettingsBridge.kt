@@ -14,7 +14,7 @@ import os.retinue.ara.shell.ShellUrls
  * main frame only. The instance section it embeds is another origin and gets
  * nothing. Unlike the dashboard's bridge, this page is the app's own, so it
  * may change what a dashboard page may only ask for: endpoints, their
- * certificates and passwords, the health switch.
+ * certificates and passwords, their health and call switches.
  *
  * The page says hello once loaded; the app answers through that hello's
  * reply proxy from then on: the whole state on every change ([pushState]),

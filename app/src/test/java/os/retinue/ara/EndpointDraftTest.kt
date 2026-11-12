@@ -5,13 +5,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.ui.EndpointDraft
 import os.retinue.ara.ui.EndpointDraft.Problem
 
 /**
- * What the app saves of the settings page's editor (see [EndpointDraft.problem]).
- * What closing the editor does is the page's (assets/settings/logic.mjs, tested
- * in app/src/test/js/settings-page.test.mjs).
+ * What the app saves of the settings page's editor (see [EndpointDraft.problem]
+ * and [EndpointDraft.toEndpoint]). What closing the editor does is the page's
+ * (assets/settings/logic.mjs, tested in app/src/test/js/settings-page.test.mjs).
  */
 class EndpointDraftTest {
 
@@ -19,6 +21,12 @@ class EndpointDraftTest {
     private val home = EndpointDraft(
         id = "home", isNew = false, baseUrl = "https://agents.example.com", certificateAlias = "ara-phone",
         username = "reto", password = "", hasStoredPassword = true, forgetPassword = false, healthUpload = true, name = "Retinue",
+    )
+
+    /** The endpoint [home] is the draft of, as it is stored: its call switch on, its name fetched. */
+    private val stored = Endpoint(
+        "home", "https://agents.example.com", certificateAlias = "ara-phone", username = "reto", secret = "sealed",
+        healthUpload = true, directCalls = true, name = "Retinue", nameFetchedAt = 1_000L,
     )
 
     private val fresh = EndpointDraft(
@@ -58,5 +66,34 @@ class EndpointDraftTest {
         assertTrue(home.canSave)
         assertFalse(fresh.canSave)
         assertTrue(fresh.copy(baseUrl = "https://admin.example.com").canSave)
+    }
+
+    @Test
+    fun savingLeavesTheCallSwitchAsItIsStored() {
+        // Untouched, the endpoint is stored again as it was: its call switch, its password, its name.
+        assertEquals(stored, home.toEndpoint(stored, sealed = null))
+        // Edited (no certificate, health data off, a new password): the switch is still as the user set it.
+        val edited = home.copy(certificateAlias = null, healthUpload = false, password = "new").toEndpoint(stored, sealed = "sealed-2")
+        assertEquals(stored.copy(certificateAlias = null, healthUpload = false, secret = "sealed-2"), edited)
+        // Off stays off just the same: a save never switches it.
+        assertFalse(home.toEndpoint(stored.copy(directCalls = false), sealed = null).directCalls)
+        // Another address: the fetched name was the old server's; the switch is the endpoint's and stays.
+        val moved = home.copy(baseUrl = "new.example.com").toEndpoint(stored, sealed = null)
+        assertEquals(stored.copy(baseUrl = "new.example.com", name = null, nameFetchedAt = 0L), moved)
+        // A new endpoint starts with it off, and with its wake phrase off.
+        val added = fresh.copy(baseUrl = " https://admin.example.com ", healthUpload = true).toEndpoint(null, sealed = null)
+        assertEquals(Endpoint("new", "https://admin.example.com", healthUpload = true, wake = EndpointWake.OFF), added)
+    }
+
+    @Test
+    fun theStoredPasswordStaysUnlessTheDraftSaysOtherwise() {
+        assertEquals("sealed", home.toEndpoint(stored, sealed = null).secret)
+        // A typed password, sealed, replaces it; forgetting it or dropping the user name removes it.
+        assertEquals("sealed-2", home.copy(password = "new").toEndpoint(stored, sealed = "sealed-2").secret)
+        assertNull(home.copy(forgetPassword = true).toEndpoint(stored, sealed = null).secret)
+        val noUser = home.copy(username = "  ").toEndpoint(stored, sealed = null)
+        assertNull(noUser.username)
+        assertNull(noUser.secret)
+        assertEquals("reto", home.copy(username = " reto ").toEndpoint(stored, sealed = null).username)
     }
 }

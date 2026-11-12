@@ -12,8 +12,9 @@ import os.retinue.ara.wake.WakeMode
 
 /**
  * One Retinue server this phone can show: where it is, how the shell signs in
- * there, and whether the phone's health data may go to its letterbox. The
- * shell keeps a list of these and shows one at a time (see [ShellSettings]).
+ * there, whether the phone's health data may go to its letterbox and whether
+ * its page may place phone calls directly. The shell keeps a list of these
+ * and shows one at a time (see [ShellSettings]).
  *
  * The password is the one secret here, and it is stored sealed
  * ([CredentialVault]): [secret] is ciphertext, never the clear text. The
@@ -36,6 +37,14 @@ data class Endpoint(
      * request. Off for a new endpoint until the user says otherwise.
      */
     val healthUpload: Boolean = false,
+    /**
+     * A call this endpoint's page asks for in a spoken conversation
+     * (`RetinueShell.placeCall`) is placed at once, without a tap. Off, the
+     * dialer opens with the number. Each endpoint has its own switch, so one
+     * server's never answers for another's page (see CallLogic.directCalls);
+     * off for a new endpoint until the user says otherwise.
+     */
+    val directCalls: Boolean = false,
     /**
      * The instance's own name, the `short_name` of its web manifest, as last
      * fetched (see EndpointNames); null until the first successful fetch. It is
