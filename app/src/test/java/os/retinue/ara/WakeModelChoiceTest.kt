@@ -58,7 +58,7 @@ class WakeModelChoiceTest {
          */
         fun started(cutShort: Boolean = false): Phone {
             val id = earlierPhrase ?: return this
-            val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(wakeModel, endpoints, id)
+            val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(endpoints, id)
             return copy(wakeModel = choice, endpoints = list ?: endpoints, earlierPhrase = if (cutShort) id else null)
         }
 
@@ -92,21 +92,22 @@ class WakeModelChoiceTest {
     @Test
     fun theAdoptionStoresTheChoiceForThePhoneAndTheListOnlyWhereItChanged() {
         val plain = listOf(bare("a"), bare("b"))
-        // No choice stored (a blank one is none): the model of the earlier file. One stored already is kept.
-        assertEquals(jarvis, EndpointCodec.adoptingLegacyWakeModel(null, plain, jarvis).first)
-        assertEquals(jarvis, EndpointCodec.adoptingLegacyWakeModel(" ", plain, jarvis).first)
-        assertEquals(mine, EndpointCodec.adoptingLegacyWakeModel(mine, plain, jarvis).first)
+        // The choice is the model of the earlier file, whatever is stored: nothing, a blank, another model, that one.
+        assertEquals(jarvis, EndpointCodec.adoptingLegacyWakeModel(plain, jarvis).first)
+        for (stored in listOf(null, " ", mine, jarvis)) {
+            assertEquals(jarvis, Phone(plain, always, wakeModel = stored, earlierPhrase = jarvis).started().wakeModel, "$stored")
+        }
         // No list stored yet (the endpoint is still read from the keys of older builds): nothing to write.
-        assertEquals<Pair<String, List<Endpoint>?>>(jarvis to null, EndpointCodec.adoptingLegacyWakeModel(null, null, jarvis))
+        assertEquals<Pair<String, List<Endpoint>?>>(jarvis to null, EndpointCodec.adoptingLegacyWakeModel(null, jarvis))
         // A list of which no endpoint takes the model is not written again: none has a wake of its own,
         // each has a model already, or the stored document was unreadable (an empty list).
-        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, plain, jarvis).second)
-        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, listOf(own("a", WakeMode.Always, 0.5f, mine)), jarvis).second)
-        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, emptyList(), jarvis).second)
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(plain, jarvis).second)
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(listOf(own("a", WakeMode.Always, 0.5f, mine)), jarvis).second)
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(emptyList(), jarvis).second)
         // An endpoint with a wake of its own and no model takes it: the list is written, the rest of it as it was.
         assertEquals(
             listOf(own("a", WakeMode.WhileVisible, 0.8f, jarvis), bare("b")),
-            EndpointCodec.adoptingLegacyWakeModel(mine, listOf(own("a", WakeMode.WhileVisible, 0.8f), bare("b")), jarvis).second,
+            EndpointCodec.adoptingLegacyWakeModel(listOf(own("a", WakeMode.WhileVisible, 0.8f), bare("b")), jarvis).second,
         )
     }
 
@@ -139,8 +140,21 @@ class WakeModelChoiceTest {
         assertEquals(listOf<String?>(null, null), Phone(listOf(bare("a"), bare("b")), always).started().models())
         // Its own migration cut short before the choice was stored: the earlier file is still there.
         assertEquals(listOf<String?>(jarvis), Phone(listOf(bare("a")), always, earlierPhrase = jarvis).started().models())
-        // Cut short after it: the choice made since stands.
-        assertEquals(listOf<String?>(mine), Phone(listOf(bare("a")), always, wakeModel = mine, earlierPhrase = jarvis).started().models())
+        // A choice left by an earlier run of such a build, and a phrase file written since by a build without the library.
+        assertEquals(listOf<String?>(jarvis), Phone(listOf(bare("a")), always, wakeModel = mine, earlierPhrase = jarvis).started().models())
+    }
+
+    @Test
+    fun aPhraseFileWrittenSinceAnEarlierChoiceIsTheOneListenedFor() {
+        // A build with the library ran on the phone, chose Alexa and deleted the one phrase file; a build
+        // without the library has written that file again since (Hey Jarvis), and listened with it.
+        val phone = Phone(listOf(bare("a"), bare("b")), always, 0.7f, wakeModel = "oww:alexa_v0.1", earlierPhrase = jarvis).started()
+        val wake = EndpointWake.of(WakeMode.Always, 0.7f, jarvis)
+        assertEquals(listOf<EndpointWake?>(wake, wake), phone.read().map { it.wake })
+        assertEquals(jarvis, phone.wakeModel)
+        // The same where the model chosen then has left the list since: no endpoint reads a model that is gone.
+        val gone = Phone(listOf(bare("a"), bare("b")), always, 0.7f, wakeModel = "user:gone", earlierPhrase = mine).started()
+        assertEquals(listOf<String?>(mine, mine), gone.models())
     }
 
     @Test

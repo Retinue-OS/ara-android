@@ -370,13 +370,16 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * One model job at a time for the phone, whichever window starts it ([id]:
-     * the list's model it works on); [block] returns what to report here.
+     * the list's model it works on); [block] returns what to report here. One
+     * asked for while another runs waits its turn (WakeModelState.beginInTurn):
+     * a file picked or a removal confirmed is not dropped, and reports here.
      */
     private fun modelJob(id: String?, block: suspend () -> String) {
         // Begun inside the coroutine: a window that is closing starts none, and so leaves none unfinished.
         viewModelScope.launch {
             val app = appCtx
-            if (!WakeModelFiles.beginJob(id)) return@launch
+            // Waited for outside the try: a window that closes meanwhile has begun no job, and ends none.
+            WakeModelFiles.beginJob(id)
             _modelMessage.value = null
             _modelMessage.value = try {
                 block()

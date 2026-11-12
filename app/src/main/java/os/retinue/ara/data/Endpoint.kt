@@ -301,13 +301,16 @@ object EndpointCodec {
     /**
      * What is stored once the one phrase file of earlier builds has joined
      * the library as [id]. First: the device-wide choice, which the endpoints
-     * without a wake of their own read ([legacyWake]); [storedChoice] stays
-     * where there is one. Second: the endpoint list as stored ([stored]) with
-     * [adoptingWakeModel] applied, or null when there is nothing to write: no
-     * list stored yet, or no endpoint in it that takes the model.
+     * without a wake of their own read ([legacyWake]): [id], whatever choice
+     * is stored. Such a choice is of an earlier run of a build with the
+     * library, which deleted that file; one found now was written since, by
+     * a build without the library, and is what the phone listened with last.
+     * Second: the endpoint list as stored ([stored]) with [adoptingWakeModel]
+     * applied, or null when there is nothing to write: no list stored yet, or
+     * no endpoint in it that takes the model.
      */
-    fun adoptingLegacyWakeModel(storedChoice: String?, stored: List<Endpoint>?, id: String): Pair<String, List<Endpoint>?> =
-        (storedChoice?.takeIf { it.isNotBlank() } ?: id) to stored?.let { adoptingWakeModel(it, id) }?.takeIf { it != stored }
+    fun adoptingLegacyWakeModel(stored: List<Endpoint>?, id: String): Pair<String, List<Endpoint>?> =
+        id to stored?.let { adoptingWakeModel(it, id) }?.takeIf { it != stored }
 
     /**
      * The endpoint an older build's settings describe: its base URL and

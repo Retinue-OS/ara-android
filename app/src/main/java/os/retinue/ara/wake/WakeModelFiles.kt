@@ -64,8 +64,8 @@ object WakeModelFiles {
     /** Read the files again, for every window's wake card. Main thread, as the two below. */
     fun refreshState(context: Context) = state.show(status(context, null), library(context))
 
-    /** A model job begins in one of the windows ([id]: the model it works on); false when one runs already. */
-    fun beginJob(id: String?): Boolean = state.begin(id)
+    /** A model job begins in one of the windows ([id]: the model it works on), in its turn when one runs already. */
+    suspend fun beginJob(id: String?) = state.beginInTurn(id)
 
     /** The job is over, however it ended: the files are read again. */
     fun endJob(context: Context) = state.end(status(context, null), library(context))

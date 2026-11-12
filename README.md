@@ -870,9 +870,12 @@ own card first.
 
 The list and the job that changes it (a download, an upload, a removal) are
 the phone's as well, the same in the home screen's and the split-screen
-window's card: one job runs at a time, whichever window started it. A removal
-asks who uses the model as its last step before the file goes, and a model is
-chosen only while its file is on the phone and no job works on it.
+window's card: one job runs at a time, whichever window started it, and no
+card offers another meanwhile. One that is asked for all the same (a file
+picked in a picker that was open already, a removal confirmed in its dialog)
+waits its turn. A removal asks who uses the model as its last step before the
+file goes, and a model is chosen only while its file is on the phone and no
+job works on it.
 
 An endpoint without a model is not listened for, whatever its mode, and its
 card says so; the same holds for one whose model is no longer on the list or
@@ -886,7 +889,8 @@ by mistake) is refused instead of stopping the listener. The single phrase model
 earlier builds is moved into the list on update (as Hey Jarvis when it is that
 file, otherwise as "Earlier model") and stays in use, for every endpoint, as
 that one file was; so does the one model chosen for the whole phone by a build
-that had the list before the endpoints had their own choice.
+that had the list before the endpoints had their own choice. Where a phone has
+both, the file counts: it was written after that choice was made.
 
 ### Recommended phrase: "Hey Retinue"
 

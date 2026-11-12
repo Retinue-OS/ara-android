@@ -1,9 +1,15 @@
 package os.retinue.ara
 
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Test
 import os.retinue.ara.wake.WakeModelCatalog
 import os.retinue.ara.wake.WakeModelIndex
@@ -98,13 +104,13 @@ class WakeModelLibraryTest {
         assertTrue(state.features.value.featuresReady)
         assertEquals(before, state.library.value)
 
-        // A removal begins in one window: a job of the other is refused, whatever it would work on.
+        // A removal begins in one window: no job of the other begins meanwhile, whatever it would work on.
         assertTrue(state.begin(mine.id))
         assertFalse(state.begin(null))
         assertFalse(state.begin(mine.id))
         assertFalse(state.begin("oww:alexa_v0.1"))
         assertTrue(state.busy.value)
-        assertEquals(mine.id, state.busyId.value, "the refused jobs change nothing")
+        assertEquals(mine.id, state.busyId.value, "a job that has not begun changes nothing")
         assertEquals(before, state.library.value)
 
         // Over: the list is the files as the job left them, and the next job may begin.
@@ -116,6 +122,55 @@ class WakeModelLibraryTest {
         assertTrue(state.begin(null))
         assertTrue(state.busy.value)
         assertNull(state.busyId.value)
+    }
+
+    @Test
+    fun aJobAskedForWhileAnotherRunsWaitsItsTurn() = runBlocking<Unit> {
+        val after = wakeModelList(emptyList()) { false }
+        // Unconfined: a waiting job goes on inside the end of the one before it, as in the windows' own
+        // scopes (Dispatchers.Main.immediate). Else it goes on later, when this thread is free.
+        for (resumed in listOf(Dispatchers.Unconfined, EmptyCoroutineContext)) {
+            val state = WakeModelState()
+            assertTrue(state.begin("user:1"))
+            // Two more are asked for meanwhile: a removal confirmed in a dialog that was open, say, and another.
+            val waiting = listOf("user:2", "user:3").associateWith { id -> launch(resumed) { state.beginInTurn(id) } }
+            yield()
+            assertTrue(waiting.values.none { it.isCompleted }, "$resumed")
+            assertEquals("user:1", state.busyId.value, "a job that waits has begun nothing")
+            // Nor is its model held back yet: a removal asks who uses it once it has begun.
+            assertTrue(state.mayUse("user:2", onPhone = true))
+
+            // The first is over: one of them begins, as the job on its own model, and the other goes on waiting.
+            state.end(features, after)
+            yield()
+            val second = waiting.entries.single { it.value.isCompleted }.key
+            assertTrue(state.busy.value, "$resumed")
+            assertEquals(second, state.busyId.value, "$resumed")
+            assertFalse(state.mayUse(second, onPhone = true))
+            assertEquals(after, state.library.value)
+            // Then the other, and after it nothing runs.
+            state.end(features, after)
+            yield()
+            assertTrue(waiting.values.all { it.isCompleted }, "$resumed")
+            assertTrue(state.busy.value, "$resumed")
+            assertEquals(waiting.keys.single { it != second }, state.busyId.value, "$resumed")
+            state.end(features, after)
+            yield()
+            assertFalse(state.busy.value)
+            assertNull(state.busyId.value)
+
+            // With none running a job begins without waiting.
+            state.beginInTurn(null)
+            assertTrue(state.busy.value)
+            // A window that closes while its job waits has begun none.
+            val closed = launch(resumed) { state.beginInTurn("user:4") }
+            yield()
+            closed.cancelAndJoin()
+            state.end(features, after)
+            yield()
+            assertFalse(state.busy.value, "$resumed")
+            assertNull(state.busyId.value)
+        }
     }
 
     @Test

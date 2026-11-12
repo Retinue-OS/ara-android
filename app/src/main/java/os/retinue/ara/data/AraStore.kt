@@ -131,13 +131,14 @@ class AraStore(context: Context) {
      * The one phrase file of earlier builds has joined the model library as
      * [id] (WakeModelFiles.migrateLegacy): whoever listened with it goes on
      * doing so. In one edit, so that the earlier file can go once this
-     * returns: the device-wide choice, unless one is stored already, for the
-     * endpoints without a wake of their own ([legacyWake]); and the endpoints
-     * that have one, and no model yet (see [EndpointCodec.adoptingLegacyWakeModel],
-     * which decides both). Repeating it changes nothing.
+     * returns: the device-wide choice, also over one stored already (which
+     * is older than the file), for the endpoints without a wake of their own
+     * ([legacyWake]); and the endpoints that have one, and no model yet (see
+     * [EndpointCodec.adoptingLegacyWakeModel], which decides both). Repeating
+     * it changes nothing.
      */
     suspend fun adoptLegacyWakeModel(id: String) = edit { p ->
-        val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(p[K.wakeModel], EndpointCodec.decode(p[K.endpoints]), id)
+        val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(EndpointCodec.decode(p[K.endpoints]), id)
         p[K.wakeModel] = choice
         if (list != null) p[K.endpoints] = EndpointCodec.encode(list)
     }

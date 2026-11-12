@@ -8,10 +8,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Test
@@ -95,14 +98,27 @@ class WakeModelFilesTest {
         WakeModelFiles.refreshState(phone)
         assertEquals(listOf(jarvis), shown())
         assertTrue(WakeModelFiles.mayUse(phone, jarvis))
-        // Not downloaded, or not on the list at all.
+        // Not downloaded, or not on the list at all (its entry was lost, say, and its file is still there).
         assertFalse(WakeModelFiles.mayUse(phone, mycroft))
+        WakeModelFiles.phraseFile(phone, "user:unknown").writeText("a model")
         assertFalse(WakeModelFiles.mayUse(phone, "user:unknown"))
+        // Not on the list, though its id spells the file of a model that is downloaded.
+        val alias = jarvis.replace(':', '_')
+        assertEquals(WakeModelFiles.phraseFile(phone, jarvis), WakeModelFiles.phraseFile(phone, alias))
+        assertNull(WakeModelFiles.phraseFileFor(phone, alias))
+        assertFalse(WakeModelFiles.mayUse(phone, alias))
+        // No model chosen; and the listed, downloaded one resolves to its file.
+        assertNull(WakeModelFiles.phraseFileFor(phone, null))
+        assertEquals(WakeModelFiles.phraseFile(phone, jarvis), WakeModelFiles.phraseFileFor(phone, jarvis))
 
         // A removal is the phone's one job from before it asks who uses the model until the file is gone.
-        assertTrue(WakeModelFiles.beginJob(jarvis))
+        assertTrue(WakeModelFiles.state.begin(jarvis))
+        // The other window's job, asked for meanwhile (a download, say). Unconfined: it goes on as it does
+        // there, inside the end of the job before it.
+        val next = launch(Dispatchers.Unconfined) { WakeModelFiles.beginJob(mycroft) }
         try {
-            assertFalse(WakeModelFiles.beginJob(null), "the other window's job waits its turn")
+            assertFalse(next.isCompleted, "the other window's job waits its turn")
+            assertEquals(jarvis, WakeModelFiles.state.busyId.value)
             assertFalse(WakeModelFiles.mayUse(phone, jarvis))
             val users = WakeModelFiles.remove(phone, jarvis) {
                 assertFalse(WakeModelFiles.mayUse(phone, jarvis), "not chosen between the question and the delete")
@@ -115,6 +131,10 @@ class WakeModelFilesTest {
             WakeModelFiles.endJob(phone)
         }
         assertEquals(emptyList(), shown())
+        // The job that waited has begun, on its own model; after it none runs.
+        assertTrue(next.isCompleted)
+        assertEquals(mycroft, WakeModelFiles.state.busyId.value)
+        WakeModelFiles.endJob(phone)
         assertFalse(WakeModelFiles.state.busy.value)
         // A list that still showed it would offer a model that is gone: the files decide.
         assertFalse(WakeModelFiles.mayUse(phone, jarvis))

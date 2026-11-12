@@ -6,6 +6,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -161,9 +162,9 @@ fun wakeModelList(user: List<WakePhraseModel>, downloaded: (WakePhraseModel) -> 
  * What every window shows of the phone's models, and the one job that changes
  * them. The files are the phone's while each window has its own view model:
  * kept once for the process (WakeModelFiles.state), both wake cards show the
- * same list and the same job, no second job waits behind the first, and a
- * model that is being removed in one window is not chosen in the other. Main
- * thread.
+ * same list and the same job, no card offers a second job while one runs (one
+ * asked for all the same waits its turn, [beginInTurn]), and a model that is
+ * being removed in one window is not chosen in the other. Main thread.
  */
 class WakeModelState {
     private val _features = MutableStateFlow(WakeModelStatus(melspectrogram = false, embedding = false, phrase = false))
@@ -200,11 +201,23 @@ class WakeModelState {
         return true
     }
 
+    /**
+     * A job begins as soon as no other runs. The cards offer none while one
+     * runs, but one may be asked for all the same: a file picked in a picker
+     * that was open already, a removal confirmed in its dialog. It is not
+     * dropped: it waits its turn, and has begun nothing while it waits (so a
+     * window that closes meanwhile leaves no job behind).
+     */
+    suspend fun beginInTurn(id: String?) {
+        while (!begin(id)) busy.first { !it }
+    }
+
     /** The job is over: every window shows the files as it left them. */
     fun end(features: WakeModelStatus, library: List<WakeModelEntry>) {
-        _busy.value = false
         _busyId.value = null
         show(features, library)
+        // Free last: a job that waited its turn begins right here, on its own model.
+        _busy.value = false
     }
 
     /**
