@@ -130,6 +130,28 @@ class KeyboardLogicTest {
     }
 
     @Test
+    fun theConfirmationShowsWhatCannotBeSeen() {
+        fun shown(text: String) = KeyboardLogic.shownText(text).joinToString("") { if (it.mark) "[${it.text}]" else it.text }
+        assertEquals("hello world", shown("hello world"))
+        // Blanks at the ends, a space as ·, another blank as ␣; those inside stay as they are.
+        assertEquals("[··]a b[·␣]", shown("  a b \u00a0"))
+        // A line break is marked and then breaks the line; CRLF is one, as it is typed.
+        assertEquals("ls[↵]\nrm", shown("ls\nrm"))
+        assertEquals("a[↵]\nb[↵]\nc", shown("a\r\nb\rc"))
+        assertEquals("[↵]\n", shown("\n"))
+        // A tab anywhere.
+        assertEquals("user[⇥]pass[⇥⇥·]", shown("user\tpass\t\t "))
+        // Only blanks: all of them shown.
+        assertEquals("[···]", shown("   "))
+        assertEquals("", shown(""))
+        // The signs themselves, typed as text, are not marks.
+        assertEquals(listOf(KeyboardLogic.Shown("a·↵", mark = false)), KeyboardLogic.shownText("a·↵"))
+        assertTrue(KeyboardLogic.hasLineBreak("a\rb"))
+        assertTrue(KeyboardLogic.hasLineBreak("a\nb"))
+        assertFalse(KeyboardLogic.hasLineBreak("a\tb"))
+    }
+
+    @Test
     fun secretEventsCarryNothingOfTheSecret() {
         val d = KeyboardEvent(KeyboardEvent.SECRET_TYPED, "s1").detail()
         assertEquals(setOf("state", "id"), d.keys)

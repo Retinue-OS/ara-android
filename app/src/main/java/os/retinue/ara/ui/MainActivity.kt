@@ -49,7 +49,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -78,6 +82,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -88,6 +93,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -161,6 +167,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
          * ([WakeRuntime.EXTRA_WAKE_TOKEN]): the activity is exported.
          */
         const val ACTION_WAKE = "os.retinue.ara.action.WAKE"
+
+        /** How long the typing strip stays after the last key a page caused (see [TypingStrip]). */
+        private const val STRIP_LINGER_MS = 3_000L
 
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
@@ -559,6 +568,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                         )
                     }
                     authPrompt?.let { AuthDialog(it) }
+                    // Last, so over the page and the app's own pages.
+                    TypingStrip()
                 }
             }
         }
@@ -688,6 +699,58 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                         },
                         onSettings = ::openSettings,
                     )
+                }
+            }
+        }
+    }
+
+    /**
+     * While a page types on a device, and for [STRIP_LINGER_MS] after the last
+     * key it caused (a single key is over in 24 ms), a strip of the app's own
+     * says so, with Stop: that stops what is typed and makes the page's next
+     * request ask first (KeyboardRuntime.stopFromStrip). It sits at the
+     * bottom, above the launcher bar (or the keyboard), clear of the
+     * dashboard's top menu; over the app's own pages too. Sheets and dialogs
+     * are windows of their own and cover it, but a page cannot start typing
+     * under one: the window has no focus then.
+     */
+    @Composable
+    private fun BoxScope.TypingStrip() {
+        val typing by KeyboardRuntime.pageTyping.collectAsStateWithLifecycle()
+        var device by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(typing) {
+            val t = typing
+            val left = if (t == null) 0L else STRIP_LINGER_MS - (SystemClock.elapsedRealtime() - t.at)
+            if (t == null || (!t.typing && left <= 0)) {
+                device = null
+                return@LaunchedEffect
+            }
+            device = t.device
+            if (t.typing) return@LaunchedEffect
+            delay(left)
+            device = null
+        }
+        val name = device ?: return
+        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .padding(start = 16.dp, end = 16.dp, bottom = (if (imeVisible) 0.dp else LauncherBarHeight) + 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shadowElevation = 6.dp,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 4.dp)) {
+                Text(
+                    stringResource(R.string.keyboard_strip_typing, name),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(onClick = KeyboardRuntime::stopFromStrip) {
+                    Text(stringResource(R.string.keyboard_strip_stop), color = MaterialTheme.colorScheme.inversePrimary)
                 }
             }
         }
@@ -1810,9 +1873,14 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private val dashboardCovered: Boolean
         get() = showSettings || showLauncherEditor || folderEditor != null
 
-    /** The confirmation for [token] (reserved by the runtime); not yet a window of its own: nothing that asks is typed. */
+    /** The phone's question for the confirmation [token] (the runtime holds the request and answers it once). */
     private fun startConfirmation(token: String) {
-        KeyboardRuntime.confirmDeclined(token)
+        try {
+            startActivity(ConfirmTypeActivity.intent(this, token))
+        } catch (e: Exception) {
+            Log.w(TAG, "confirmation did not start", e)
+            KeyboardRuntime.confirmDeclined(token)
+        }
     }
 
     /** The keyboard screen (pairing, layout, live typing). */

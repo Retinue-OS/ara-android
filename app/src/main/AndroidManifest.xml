@@ -267,6 +267,16 @@
             android:theme="@style/Theme.Ara.Translucent"
             android:windowSoftInputMode="stateAlwaysVisible" />
 
+        <!-- The phone's own question before a page types what acts on another
+             device (ui/ConfirmTypeActivity): in the shell's task, FLAG_SECURE
+             set in code, and like the secret dialog not recreated by a
+             configuration change, which would end it as declined. -->
+        <activity
+            android:name=".ui.ConfirmTypeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|fontScale|fontWeightAdjustment|density|locale|layoutDirection|colorMode|touchscreen|mcc|mnc|grammaticalGender"
+            android:theme="@style/Theme.Ara.Translucent" />
+
         <!-- The package installer reports the outcome of an update here (through
              a PendingIntent of Ara's own, so the receiver is not exported). -->
         <receiver

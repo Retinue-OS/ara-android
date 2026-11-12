@@ -315,6 +315,51 @@ object KeyboardLogic {
     }
 
     /**
+     * A text as the confirmation shows it, in pieces: as it is typed, or a
+     * mark ([Shown.mark]) for what cannot be seen — a line break (↵, the
+     * break itself follows), a tab (⇥) and the blanks at either end (· for a
+     * space, ␣ for any other). The confirmation draws the marks apart from
+     * the text, so a text that holds the same signs cannot pass for them.
+     */
+    fun shownText(text: String): List<Shown> {
+        val out = ArrayList<Shown>()
+        fun add(piece: String, mark: Boolean) {
+            val last = out.lastOrNull()
+            if (last != null && last.mark == mark) out[out.size - 1] = Shown(last.text + piece, mark) else out += Shown(piece, mark)
+        }
+        val first = text.indexOfFirst { !isBlank(it) }.let { if (it < 0) text.length else it }
+        val last = text.indexOfLast { !isBlank(it) }
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            when {
+                c == '\r' || c == '\n' -> {
+                    add(LINE_BREAK_MARK, mark = true)
+                    add("\n", mark = false)
+                    // CRLF is one line break, as it is typed.
+                    if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') i++
+                }
+                c == '\t' -> add(TAB_MARK, mark = true)
+                (i < first || i > last) && isBlank(c) -> add(if (c == ' ') SPACE_MARK else BLANK_MARK, mark = true)
+                else -> add(c.toString(), mark = false)
+            }
+            i++
+        }
+        return out
+    }
+
+    /** One piece of [shownText]. */
+    data class Shown(val text: String, val mark: Boolean)
+
+    const val LINE_BREAK_MARK = "↵"
+    const val TAB_MARK = "⇥"
+    const val SPACE_MARK = "·"
+    const val BLANK_MARK = "␣"
+
+    /** The text has a line break (typed as Shift+Enter). */
+    fun hasLineBreak(text: String): Boolean = text.any { it == '\r' || it == '\n' }
+
+    /**
      * What stands in the way of typing, checked before anything is sent:
      * the keyboard is off, no device is connected, typing is going on, the
      * text is too long. Null when nothing does.
