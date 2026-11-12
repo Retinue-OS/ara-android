@@ -65,11 +65,18 @@ data class EndpointSet(val endpoints: List<Endpoint>, val currentId: String?) {
     /** The endpoint the shell shows: the one chosen, or, should that be gone, the first. */
     val current: Endpoint? get() = endpoints.firstOrNull { it.id == currentId } ?: endpoints.firstOrNull()
 
-    /** Add or replace [endpoint]; the first endpoint ever becomes the current one. */
+    /**
+     * Add or replace [endpoint]. The endpoint shown stays the one shown, also
+     * where it was never chosen: the one carried over from an older build is
+     * shown without a stored choice. The endpoint added becomes the current
+     * one only where nothing can be shown so far: it is the first ever, or
+     * the carried-over one has an address the shell cannot use.
+     */
     fun upsert(endpoint: Endpoint): EndpointSet {
         val replaced = endpoints.any { it.id == endpoint.id }
         val list = if (replaced) endpoints.map { if (it.id == endpoint.id) endpoint else it } else endpoints + endpoint
-        return EndpointSet(list, currentId ?: endpoint.id)
+        val shown = current?.takeIf { it.base != null }
+        return EndpointSet(list, currentId ?: (shown ?: endpoint).id)
     }
 
     /** Remove the endpoint [id]; when it was the current one, the first that is left takes over. */

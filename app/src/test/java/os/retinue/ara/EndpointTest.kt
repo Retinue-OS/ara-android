@@ -60,6 +60,33 @@ class EndpointTest {
     }
 
     @Test
+    fun theCarriedOverEndpointStaysShownWhenAnotherIsAdded() {
+        // The store of an older build as AraStore reads it: its one server, shown without ever having been chosen.
+        val carried = EndpointSet(EndpointCodec.legacy("https://agents.example.com", "ara-phone"), null)
+        assertEquals(EndpointCodec.LEGACY_ID, carried.current?.id)
+        // A second endpoint does not take over, and the endpoint shown is the stored choice from then on.
+        val added = carried.upsert(admin)
+        assertEquals(EndpointCodec.LEGACY_ID, added.currentId)
+        assertEquals(EndpointCodec.LEGACY_ID, added.current?.id)
+        assertEquals(listOf(EndpointCodec.LEGACY_ID, "admin"), added.endpoints.map { it.id })
+        // Nor after the writes that choose nothing (a fetched name, a switch), which leave the choice unset.
+        val named = carried.update(EndpointCodec.LEGACY_ID) { it.copy(name = "Retinue") }
+        assertNull(named.currentId)
+        assertEquals(EndpointCodec.LEGACY_ID, named.upsert(admin).currentId)
+        // Saving the carried-over endpoint itself keeps it shown, as before.
+        assertEquals(EndpointCodec.LEGACY_ID, carried.upsert(carried.endpoints[0].copy(name = "Home")).currentId)
+        // A carried-over address the shell cannot use shows nothing: there the endpoint added takes over, as before.
+        val unusable = EndpointSet(EndpointCodec.legacy("http://10.0.0.2:8080", null), null)
+        assertNull(unusable.current?.base)
+        assertEquals("admin", unusable.upsert(admin).currentId)
+        // And once that address is put right in the editor, the carried-over endpoint is the choice.
+        assertEquals(
+            EndpointCodec.LEGACY_ID,
+            unusable.upsert(unusable.endpoints[0].copy(baseUrl = "https://agents.example.com")).currentId,
+        )
+    }
+
+    @Test
     fun setOperations() {
         var set = EndpointSet.EMPTY
         assertNull(set.current)
