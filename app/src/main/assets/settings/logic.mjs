@@ -3,8 +3,8 @@
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
 // health line, and the notes of the phone calls and the wake phrase. Kept free
-// of DOM work, so app/src/test/js/settings-page.test.mjs runs it under Node. The page itself
-// is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
+// of DOM work, so app/src/test/js/settings-page.test.mjs runs it under Node.
+// The page itself is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
 // SettingsMessages, SettingsState).
 
 // ── The dashboard's per-device preferences ──────────────────────────────────

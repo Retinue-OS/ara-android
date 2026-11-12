@@ -45,10 +45,10 @@ object CallLogic {
     /**
      * The number as the dialer gets it: separators (spaces, dashes, dots,
      * parentheses, slashes) and a leading `tel:` dropped, as is the `(0)` of
-     * `+44 (0)20 …`. An optional leading
-     * `+`, then digits, `*` and `#` only, with 3 to 20 digits and at most 32
-     * characters; null otherwise — a page never hands the dialer anything else
-     * (no `,` pauses or `;` extensions that dial on by themselves).
+     * `+44 (0)20 …`. An optional leading `+`, then digits, `*` and `#` only,
+     * with 3 to 20 digits and at most 32 characters; null otherwise — a page
+     * never hands the dialer anything else (no `,` pauses or `;` extensions
+     * that dial on by themselves).
      */
     fun normalize(raw: String?): String? {
         if (raw == null || raw.length > MAX_RAW) return null
