@@ -335,14 +335,21 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     /** The instance [endpointId] listens for the downloaded model [id], or for none (null). */
     fun useModel(endpointId: String, id: String?) {
         if (id != null && _library.value.none { it.model.id == id && it.downloaded }) return
+        // Not the model a job works on right now: a removal would leave the instance with a model that is gone.
+        if (id != null && _modelBusy.value && _modelBusyId.value == id) return
         _modelMessage.value = null
         viewModelScope.launch { store.updateEndpointWake(endpointId) { it.copy(modelId = id) } }
     }
 
-    /** Delete model [id]'s file; the user's own leave the list. The instances that listen for it let go of it first. */
+    /**
+     * Delete model [id]'s file; the user's own leave the list. The instance
+     * shown lets go of it first. A model that another instance uses stays,
+     * whatever the page offered: no instance is left with a model that is gone.
+     */
     fun removeModel(id: String) = modelJob(id) {
         val name = nameOf(id)
-        store.releaseWakeModel(id)
+        val users = store.releaseWakeModel(id)
+        if (users.isNotEmpty()) return@modelJob appCtx.getString(R.string.wake_model_in_use, name, users.joinToString())
         WakeModelFiles.remove(appCtx, id)
         appCtx.getString(R.string.wake_model_removed, name)
     }

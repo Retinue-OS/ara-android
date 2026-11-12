@@ -145,6 +145,8 @@ details.advanced[open] summary { margin-bottom: 6px; }
 .endpoint.model { flex-wrap: wrap; }
 .endpoint.model .actions { flex-basis: 100%; margin: 0; gap: 8px; }
 .endpoint.model.current { outline: 1px solid var(--accent); }
+/* Why the row offers no removal: never cut short. */
+.endpoint.model .summary.used { white-space: normal; }
 
 .notes p { margin: 8px 0 4px; font-size: .9rem; }
 

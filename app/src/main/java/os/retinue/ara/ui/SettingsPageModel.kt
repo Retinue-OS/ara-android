@@ -89,7 +89,7 @@ internal fun settingsPageState(
             overlayAllowed = wake.overlayAllowed,
             melspectrogram = wake.models.melspectrogram,
             embedding = wake.models.embedding,
-            models = wakeModelRows(wake.library, shownWake.modelId),
+            models = wakeModelRows(wake.library, settings),
             busy = wake.modelBusy,
             busyId = wake.modelBusyId,
             message = wake.modelMessage,

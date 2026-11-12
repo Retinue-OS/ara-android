@@ -1,7 +1,8 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
 // endpoint draft rules and what closing the editor does, the certificate
 // import's notes, the per-device values with the dashboard's bounds, the
-// health and wake lines, and the instance frame's message. No dependencies:
+// health and wake lines, the phrase model rows, and the instance frame's
+// message. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
 import assert from 'node:assert/strict';
 import * as L from '../../main/assets/settings/logic.mjs';
@@ -162,6 +163,48 @@ ok('a phrase model is downloaded before it can be used, and stays listed after a
   assert.equal(L.wakeActiveLine({ models: [jarvis, { ...mine, active: true }] }), 'In use: hey_retinue.onnx');
   assert.equal(L.wakeActiveLine({ models: [jarvis] }), 'No phrase model in use.');
   assert.equal(L.wakeActiveLine(undefined), 'No phrase model in use.');
+});
+
+ok('a phrase model another endpoint uses says so, and is not deleted or removed from here', () => {
+  const types = (r) => r.actions.map((a) => a.msg.type);
+  const jarvis = { id: 'oww:hey_jarvis_v0.1', name: 'Hey Jarvis', source: 'builtin', url: 'https://x/hey_jarvis.onnx', downloaded: true, active: false, removable: false, usedBy: ['Work'] };
+  let row = L.wakeModelRow(jarvis, { busy: false });
+  assert.equal(row.usedBy, 'Also used by Work');
+  assert.deepEqual(types(row), ['wake.model.use'], 'no Delete download: Work listens for it');
+  // The endpoint shown uses it too: it can stop, the model stays.
+  row = L.wakeModelRow({ ...jarvis, active: true }, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.none']);
+
+  const mine = { id: 'user:1', name: 'hey_retinue.onnx', source: 'file', url: null, downloaded: true, active: false, removable: true, usedBy: ['Work', 'Family'] };
+  row = L.wakeModelRow(mine, { busy: false });
+  assert.equal(row.usedBy, 'Also used by Work, Family');
+  assert.deepEqual(types(row), ['wake.model.use'], 'no Remove');
+  row = L.wakeModelRow({ ...mine, active: true }, { busy: false });
+  assert.deepEqual(types(row), ['wake.model.none']);
+
+  // Its download is gone, and it is still theirs: it can be downloaded again, nothing else.
+  row = L.wakeModelRow({ ...jarvis, downloaded: false }, { busy: false });
+  assert.equal(row.usedBy, 'Also used by Work');
+  assert.deepEqual(types(row), ['wake.model.download']);
+
+  // Used by no other endpoint (or an app that names none): removable as ever.
+  for (const none of [[], undefined, null, 'Work', [7, '']]) {
+    row = L.wakeModelRow({ ...mine, usedBy: none }, { busy: false });
+    assert.equal(row.usedBy, '', String(none));
+    assert.deepEqual(types(row), ['wake.model.use', 'wake.model.remove'], String(none));
+  }
+});
+
+ok('the model a job works on is not chosen while the job runs', () => {
+  const mine = { id: 'user:1', name: 'hey_retinue.onnx', source: 'file', url: null, downloaded: true, active: false, removable: true };
+  let row = L.wakeModelRow(mine, { busy: true, busyId: mine.id });
+  assert.equal(row.detail, 'Your file · working…');
+  assert.ok(row.actions.length === 2 && row.actions.every((a) => a.disabled), 'it may be on its way out');
+  row = L.wakeModelRow({ ...mine, active: true }, { busy: true, busyId: mine.id });
+  assert.ok(row.actions.every((a) => a.disabled));
+  // Any other model can be chosen meanwhile.
+  row = L.wakeModelRow({ ...mine, id: 'user:2' }, { busy: true, busyId: mine.id });
+  assert.ok(!row.actions[0].disabled && row.actions[1].disabled);
 });
 
 ok('the wake notes follow the mode, with the action that fixes each', () => {

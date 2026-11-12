@@ -167,14 +167,30 @@ data class EndpointSet(val endpoints: List<Endpoint>, val currentId: String?) {
     val backgroundEndpoints: List<Endpoint>
         get() = endpoints.filter { stateOf(it) == InstanceState.Background }
 
-    /** No endpoint listens for the phrase model [modelId] any more (it leaves the library). */
-    fun withoutWakeModel(modelId: String): EndpointSet = EndpointSet(
-        endpoints.map { e ->
+    /**
+     * The endpoints besides the one shown whose phrase model is [modelId],
+     * whatever their mode or state, in list order. While there are any, the
+     * model is not deleted from the card of the endpoint shown.
+     */
+    fun otherUsersOfWakeModel(modelId: String): List<Endpoint> {
+        val shown = current?.id
+        return endpoints.filter { it.id != shown && it.wake?.modelId == modelId }
+    }
+
+    /**
+     * The phrase model [modelId] is to leave the library: the endpoint shown
+     * lets go of it. Null when another endpoint uses it too
+     * ([otherUsersOfWakeModel]): it stays then, so that no endpoint is left
+     * with a model that is gone.
+     */
+    fun releasingWakeModel(modelId: String): EndpointSet? {
+        if (otherUsersOfWakeModel(modelId).isNotEmpty()) return null
+        val shown = current ?: return this
+        return update(shown.id) { e ->
             val wake = e.wake
             if (wake != null && wake.modelId == modelId) e.copy(wake = wake.copy(modelId = null)) else e
-        },
-        currentId,
-    )
+        }
+    }
 
     companion object {
         val EMPTY = EndpointSet(emptyList(), null)

@@ -147,9 +147,19 @@ class AraStore(context: Context) {
         if (adopted != stored) p[K.endpoints] = EndpointCodec.encode(adopted)
     }
 
-    /** No endpoint listens for the phrase model [modelId] any more: it is about to be deleted. */
-    suspend fun releaseWakeModel(modelId: String) {
-        updateEndpoints { set -> set.withoutWakeModel(modelId) }
+    /**
+     * The phrase model [modelId] is about to be deleted: the endpoint shown
+     * lets go of it, unless another endpoint uses it too. Then nothing
+     * changes and those endpoints' names are returned: the model must stay.
+     * Checked and stored in one edit ([EndpointSet.releasingWakeModel]).
+     */
+    suspend fun releaseWakeModel(modelId: String): List<String> {
+        var users = emptyList<String>()
+        updateEndpoints { set ->
+            users = set.otherUsersOfWakeModel(modelId).map { EndpointLabels.label(it, set.endpoints) }
+            set.releasingWakeModel(modelId) ?: set
+        }
+        return users
     }
 
     suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }

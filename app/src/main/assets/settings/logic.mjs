@@ -334,7 +334,9 @@ export function wakeModelsLine(w) {
 // endpoint shown uses, and the buttons it offers. The list is the phone's, the
 // same under every endpoint; using a model is the shown endpoint's choice. A
 // model must be downloaded before it can be used; the user's own stay on the
-// list after another is chosen, to go back to.
+// list after another is chosen, to go back to. A model that another endpoint
+// uses says so, and is not deleted or removed from here: that endpoint would
+// be left without its phrase (the app refuses it too).
 const SOURCE_TEXT = { builtin: 'openWakeWord', file: 'Your file', url: 'From a URL' };
 
 export function wakeModelRow(m, w) {
@@ -343,6 +345,7 @@ export function wakeModelRow(m, w) {
   const parts = [SOURCE_TEXT[m.source] || ''];
   if (working) parts.push(m.downloaded ? 'working…' : 'downloading…');
   else if (!m.downloaded) parts.push('not downloaded');
+  const others = Array.isArray(m.usedBy) ? m.usedBy.filter((n) => typeof n === 'string' && n) : [];
   const actions = [];
   if (!m.downloaded) {
     if (m.url) actions.push({ label: 'Download', msg: { type: 'wake.model.download', id: m.id }, primary: true });
@@ -351,11 +354,24 @@ export function wakeModelRow(m, w) {
   } else {
     actions.push({ label: 'Use this model', msg: { type: 'wake.model.use', id: m.id }, primary: true });
   }
-  if (m.removable) actions.push({ label: 'Remove', msg: { type: 'wake.model.remove', id: m.id }, danger: true, confirm: true });
-  else if (m.downloaded && !m.active) actions.push({ label: 'Delete download', msg: { type: 'wake.model.remove', id: m.id } });
-  // Choosing a model is instant; downloads and removals wait for the job under way.
-  for (const a of actions) a.disabled = busy && a.msg.type !== 'wake.model.use' && a.msg.type !== 'wake.model.none';
-  return { name: m.name, detail: parts.filter(Boolean).join(' · '), active: !!m.active, actions };
+  // A model of other endpoints stays on the phone for them.
+  if (!others.length) {
+    if (m.removable) actions.push({ label: 'Remove', msg: { type: 'wake.model.remove', id: m.id }, danger: true, confirm: true });
+    else if (m.downloaded && !m.active) actions.push({ label: 'Delete download', msg: { type: 'wake.model.remove', id: m.id } });
+  }
+  // Choosing a model is instant; downloads and removals wait for the job under
+  // way. The model that job works on is not chosen meanwhile: it may be going.
+  for (const a of actions) {
+    const choosing = a.msg.type === 'wake.model.use' || a.msg.type === 'wake.model.none';
+    a.disabled = busy && (working || !choosing);
+  }
+  return {
+    name: m.name,
+    detail: parts.filter(Boolean).join(' · '),
+    usedBy: others.length ? `Also used by ${others.join(', ')}` : '',
+    active: !!m.active,
+    actions,
+  };
 }
 
 // The line over the list: which model the endpoint shown listens for.

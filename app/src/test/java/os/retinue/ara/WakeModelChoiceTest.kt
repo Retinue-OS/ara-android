@@ -7,6 +7,7 @@ import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointCodec
 import os.retinue.ara.data.EndpointSet
 import os.retinue.ara.data.EndpointWake
+import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.settings.wakeModelRows
 import os.retinue.ara.wake.WakeMode
 import os.retinue.ara.wake.WakeModelCatalog
@@ -18,6 +19,8 @@ import os.retinue.ara.wake.WakePhraseModel
  * The phrase model each endpoint listens for, from whatever an earlier build
  * left on the phone: one phrase file for the phone, a library with one choice
  * for the phone, or a wake phrase per endpoint that still had the one file.
+ * And what follows from several endpoints choosing from one library: a model
+ * says who else uses it, and stays while they do.
  */
 class WakeModelChoiceTest {
 
@@ -175,16 +178,57 @@ class WakeModelChoiceTest {
     }
 
     @Test
-    fun aModelThatLeavesTheLibraryIsLetGoByItsEndpoints() {
+    fun aModelAnotherEndpointUsesIsNotRemoved() {
         val set = EndpointSet(
             listOf(own("a", WakeMode.Always, 0.5f, mine), own("b", WakeMode.Off, 0.6f, mine), own("c", WakeMode.Always, 0.5f, jarvis), bare("d")),
             "a",
         )
-        val after = set.withoutWakeModel(mine)
-        assertEquals(listOf(null, null, jarvis, null), after.endpoints.map { it.wake?.modelId })
-        // Nothing else of them changes.
-        assertEquals(EndpointWake.of(WakeMode.Off, 0.6f), after.endpoints[1].wake)
-        assertEquals("a", after.currentId)
-        assertEquals(set, set.withoutWakeModel("user:unknown"))
+        // b has it too, though its mode is off and it is disabled: the model stays, and nothing changes.
+        assertEquals(listOf("b"), set.otherUsersOfWakeModel(mine).map { it.id })
+        assertNull(set.releasingWakeModel(mine))
+        // So does c's model, seen from a's card.
+        assertEquals(listOf("c"), set.otherUsersOfWakeModel(jarvis).map { it.id })
+        assertNull(set.releasingWakeModel(jarvis))
+        // With c shown it is the model of the endpoint shown alone: that one lets go, and nothing else changes.
+        val shown = set.select("c")
+        assertEquals(emptyList(), shown.otherUsersOfWakeModel(jarvis))
+        val after = shown.releasingWakeModel(jarvis)!!
+        assertEquals(listOf(mine, mine, null, null), after.endpoints.map { it.wake?.modelId })
+        assertEquals(EndpointWake.of(WakeMode.Always, 0.5f), after.endpoints[2].wake)
+        assertEquals("c", after.currentId)
+        // A model no endpoint has: nothing to let go of, nothing in the way.
+        assertEquals(set, set.releasingWakeModel("user:unused"))
+        assertEquals(EndpointSet.EMPTY, EndpointSet.EMPTY.releasingWakeModel(mine))
+    }
+
+    @Test
+    fun aRowNamesTheOtherEndpointsThatUseItsModel() {
+        val home = Endpoint("home", "https://home.example", name = "Home", wake = EndpointWake.of(WakeMode.Always, 0.5f, jarvis))
+        val work = Endpoint("work", "https://work.example", name = "Work", background = true, wake = EndpointWake.of(WakeMode.Always, 0.6f, jarvis))
+        // Disabled, its mode off, and no name fetched yet: it counts, under its host.
+        val club = Endpoint("club", "https://club.example", wake = EndpointWake.of(WakeMode.Off, 0.5f, mine))
+        val settings = ShellSettings(endpoints = listOf(home, work, club), currentEndpointId = "home")
+        val library = listOf(
+            WakeModelEntry(WakeModelCatalog.builtins[0], downloaded = true),
+            WakeModelEntry(WakeModelCatalog.builtins[1], downloaded = true),
+            WakeModelEntry(WakePhraseModel(mine, "hey_retinue.onnx", WakeModelSource.File), downloaded = false),
+        )
+        val rows = wakeModelRows(library, settings)
+        assertEquals(listOf(true, false, false), rows.map { it.active })
+        assertEquals(listOf(listOf("Work"), emptyList(), listOf("club.example")), rows.map { it.usedBy })
+        // The same list on Work's card: its model, and Home named.
+        val onWork = wakeModelRows(library, settings.copy(currentEndpointId = "work"))
+        assertEquals(listOf(true, false, false), onWork.map { it.active })
+        assertEquals(listOf(listOf("Home"), emptyList(), listOf("club.example")), onWork.map { it.usedBy })
+        // On Club's card its own model is not downloaded, so not active, and nobody else's.
+        val onClub = wakeModelRows(library, settings.copy(currentEndpointId = "club"))
+        assertEquals(listOf(false, false, false), onClub.map { it.active })
+        assertEquals(listOf(listOf("Home", "Work"), emptyList(), emptyList()), onClub.map { it.usedBy })
+        // The rows name exactly the endpoints that keep a model from being removed.
+        for (row in rows) {
+            assertEquals(row.usedBy.isEmpty(), settings.endpointSet.releasingWakeModel(row.id) != null, row.id)
+        }
+        // No endpoint at all: a list, and nothing in use.
+        assertEquals(listOf(false, false, false), wakeModelRows(library, ShellSettings()).map { it.active })
     }
 }

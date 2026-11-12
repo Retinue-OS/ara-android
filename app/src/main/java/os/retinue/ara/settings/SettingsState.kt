@@ -87,10 +87,23 @@ data class WakeModelRow(
     val active: Boolean,
     /** The user's own: taken off the list by removing it. */
     val removable: Boolean,
+    /**
+     * The other instances whose model this is (their labels), whatever their
+     * mode or state: while there are any, it is not deleted or removed here.
+     */
+    val usedBy: List<String> = emptyList(),
 )
 
-/** The list's rows; [activeId] is the model the instance shown listens for (its row is active only while downloaded). */
-fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeModelRow> = library.map { e ->
+/**
+ * The list's rows; [activeId] is the model the instance shown listens for (its
+ * row is active only while downloaded), [usedBy] the other instances that use
+ * a model, by its id.
+ */
+fun wakeModelRows(
+    library: List<WakeModelEntry>,
+    activeId: String?,
+    usedBy: (modelId: String) -> List<String> = { emptyList() },
+): List<WakeModelRow> = library.map { e ->
     WakeModelRow(
         id = e.model.id,
         name = e.model.name,
@@ -99,7 +112,21 @@ fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeMo
         downloaded = e.downloaded,
         active = e.downloaded && e.model.id == activeId,
         removable = e.model.removable,
+        usedBy = usedBy(e.model.id),
     )
+}
+
+/**
+ * The list's rows on the card of the instance shown in [settings]: its model
+ * is the active one, and a model of other instances names them (the same
+ * instances that keep it from being removed, EndpointSet.otherUsersOfWakeModel).
+ */
+fun wakeModelRows(library: List<WakeModelEntry>, settings: ShellSettings): List<WakeModelRow> {
+    val set = settings.endpointSet
+    val labels = EndpointLabels.labels(settings.endpoints)
+    return wakeModelRows(library, set.current?.wake?.modelId) { id ->
+        set.otherUsersOfWakeModel(id).map { labels[it.id] ?: it.hostLabel }
+    }
 }
 
 data class UpdatesInfo(
@@ -224,6 +251,7 @@ data class SettingsPageState(
                                     put("downloaded", m.downloaded)
                                     put("active", m.active)
                                     put("removable", m.removable)
+                                    put("usedBy", buildJsonArray { m.usedBy.forEach { add(JsonPrimitive(it)) } })
                                 },
                             )
                         }

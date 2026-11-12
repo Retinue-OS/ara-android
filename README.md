@@ -846,8 +846,8 @@ and the card marks the model of the endpoint shown as *Active*:
 - **Downloadable models** — Hey Jarvis (listed first, for testing), Hey
   Mycroft, Hey Rhasspy and Alexa from openWakeWord's v0.5.1 release. Tap
   **Download** first, then **Use this model**, which is the choice of the
-  endpoint shown; a downloaded model can be deleted again while that endpoint
-  uses another.
+  endpoint shown; a downloaded model can be deleted again while no endpoint
+  uses it.
 - **Your own** — **Upload a model file…** imports an `.onnx` from the phone;
   it is listed under its file name and is in use at once, for the endpoint
   that was shown when you started (should another come to the front
@@ -856,6 +856,12 @@ and the card marks the model of the endpoint shown as *Active*:
   endpoint's client certificate). Your models stay on the list when you choose
   another, so you can switch back; **Remove** deletes one. **Stop using**
   leaves the endpoint shown without a model.
+
+A model that another endpoint uses says so on its row (*Also used by …*,
+whatever that endpoint's mode or state) and cannot be deleted or removed from
+the card of the endpoint shown; the app refuses it as well, so that no
+endpoint is left with a model that is gone. Choose another model on that
+endpoint's own card first.
 
 An endpoint without a model is not listened for, whatever its mode, and its
 card says so; the same holds for one whose model is no longer on the list or

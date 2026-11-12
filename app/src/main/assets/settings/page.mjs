@@ -211,6 +211,7 @@ function wakeModelItem(m, w) {
   const li = el('li', `endpoint model${row.active ? ' current' : ''}`);
   const who = el('div', 'who');
   who.append(el('div', 'name', row.name), el('div', 'summary', row.detail));
+  if (row.usedBy) who.append(el('div', 'summary used', row.usedBy));
   li.append(who);
   if (row.active) li.append(el('span', 'active', 'Active'));
   const actions = el('div', 'actions');
