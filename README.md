@@ -860,8 +860,8 @@ and the card marks the model of the endpoint shown as *Active*:
 A model that another endpoint uses says so on its row (*Also used by …*,
 whatever that endpoint's mode or state) and cannot be deleted or removed from
 the card of the endpoint shown; the app refuses it as well, so that no
-endpoint is left with a model that is gone. Choose another model on that
-endpoint's own card first.
+endpoint is left with a model that is gone. Stop using it on that endpoint's
+own card first.
 
 An endpoint without a model is not listened for, whatever its mode, and its
 card says so; the same holds for one whose model is no longer on the list or

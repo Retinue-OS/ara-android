@@ -260,7 +260,8 @@ class AraStore(context: Context) {
         /**
          * The one phrase model chosen for the whole phone, by its id: written by the
          * builds that had the model library before each endpoint had its own choice
-         * (Endpoint.wake). Read only for endpoints without a wake of their own.
+         * (Endpoint.wake), and by [adoptLegacyWakeModel]. Read only for endpoints
+         * without a wake of their own ([legacyWake]).
          */
         val wakeModel = stringPreferencesKey("wake_model")
         val launcher = stringPreferencesKey("launcher_json")

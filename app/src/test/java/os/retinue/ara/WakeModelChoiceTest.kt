@@ -2,6 +2,7 @@ package os.retinue.ara
 
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import org.junit.Test
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointCodec
@@ -128,6 +129,33 @@ class WakeModelChoiceTest {
         )
         // Without the file there is nothing to tell them from endpoints set to no model: they stay as they are.
         assertEquals(listOf<String?>(null), Phone(listOf(own("a", WakeMode.Always, 0.5f))).started().models())
+    }
+
+    @Test
+    fun theListsEarlierBuildsStoredComeThroughTheAdoption() {
+        // As main today, or a build with the library and one choice, wrote it: no wake with the endpoint.
+        val plain = EndpointCodec.decode(
+            """{"version":1,"endpoints":[{"id":"a","baseUrl":"https://a.example","certificateAlias":null,"username":null,""" +
+                """"secret":null,"healthUpload":true,"name":"Home","nameFetchedAt":7}]}""",
+        )!!
+        assertNull(plain.single().wake)
+        // Nothing to store with the endpoint: it reads the choice for the phone.
+        assertEquals(plain, EndpointCodec.adoptingWakeModel(plain, jarvis))
+        assertEquals(listOf<String?>(jarvis), Phone(plain, WakeMode.Always, earlierPhrase = jarvis).started().models())
+
+        // As a build with a wake phrase per endpoint wrote it: a wake of its own, and no model.
+        val ofItsOwn = EndpointCodec.decode(
+            """{"version":1,"endpoints":[{"id":"a","baseUrl":"https://a.example","healthUpload":true,"name":"Home",""" +
+                """"background":true,"wake":{"mode":"always","threshold":0.6,"modelId":null}}]}""",
+        )!!
+        assertEquals(EndpointWake.of(WakeMode.Always, 0.6f), ofItsOwn.single().wake)
+        val adopted = EndpointCodec.adoptingWakeModel(ofItsOwn, jarvis)
+        // Only the model changes, and what is written back reads the same.
+        assertEquals(ofItsOwn.single().copy(wake = EndpointWake.of(WakeMode.Always, 0.6f, jarvis)), adopted.single())
+        val raw = EndpointCodec.encode(adopted)
+        assertTrue(raw.contains("\"modelId\":\"$jarvis\""), raw)
+        assertEquals(adopted, EndpointCodec.decode(raw))
+        assertEquals(adopted, EndpointCodec.adoptingWakeModel(adopted, mine))
     }
 
     @Test
