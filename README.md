@@ -183,7 +183,7 @@ The web app detects the shell and talks to it through:
   confirmation, which then ends as `cancelled`; never a secret being
   typed). Typing, keys and the secret dialog are taken only from a
   page whose endpoint may type on other devices (otherwise `not-enabled`,
-  and `keyboardStatus()` says the keyboard is not enabled and nothing of the
+  for `keyboardOpen()` and `keyboardCancel()` too, and `keyboardStatus()` says the keyboard is not enabled and nothing of the
   device), only while the user is looking at the dashboard — resumed,
   focused, unlocked, not under the app's own settings page or editors
   (otherwise `not-in-front` at once) — and not while the phone's
@@ -226,8 +226,11 @@ The web app detects the shell and talks to it through:
   `unsupported-char`, `busy`, `cancelled`, `failed`),
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
   it is current before any `keyboard` event arrives), each with the request's
-  `id` where it had one. While the page's endpoint may not type, it hears only
-  `not-enabled` errors, and `status` when that switch changes. Nobody has to take these.
+  `id` where it had one. While the page's endpoint may not type, it hears
+  `not-enabled` errors, `status` when that switch changes, and the end
+  (`typed`, `error`, `secret-typed`, `secret-cancelled`) of a request with an
+  `id` that it made before the switch was turned off; nothing else of the
+  keyboard. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
   `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
   `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,

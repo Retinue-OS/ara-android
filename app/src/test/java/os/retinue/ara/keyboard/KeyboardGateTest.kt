@@ -239,6 +239,26 @@ class KeyboardGateTest {
     }
 
     @Test
+    fun anAnsweredWindowFreesThePageAtOnce() {
+        // A Tab approved, then the dashboard's next step: the window is freed when it is
+        // answered (KeyboardRuntime.settle), not when its activity is destroyed later.
+        val windows = KeyboardWindows { 1_000L }
+        assertTrue(windows.ask())
+        val confirmation = {}
+        windows.opened(confirmation)
+        assertEquals(refused(KeyboardError.Busy), decide(plain, windowOpen = windows.open))
+        windows.closed(confirmation) // answered
+        assertEquals(PageDecision.TypeNow, decide(plain, windowOpen = windows.open))
+        // The next window opens; the first one's late onDestroy frees nothing of it.
+        assertTrue(windows.ask())
+        val dialog = {}
+        windows.opened(dialog)
+        windows.closed(confirmation)
+        assertTrue(windows.open)
+        assertEquals(refused(KeyboardError.Busy), decide(plain, windowOpen = windows.open))
+    }
+
+    @Test
     fun aConfirmationEndsBeforeThePageStopsWaiting() {
         // The page waits 30 s (and 0.1 s a character) for a text, 15 s for a key.
         assertEquals(25_000L, KeyboardLogic.confirmTimeoutMs(plain))

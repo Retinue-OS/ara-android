@@ -150,6 +150,9 @@ object KeyboardRuntime {
     /** The window that registered ([windowOpened]) is the pending confirmation's. */
     private var pendingShown = false
 
+    /** The pending confirmation's window, once up: freed (and closed) when it is answered. */
+    private var pendingCloser: (() -> Unit)? = null
+
     /** ConfirmTypeActivity and SecretTypeActivity register while open ([closer] cancels it). */
     fun windowOpened(closer: () -> Unit) = windows.opened(closer)
 
@@ -633,6 +636,7 @@ object KeyboardRuntime {
             unconfirmed = unconfirmed.of(host.address),
         )
         pendingShown = false
+        pendingCloser = null
         // Its window never came up, or never ended: the page still hears an end.
         main.postDelayed({ if (pending?.token == token && !pendingShown) settle(token, approved = false) }, KeyboardLogic.WINDOW_OPENING_MS)
         main.postDelayed({ settle(token, approved = false) }, KeyboardLogic.confirmTimeoutMs(request) + CONFIRM_GRACE_MS)
@@ -646,6 +650,7 @@ object KeyboardRuntime {
     fun confirmationShown(token: String, closer: () -> Unit): Boolean {
         if (confirmation(token) == null) return false
         pendingShown = true
+        pendingCloser = closer
         windows.opened(closer)
         return true
     }
@@ -660,6 +665,15 @@ object KeyboardRuntime {
         val p = confirmation(token) ?: return
         pending = null
         if (!pendingShown) windows.abandon()
+        // Answered, the window is free at once, not when its activity is destroyed (after the
+        // dashboard has resumed): the page's next step, sent as soon as this key or text is
+        // typed, would hear busy. Its closer still closes it, should it be up yet (the runtime's
+        // own timeout); from the window itself, which has settled already, it does nothing.
+        pendingCloser?.let { closer ->
+            pendingCloser = null
+            windows.closed(closer)
+            closer()
+        }
         if (approved) {
             streak.approved()
             stop.approved()

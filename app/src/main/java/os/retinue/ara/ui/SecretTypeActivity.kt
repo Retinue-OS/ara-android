@@ -136,6 +136,8 @@ class SecretTypeActivity : Activity() {
     private fun typeAndFinish(enter: Boolean) {
         if (settled) return
         settled = true
+        // Answered: the window is free now, not only once destroyed, or the page's next step hears busy.
+        KeyboardRuntime.windowClosed(closer)
         val edit = field
         val editable = edit?.text
         val chars = CharArray(editable?.length ?: 0)
@@ -154,6 +156,8 @@ class SecretTypeActivity : Activity() {
     private fun cancelAndFinish() {
         if (settled) return
         settled = true
+        // Answered: the window is free now, not only once destroyed, or the page's next step hears busy.
+        KeyboardRuntime.windowClosed(closer)
         endAutofill()
         field?.text?.clear()
         KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, requestId))
