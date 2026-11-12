@@ -2,6 +2,9 @@ package os.retinue.ara.ui
 
 import android.annotation.SuppressLint
 import android.content.MutableContextWrapper
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.compose.runtime.getValue
@@ -9,10 +12,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
+import os.retinue.ara.keyboard.KeyboardEvent
 import os.retinue.ara.keyboard.KeyboardListener
 import os.retinue.ara.keyboard.KeyboardLogic
 import os.retinue.ara.keyboard.KeyboardRuntime
 import os.retinue.ara.keyboard.KeyboardStatus
+import os.retinue.ara.keyboard.PageEventHold
 import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncListener
 import os.retinue.ara.health.HealthSyncRuntime
@@ -175,10 +180,46 @@ object ShellPage {
     /**
      * Keyboard events (and the status before them) go to the page, whichever
      * window shows it — `status` only while its server may type, the end of
-     * its own request in any case.
+     * its own request in any case. The end of a request waits for the
+     * dashboard to be in front again ([PageEventHold]), so the step the page
+     * sends on hearing it is not refused while the phone's confirmation or
+     * password dialog is still closing.
      */
-    private val keyboardListener = KeyboardListener { event ->
-        if (webView != null && KeyboardLogic.eventForPage(event, keyboardAllowed(), keyboardRequests)) bridge.keyboardEvent(event)
+    private val keyboardListener = KeyboardListener { event -> offerKeyboardEvent(PageKeyboardEvent(event, filtered = true)) }
+
+    /**
+     * A keyboard event on its way to the page; [filtered]: whether
+     * [KeyboardLogic.eventForPage] decides — when it goes, with what holds
+     * then — if the page gets it at all.
+     */
+    private class PageKeyboardEvent(val event: KeyboardEvent, val filtered: Boolean)
+
+    private val keyboardHold = PageEventHold<PageKeyboardEvent>({ KeyboardLogic.isFinal(it.event) }, SystemClock::elapsedRealtime)
+    private val holdTimer = Handler(Looper.getMainLooper())
+    private val holdDue = Runnable { releaseKeyboardEvents() }
+
+    /** The page's server may type or no longer may (settings): the page re-reads its status, in order with the events. */
+    fun keyboardStatusChanged() = offerKeyboardEvent(PageKeyboardEvent(KeyboardEvent.status, filtered = false))
+
+    private fun offerKeyboardEvent(e: PageKeyboardEvent) {
+        deliverKeyboardEvents(keyboardHold.offer(e, dashboardInFront()))
+    }
+
+    /** The window showing the page may have come to the front (resumed, focused, uncovered): what waits goes now. */
+    fun releaseKeyboardEvents() {
+        if (!keyboardHold.isEmpty) deliverKeyboardEvents(keyboardHold.release(dashboardInFront()))
+    }
+
+    private fun dashboardInFront(): Boolean = owner?.dashboardInFront() == true
+
+    private fun deliverKeyboardEvents(events: List<PageKeyboardEvent>) {
+        for (e in events) {
+            if (webView != null && (!e.filtered || KeyboardLogic.eventForPage(e.event, keyboardAllowed(), keyboardRequests))) {
+                bridge.keyboardEvent(e.event)
+            }
+        }
+        holdTimer.removeCallbacks(holdDue)
+        keyboardHold.dueAt()?.let { holdTimer.postDelayed(holdDue, (it - SystemClock.elapsedRealtime()).coerceAtLeast(0L)) }
     }
 
     /** [window] was created: the first one creates the page and shows it. */
@@ -203,6 +244,9 @@ object ShellPage {
             if (WakeRuntime.onWake === onWake) WakeRuntime.onWake = null
             if (HealthSyncRuntime.listener === healthListener) HealthSyncRuntime.listener = null
             if (KeyboardRuntime.listener === keyboardListener) KeyboardRuntime.listener = null
+            // No page to hear them, as for an event that comes from now on: dropped, with their timer.
+            holdTimer.removeCallbacks(holdDue)
+            keyboardHold.clear()
             speech?.shutdown()
             speech = null
             webView?.let(::destroy)
@@ -242,6 +286,8 @@ object ShellPage {
         window.pageContainer.addView(view)
         if (window in resumed) view.onResume() else view.onPause()
         previous?.onPageLeft()
+        // The end of a request waiting for the dashboard may go now that this window shows it.
+        releaseKeyboardEvents()
     }
 
     /** The renderer is gone: a fresh WebView for the owner, which loads the page again. */

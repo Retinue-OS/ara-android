@@ -185,6 +185,9 @@ object KeyboardLogic {
             (event.state == KeyboardEvent.ERROR && event.error == KeyboardError.NotEnabled) ||
             (event.state in FINAL_STATES && event.id != null && event.id in requested)
 
+    /** Whether [event] ends a request (and so may wait for the dashboard, [PageEventHold]). */
+    fun isFinal(event: KeyboardEvent): Boolean = event.state in FINAL_STATES
+
     /** The events that end a request: its id's last word. */
     private val FINAL_STATES = setOf(KeyboardEvent.TYPED, KeyboardEvent.SECRET_TYPED, KeyboardEvent.SECRET_CANCELLED, KeyboardEvent.ERROR)
 

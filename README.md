@@ -226,7 +226,9 @@ The web app detects the shell and talks to it through:
   `unsupported-char`, `busy`, `cancelled`, `failed`),
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
   it is current before any `keyboard` event arrives), each with the request's
-  `id` where it had one. While the page's endpoint may not type, it hears
+  `id` where it had one. The end of a request reaches the page once the
+  dashboard is in front again, at the latest 1.5 s after it came, and no
+  later event overtakes it. While the page's endpoint may not type, it hears
   `not-enabled` errors, `status` when that switch changes, and the end
   (`typed`, `error`, `secret-typed`, `secret-cancelled`) of a request with an
   `id` that it made before the switch was turned off; nothing else of the
@@ -1122,7 +1124,10 @@ page nobody is looking at gets `not-in-front`); no confirmation or password
 dialog open (`busy`; one such window at a time); then the rule below.
 Typing that started then runs to its end (or Stop). A call with invalid
 arguments throws; every other request with an id gets exactly one final
-event.
+event. The page hears it once the dashboard is in front again, at the latest
+1.5 s after it came (`PageEventHold`): a key approved on the phone is typed
+in 24 ms, while the confirmation is still closing, and the step the page
+sends on hearing it would otherwise be refused as `not-in-front`.
 
 The phone itself asks before anything that can make the other device *do*
 something, and lets plain one-line text type by itself, so that typing by
@@ -1254,8 +1259,9 @@ shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation
            ShellMessages, FileNames,                  decisions, the bridge wire format, download
            ContentDisposition, ShellLinks             file names, view or save, retinue-shell: links (unit-tested)
 keyboard/  HidKeys, KeyLayouts, KeyPacer,          — pure: the HID descriptor and reports, characters →
-           KeyboardLogic, KeyboardConsent             presses per layout, pacing, prechecks, the page's
-                                                      gate, the rule, modes, pause, count (unit-tested)
+           KeyboardLogic, KeyboardConsent,            presses per layout, pacing, prechecks, the page's
+           PageEventHold                              gate, the rule, modes, pause, count, when the
+                                                      page hears an end (unit-tested)
            KeyboardRuntime, KeyboardService,        — HID registration, connections, typing; the
            KeyboardPrefs                              foreground service; on/off, last device, layouts
                                                       and modes

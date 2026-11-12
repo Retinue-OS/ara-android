@@ -462,6 +462,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 }
                 // The tray needs the apps before it is first pulled up (it only comes up as far as they go).
                 LaunchedEffect(Unit) { viewModel.refreshApps() }
+                // The settings page or an editor closed over the dashboard: an end waiting for it goes now.
+                val covered = dashboardCovered
+                LaunchedEffect(covered) { if (!covered) page.releaseKeyboardEvents() }
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     ShellLayout(launcher, trayItems, alternateOpen)
                     // Sheets are windows above everything here, so they step aside for the folder editor.
@@ -1087,6 +1090,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         // Also here: the other window may have had it meanwhile (both up in a desktop mode).
         if (!parking) page.take(this)
         resumed = true
+        page.releaseKeyboardEvents()
         UpdateRuntime.onShellResumed()
         HealthSyncRuntime.onShellResumed()
         tryDeliverWake()
@@ -1101,7 +1105,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             parking = false
             page.take(this)
         }
-        if (hasFocus) tryDeliverWake()
+        if (hasFocus) {
+            tryDeliverWake()
+            // Back from the phone's confirmation or password dialog: the page hears the end of its request now.
+            page.releaseKeyboardEvents()
+        }
     }
 
     /** Split screen begins or ends: a waiting wake may go out now (see [ShellDecisions.pendingWake]). */
@@ -1296,7 +1304,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             if (labelsChanged) bridge.endpointsChanged(labels)
             if (deviceChanged) bridge.deviceSettingsChanged(s.deviceWebSettings)
             // The page's keyboard status says whether its server may type: re-read (a `status` event).
-            if (page.keyboardAllowed() != typingAllowed) bridge.keyboardEvent(KeyboardEvent.status)
+            if (page.keyboardAllowed() != typingAllowed) page.keyboardStatusChanged()
             openPendingLink()
             tryDeliverWake()
         }
@@ -1857,10 +1865,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * started passes this once, and runs to its end (or Stop).
      */
     private fun keyboardFromPage(request: PageRequest) {
-        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         val facts = PageFacts(
             serverAllows = page.keyboardAllowed(),
-            inFront = ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, covered = dashboardCovered),
+            inFront = dashboardInFront(),
             serverHost = settings.endpointSet.pageEndpoint(page.loadedEndpointId)?.hostLabel,
         )
         val outcome = KeyboardRuntime.fromPage(request, facts)
@@ -1875,6 +1882,16 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is PageOutcome.Confirm -> startConfirmation(outcome.token)
             is PageOutcome.OpenSecret -> (request as? PageRequest.Secret)?.let { openSecretDialog(it, outcome) }
         }
+    }
+
+    /**
+     * The user is looking at the dashboard in this window
+     * ([ShellDecisions.mayType]): what the gate asks of a page's request, and
+     * what the end of one waits for before the page hears it (ShellPage).
+     */
+    internal fun dashboardInFront(): Boolean {
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        return ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, covered = dashboardCovered)
     }
 
     /** The app's own pages over the dashboard, under which the page cannot be seen. */
