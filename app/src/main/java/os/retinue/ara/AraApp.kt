@@ -31,6 +31,8 @@ class AraApp : Application() {
         val store = AraStore(this)
         // The one phrase model of earlier builds joins the library first, and stays the one its endpoints listen for.
         val migrated = WakeModelFiles.migrateLegacy(this)
+        // What every window's wake card shows of the models, from the start.
+        WakeModelFiles.refreshState(this)
         scope.launch {
             if (migrated != null) {
                 // The earlier file goes only once the choice is stored; a failure here must not stop the settings below.

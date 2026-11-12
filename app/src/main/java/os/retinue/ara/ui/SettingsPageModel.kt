@@ -37,7 +37,7 @@ internal data class WakeConditions(
     val modelBusy: Boolean,
     val modelBusyId: String?,
     val modelMessage: String?,
-    /** The instances listened for now (WakeRuntime.listening). */
+    /** The instances a phrase heard now would wake (WakeRuntime.listening). */
     val listening: Set<String> = emptySet(),
 )
 

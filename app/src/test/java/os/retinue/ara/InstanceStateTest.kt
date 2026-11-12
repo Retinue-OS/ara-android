@@ -137,6 +137,47 @@ class InstanceStateTest {
     }
 
     @Test
+    fun ofInstancesThatShareAPhraseModelOnlyTheOneItWakesCountsAsListenedFor() {
+        // Home (shown) and Work listen with the same model file, Club with its own: Work's phrase wakes Home.
+        assertEquals(listOf(0, 0, 2), WakePhraseScorers.takers(listOf("jarvis.onnx", "jarvis.onnx", "mine.onnx")))
+        // The instance shown does not listen, and two in the background share a model: the first of them takes it.
+        assertEquals(listOf(0, 0), WakePhraseScorers.takers(listOf("mine.onnx", "mine.onnx")))
+        // A model each: each is woken by its own.
+        assertEquals(listOf(0, 1), WakePhraseScorers.takers(listOf("jarvis.onnx", "mine.onnx")))
+        assertEquals(emptyList(), WakePhraseScorers.takers(emptyList<String>()))
+        // These are the phrases the scorers hand a wake to, whichever of the sharing thresholds is reached.
+        val modelOf = listOf(0, 0, 1)
+        val heard = wakes(WakePhraseScorers(listOf(0.5f, 0.3f, 0.5f), modelOf), 2, floatArrayOf(0.4f, 0f), floatArrayOf(0f, 0.9f))
+        assertEquals(listOf<Int?>(0, 2), heard)
+        assertEquals<Set<Int?>>(WakePhraseScorers.takers(modelOf).toSet(), heard.toSet())
+    }
+
+    @Test
+    fun aStoppedListenerStartsAfreshOnlyWhenThePhraseModelsListenedWithChange() {
+        val jarvis = "oww:hey_jarvis_v0.1"
+        val settings = ShellSettings(endpoints = listOf(home.copy(background = true), work, club), currentEndpointId = "home")
+        fun models(s: ShellSettings) = WakeTargets.models(WakeTargets.of(s))
+        fun having(id: String, change: (Endpoint) -> Endpoint) =
+            settings.copy(endpoints = settings.endpoints.map { if (it.id == id) change(it) else it })
+        val before = models(settings)
+        assertEquals(setOf(jarvis, "user:work"), before)
+        // Another instance shown, another mode or threshold: the same models, and an error keeps its backoff.
+        assertEquals(before, models(settings.copy(currentEndpointId = "work")))
+        assertEquals(before, models(having("work") { it.copy(wake = EndpointWake.of(WakeMode.Always, 0.3f, "user:work")) }))
+        // Another model chosen for an instance, or none: the one that stopped the listener may be gone.
+        assertEquals(setOf(jarvis), models(having("work") { it.copy(wake = it.wake!!.copy(modelId = jarvis)) }))
+        assertEquals(setOf(jarvis), models(having("work") { it.copy(wake = it.wake!!.copy(modelId = null)) }))
+        // So it may when its instance is no longer listened for: its mode off, at rest, or removed.
+        assertEquals(setOf(jarvis), models(having("work") { it.copy(wake = it.wake!!.copy(mode = WakeMode.Off.key)) }))
+        assertEquals(setOf(jarvis), models(having("work") { it.copy(background = false) }))
+        assertEquals(setOf(jarvis), models(settings.copy(endpoints = settings.endpoints.filter { it.id != "work" })))
+        // An instance that joins without a model, or with one already listened with, brings no new model.
+        assertEquals(before, models(having("club") { it.copy(background = true, wake = EndpointWake.of(WakeMode.Always, 0.5f)) }))
+        assertEquals(before, models(having("club") { it.copy(background = true) }))
+        assertEquals(emptySet(), models(ShellSettings()))
+    }
+
+    @Test
     fun theWakeTicketKeepsTheInstanceItWasIssuedFor() {
         var n = 0
         val ticket = WakeTicket(maxAgeMs = 1_000) { "t${++n}" }

@@ -9,6 +9,8 @@ import os.retinue.ara.wake.WakeModelCatalog
 import os.retinue.ara.wake.WakeModelIndex
 import os.retinue.ara.wake.WakeModelNames
 import os.retinue.ara.wake.WakeModelSource
+import os.retinue.ara.wake.WakeModelState
+import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakePhraseModel
 import os.retinue.ara.wake.wakeModelList
 
@@ -80,5 +82,57 @@ class WakeModelLibraryTest {
         val list = wakeModelList(listOf(mine)) { it.id == mine.id }
         assertEquals(WakeModelCatalog.builtins.map { it.id } + mine.id, list.map { it.model.id })
         assertEquals(listOf(mine.id), list.filter { it.downloaded }.map { it.model.id })
+    }
+
+    private val features = WakeModelStatus(melspectrogram = true, embedding = true, phrase = false)
+
+    @Test
+    fun oneModelJobAtATimeForThePhoneAndItsEndShowsTheFilesAfresh() {
+        // One state for both windows: what the one does, the other sees.
+        val state = WakeModelState()
+        assertFalse(state.features.value.featuresReady)
+        assertEquals(emptyList(), state.library.value)
+        val mine = WakePhraseModel("user:1", "hey_retinue.onnx", WakeModelSource.File)
+        val before = wakeModelList(listOf(mine)) { it.id == mine.id }
+        state.show(features, before)
+        assertTrue(state.features.value.featuresReady)
+        assertEquals(before, state.library.value)
+
+        // A removal begins in one window: a job of the other is refused, whatever it would work on.
+        assertTrue(state.begin(mine.id))
+        assertFalse(state.begin(null))
+        assertFalse(state.begin(mine.id))
+        assertFalse(state.begin("oww:alexa_v0.1"))
+        assertTrue(state.busy.value)
+        assertEquals(mine.id, state.busyId.value, "the refused jobs change nothing")
+        assertEquals(before, state.library.value)
+
+        // Over: the list is the files as the job left them, and the next job may begin.
+        val after = wakeModelList(emptyList()) { false }
+        state.end(features, after)
+        assertFalse(state.busy.value)
+        assertNull(state.busyId.value)
+        assertEquals(after, state.library.value)
+        assertTrue(state.begin(null))
+        assertTrue(state.busy.value)
+        assertNull(state.busyId.value)
+    }
+
+    @Test
+    fun aModelIsChosenOnlyWhileItsFileIsThereAndNoJobWorksOnIt() {
+        val state = WakeModelState()
+        assertTrue(state.mayUse("user:1", onPhone = true))
+        // Its file is gone (removed in the other window), whatever list a window still shows.
+        assertFalse(state.mayUse("user:1", onPhone = false))
+        // A job works on it, a removal for one: not chosen until that is over. Any other model is.
+        state.begin("user:1")
+        assertFalse(state.mayUse("user:1", onPhone = true))
+        assertTrue(state.mayUse("user:2", onPhone = true))
+        assertFalse(state.mayUse("user:2", onPhone = false))
+        state.end(features, emptyList())
+        assertTrue(state.mayUse("user:1", onPhone = true))
+        // A job that names no model (an upload, the feature models) holds none back.
+        state.begin(null)
+        assertTrue(state.mayUse("user:1", onPhone = true))
     }
 }

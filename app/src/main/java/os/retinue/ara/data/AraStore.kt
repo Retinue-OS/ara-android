@@ -21,7 +21,6 @@ import os.retinue.ara.launcher.AppRecency
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.update.UpdateChannel
-import os.retinue.ara.wake.WakeMode
 
 // The same store file the voice client used, so the base URL and the
 // certificate alias carry over an update; its other keys are simply ignored.
@@ -117,11 +116,8 @@ class AraStore(context: Context) {
      * choice for the phone, the phrase model chosen. The keys stay, so an
      * older build still finds its setting.
      */
-    private fun legacyWake(p: Preferences): EndpointWake = EndpointWake.of(
-        WakeMode.fromKey(p[K.wakeMode]),
-        p[K.wakeThreshold] ?: EndpointWake.DEFAULT_THRESHOLD,
-        p[K.wakeModel]?.takeIf { it.isNotBlank() },
-    )
+    private fun legacyWake(p: Preferences): EndpointWake =
+        EndpointCodec.legacyWake(p[K.wakeMode], p[K.wakeThreshold], p[K.wakeModel])
 
     /**
      * The wake phrase of the endpoint [id] on this phone: [change] applied to
@@ -137,14 +133,13 @@ class AraStore(context: Context) {
      * doing so. In one edit, so that the earlier file can go once this
      * returns: the device-wide choice, unless one is stored already, for the
      * endpoints without a wake of their own ([legacyWake]); and the endpoints
-     * that have one, and no model yet (see [EndpointCodec.adoptingWakeModel]).
-     * Repeating it changes nothing.
+     * that have one, and no model yet (see [EndpointCodec.adoptingLegacyWakeModel],
+     * which decides both). Repeating it changes nothing.
      */
     suspend fun adoptLegacyWakeModel(id: String) = edit { p ->
-        p.putOrRemove(K.wakeModel, legacyWake(p).adopting(id).modelId)
-        val stored = EndpointCodec.decode(p[K.endpoints]) ?: return@edit
-        val adopted = EndpointCodec.adoptingWakeModel(stored, id)
-        if (adopted != stored) p[K.endpoints] = EndpointCodec.encode(adopted)
+        val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(p[K.wakeModel], EndpointCodec.decode(p[K.endpoints]), id)
+        p[K.wakeModel] = choice
+        if (list != null) p[K.endpoints] = EndpointCodec.encode(list)
     }
 
     /**

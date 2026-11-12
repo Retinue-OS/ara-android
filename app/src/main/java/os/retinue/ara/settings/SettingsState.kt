@@ -70,7 +70,12 @@ data class WakeInfo(
     /** The model a job works on, while [busy]. */
     val busyId: String?,
     val message: String?,
-    /** The other instances whose phrase is listened for now (labels): they work in the background. */
+    /**
+     * The other instances a phrase heard now would wake (labels): they work
+     * in the background. One that shares its phrase model with the instance
+     * shown, or with one before it, is not among them: that phrase wakes the
+     * other one.
+     */
     val alsoListening: List<String> = emptyList(),
 )
 

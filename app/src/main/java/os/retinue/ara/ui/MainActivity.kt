@@ -156,6 +156,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
 
+        /** Saved state: [modelPickEndpoint], while the file picker is up. */
+        private const val STATE_MODEL_PICK_ENDPOINT = "os.retinue.ara.state.MODEL_PICK_ENDPOINT"
+
         private const val TAG = "MainActivity"
     }
 
@@ -360,6 +363,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     /**
      * The instance a phrase model is being picked for: the one shown when the
      * file picker opened (a wake may bring another to the front meanwhile).
+     * Kept in the saved state ([onSaveInstanceState]): Android may recreate
+     * this window behind the picker, and the file still arrives.
      */
     private var modelPickEndpoint: String? = null
 
@@ -383,6 +388,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Before the picker's result, which comes after onStart.
+        modelPickEndpoint = savedInstanceState?.getString(STATE_MODEL_PICK_ENDPOINT)
 
         pageContainer = FrameLayout(this)
         page.open(this)
@@ -929,6 +936,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     // --- Lifecycle -----------------------------------------------------------
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        // super saves which picker a result belongs to; this, whom its file is for.
+        super.onSaveInstanceState(outState)
+        modelPickEndpoint?.let { outState.putString(STATE_MODEL_PICK_ENDPOINT, it) }
+    }
 
     override fun onStart() {
         super.onStart()

@@ -214,6 +214,20 @@ class WakeFeaturesTest {
     }
 
     @Test
+    fun aWindowLongerThanTheEmbeddingsKeptNeverComes() {
+        // Why a phrase model that reads more is refused when it is added (OnnxWakeModels.checkScores):
+        // the pipeline keeps the longest window any model asks for, so no model would get one.
+        fun windows(frames: Int): Int {
+            val f = WakeFeatures(fakeMel, fakeEmbed, embeddingFrames = frames)
+            var produced = 0
+            repeat(WakeFeatures.EMBEDDING_MAX + 30) { f.push(ShortArray(WakeFeatures.CHUNK)) { produced++ } }
+            return produced
+        }
+        assertEquals(31, windows(WakeFeatures.EMBEDDING_MAX))
+        assertEquals(0, windows(WakeFeatures.EMBEDDING_MAX + 1))
+    }
+
+    @Test
     fun resetStartsOver() {
         val f = WakeFeatures(fakeMel, fakeEmbed, embeddingFrames = 1)
         f.push(ShortArray(1280)) { }

@@ -75,23 +75,24 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
             trayItems(apps, shortcuts, bar, launches, usage)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    // The models and the job that changes them are the phone's, the same in
+    // every window (WakeModelFiles.state); what a job reported is this window's.
+
     /** The feature models' files (its `phrase` is not used: see [library]). */
-    private val _models = MutableStateFlow(WakeModelFiles.status(app, null))
-    val models: StateFlow<WakeModelStatus> = _models.asStateFlow()
+    val models: StateFlow<WakeModelStatus> = WakeModelFiles.state.features
 
     /** The phone's phrase models (the list), with whether each is downloaded. */
-    private val _library = MutableStateFlow(WakeModelFiles.library(app))
-    val library: StateFlow<List<WakeModelEntry>> = _library.asStateFlow()
+    val library: StateFlow<List<WakeModelEntry>> = WakeModelFiles.state.library
 
     /** The list's model a job is working on (a download, a removal), for its row. */
-    private val _modelBusyId = MutableStateFlow<String?>(null)
-    val modelBusyId: StateFlow<String?> = _modelBusyId.asStateFlow()
+    val modelBusyId: StateFlow<String?> = WakeModelFiles.state.busyId
 
-    /** A model download or import in progress, or its last result (shown in settings). */
+    /** The last result of a model job started in this window (shown in settings). */
     private val _modelMessage = MutableStateFlow<String?>(null)
     val modelMessage: StateFlow<String?> = _modelMessage.asStateFlow()
-    private val _modelBusy = MutableStateFlow(false)
-    val modelBusy: StateFlow<Boolean> = _modelBusy.asStateFlow()
+
+    /** A model download, import or removal is in progress, in whichever window. */
+    val modelBusy: StateFlow<Boolean> = WakeModelFiles.state.busy
 
     val wakeStatus: StateFlow<WakeStatus> = WakeRuntime.status
 
@@ -332,11 +333,20 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
         return appCtx.getString(R.string.wake_model_added, name, EndpointLabels.label(endpoint, after.endpoints))
     }
 
-    /** The instance [endpointId] listens for the downloaded model [id], or for none (null). */
+    /**
+     * The instance [endpointId] listens for the downloaded model [id], or for
+     * none (null). Whether the model can be chosen is asked of the files and
+     * of the phone's one job, not of the list this window shows: the other
+     * window may have removed it, or be removing it now, and no instance is
+     * to be left with a model that is gone. The choice is on its way to the
+     * store before any later job can begin.
+     */
     fun useModel(endpointId: String, id: String?) {
-        if (id != null && _library.value.none { it.model.id == id && it.downloaded }) return
-        // Not the model a job works on right now: a removal would leave the instance with a model that is gone.
-        if (id != null && _modelBusy.value && _modelBusyId.value == id) return
+        if (id != null && !WakeModelFiles.mayUse(appCtx, id)) {
+            // The row that offered it goes, where the list shown was behind the files.
+            refreshModels()
+            return
+        }
         _modelMessage.value = null
         viewModelScope.launch { store.updateEndpointWake(endpointId) { it.copy(modelId = id) } }
     }
@@ -348,35 +358,33 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun removeModel(id: String) = modelJob(id) {
         val name = nameOf(id)
-        val users = store.releaseWakeModel(id)
+        val users = WakeModelFiles.remove(appCtx, id) { store.releaseWakeModel(id) }
         if (users.isNotEmpty()) return@modelJob appCtx.getString(R.string.wake_model_in_use, name, users.joinToString())
-        WakeModelFiles.remove(appCtx, id)
         appCtx.getString(R.string.wake_model_removed, name)
     }
 
     private fun nameOf(id: String) = WakeModelFiles.model(appCtx, id)?.name ?: id
 
-    fun refreshModels() {
-        _models.value = WakeModelFiles.status(appCtx, null)
-        _library.value = WakeModelFiles.library(appCtx)
-    }
+    /** Read the model files again, for both windows' cards. */
+    fun refreshModels() = WakeModelFiles.refreshState(appCtx)
 
-    /** One model job at a time ([id]: the list's model it works on); [block] returns what to report. */
+    /**
+     * One model job at a time for the phone, whichever window starts it ([id]:
+     * the list's model it works on); [block] returns what to report here.
+     */
     private fun modelJob(id: String?, block: suspend () -> String) {
-        if (_modelBusy.value) return
-        _modelBusy.value = true
-        _modelBusyId.value = id
-        _modelMessage.value = null
+        // Begun inside the coroutine: a window that is closing starts none, and so leaves none unfinished.
         viewModelScope.launch {
             val app = appCtx
+            if (!WakeModelFiles.beginJob(id)) return@launch
+            _modelMessage.value = null
             _modelMessage.value = try {
                 block()
             } catch (e: Exception) {
                 app.getString(R.string.wake_models_failed, e.message ?: e.javaClass.simpleName)
             } finally {
-                _modelBusy.value = false
-                _modelBusyId.value = null
-                refreshModels()
+                // Also when the window closed under the job (cancelled): the phone's job is over.
+                WakeModelFiles.endJob(app)
                 WakeRuntime.refresh()
             }
         }

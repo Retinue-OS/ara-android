@@ -111,7 +111,11 @@ object WakeRuntime {
 
     private val _listening = MutableStateFlow<Set<String>>(emptySet())
 
-    /** The instances (endpoint ids) whose phrase is listened for right now. */
+    /**
+     * The instances (endpoint ids) a phrase heard right now would wake: those
+     * listened for, and of the ones that share a phrase model only the first
+     * (see [WakePhraseScorers.takers]).
+     */
     val listening: StateFlow<Set<String>> = _listening.asStateFlow()
 
     /**
@@ -148,8 +152,13 @@ object WakeRuntime {
 
     /** The instances to listen for (see [WakeTargets]), from the settings. */
     fun configure(targets: List<WakeTarget>) = onMain {
+        // Other phrase models than before: what stopped the listener may have left with one of them (as in refresh()).
+        val modelsChanged = WakeTargets.models(targets) != WakeTargets.models(this.targets)
         this.targets = targets
-        if (targets.isEmpty()) lastError = null
+        if (targets.isEmpty() || modelsChanged) {
+            lastError = null
+            micBackoff.succeeded()
+        }
         // A changed phrase set replaces the listener in evaluate().
         evaluate()
     }
@@ -297,7 +306,8 @@ object WakeRuntime {
         }.values.toList()
         val listen = active.isNotEmpty()
         if (listen) startListener(active) else stopListener()
-        _listening.value = active.map { it.endpointId }.toSet()
+        // Of the instances that share a model file, the one its phrase wakes: the listener's own rule.
+        _listening.value = WakePhraseScorers.takers(active.map { it.file }).map { active[it].endpointId }.toSet()
 
         val error = lastError
         _status.value = when {

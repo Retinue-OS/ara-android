@@ -55,6 +55,14 @@ object WakeTargets {
             }
             .sortedByDescending { it.foreground }
     }
+
+    /**
+     * The phrase models [targets] listen with (their ids). Where it changes,
+     * a listener that stopped on an error is tried afresh (WakeRuntime.configure):
+     * the model that stopped it may be the one that left. The order of the
+     * targets, a mode or a threshold changes nothing here.
+     */
+    fun models(targets: List<WakeTarget>): Set<String> = targets.mapNotNull { it.modelId }.toSet()
 }
 
 /**
@@ -125,6 +133,7 @@ class WakePhraseScorers(thresholds: List<Float>, private val modelOf: List<Int>)
     }
 
     private val scorers = thresholds.map { WakeScorer(threshold = it) }
+    private val takes = takers(modelOf)
 
     /** Feed one frame's [scores] (one per model); the phrase (its index) the frame wakes, or null. */
     fun onScores(scores: FloatArray, nowMs: Long): Int? {
@@ -133,7 +142,18 @@ class WakePhraseScorers(thresholds: List<Float>, private val modelOf: List<Int>)
         for (p in scorers.indices) {
             if (scorers[p].onScore(scores[modelOf[p]], nowMs) && heard < 0) heard = p
         }
-        return if (heard < 0) null else modelOf.indexOf(modelOf[heard])
+        return if (heard < 0) null else takes[heard]
+    }
+
+    companion object {
+        /**
+         * For each phrase, by its model in [modelOf], the phrase a wake of it
+         * goes to (its index): the first with that model. A phrase that is
+         * not its own taker is listened for, but never wakes its instance
+         * while the taker listens too; so it is not one of the instances the
+         * settings name as listened for (WakeRuntime.listening).
+         */
+        fun <M> takers(modelOf: List<M>): List<Int> = modelOf.map { modelOf.indexOf(it) }
     }
 }
 

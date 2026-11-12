@@ -64,12 +64,7 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFiles: List<File
             melInput = mel.inputNames.first()
             embedInput = embed.inputNames.first()
             keywordInputs = keywords.map { it.inputNames.first() }
-            keywordFrameCounts = keywords.mapIndexed { i, keyword ->
-                val info = keyword.inputInfo[keywordInputs[i]]?.info as? TensorInfo
-                val shape = info?.shape
-                val n = if (shape != null && shape.size >= 2) shape[1] else -1L
-                if (n > 0) n.toInt() else 16
-            }
+            keywordFrameCounts = keywords.mapIndexed { i, keyword -> frameCount(keyword, keywordInputs[i]) }
         } catch (e: Throwable) {
             opened.asReversed().forEach { runCatching { it.close() } }
             throw e
@@ -129,6 +124,43 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFiles: List<File
             OrtSession.SessionOptions().use { options ->
                 env.createSession(file.absolutePath, options).close()
             }
+        }
+
+        /**
+         * Throws unless [file] is a phrase model the listener can score: it
+         * loads, reads no more embeddings than the feature pipeline keeps, and
+         * gives a score for a window of them (silence here), fed as [score]
+         * feeds it. A file that only loads, one of the feature models say,
+         * would stop the listener at its first window, and with it every
+         * phrase listened for. Needs no feature model.
+         */
+        fun checkScores(file: File) {
+            val env = OrtEnvironment.getEnvironment()
+            OrtSession.SessionOptions().use { options ->
+                env.createSession(file.absolutePath, options).use { session ->
+                    val input = session.inputNames.first()
+                    val frames = frameCount(session, input)
+                    // A longer window never comes, and the pipeline keeps the longest any model asks for.
+                    require(frames <= WakeFeatures.EMBEDDING_MAX) {
+                        "it reads $frames embeddings at a time, more than the ${WakeFeatures.EMBEDDING_MAX} that are kept"
+                    }
+                    val size = WakeFeatures.EMBEDDING_SIZE
+                    val window = FloatBuffer.wrap(FloatArray(frames * size))
+                    OnnxTensor.createTensor(env, window, longArrayOf(1, frames.toLong(), size.toLong())).use { tensor ->
+                        session.run(mapOf(input to tensor)).use { result ->
+                            val scores = (result.get(0) as? OnnxTensor)?.floatBuffer
+                            require(scores != null && scores.hasRemaining()) { "it gives no score" }
+                        }
+                    }
+                }
+            }
+        }
+
+        /** How many embeddings a phrase model reads at a time: its input's second dimension, 16 where that is not fixed. */
+        private fun frameCount(session: OrtSession, input: String): Int {
+            val shape = (session.inputInfo[input]?.info as? TensorInfo)?.shape
+            val n = if (shape != null && shape.size >= 2) shape[1] else -1L
+            return if (n > 0) n.toInt() else 16
         }
     }
 

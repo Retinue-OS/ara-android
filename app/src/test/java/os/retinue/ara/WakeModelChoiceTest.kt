@@ -28,22 +28,28 @@ class WakeModelChoiceTest {
     private val jarvis = WakeModelCatalog.HEY_JARVIS
     private val mine = "user:0b6f3c1e-7c1d-4f7e-9c51-3d1f0a8c2b11"
 
+    /** The modes as the key `wake_mode` stores them. */
+    private val always = WakeMode.Always.key
+    private val visible = WakeMode.WhileVisible.key
+
     /**
-     * What a phone has stored of the wake phrase: the endpoint list as it was
-     * written, the one setting for the phone of earlier builds ([mode],
-     * [threshold], and [wakeModel], the key `wake_model` of the builds with a
-     * library and one choice), and the one phrase file of the builds before
-     * the library ([earlierPhrase]: the id it gets in the library, null when
-     * there is no such file).
+     * What a phone has stored of the wake phrase, as it is stored: the
+     * endpoint list as it was written, the one setting for the phone of
+     * earlier builds (the keys `wake_mode`, `wake_threshold` and, of the
+     * builds with a library and one choice, `wake_model`; null: not stored),
+     * and the one phrase file of the builds before the library
+     * ([earlierPhrase]: the id it gets in the library, null when there is no
+     * such file). What the app makes of them is the store's own code
+     * (EndpointCodec.legacyWake, EndpointCodec.adoptingLegacyWakeModel).
      */
     private data class Phone(
         val endpoints: List<Endpoint>,
-        val mode: WakeMode = WakeMode.Off,
-        val threshold: Float = EndpointWake.DEFAULT_THRESHOLD,
+        val mode: String? = null,
+        val threshold: Float? = null,
         val wakeModel: String? = null,
         val earlierPhrase: String? = null,
     ) {
-        private val legacy get() = EndpointWake.of(mode, threshold, wakeModel)
+        private val legacy get() = EndpointCodec.legacyWake(mode, threshold, wakeModel)
 
         /**
          * A start of the app (AraApp): the earlier file joins the library, its
@@ -52,11 +58,8 @@ class WakeModelChoiceTest {
          */
         fun started(cutShort: Boolean = false): Phone {
             val id = earlierPhrase ?: return this
-            return copy(
-                wakeModel = legacy.adopting(id).modelId,
-                endpoints = EndpointCodec.adoptingWakeModel(endpoints, id),
-                earlierPhrase = if (cutShort) id else null,
-            )
+            val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(wakeModel, endpoints, id)
+            return copy(wakeModel = choice, endpoints = list ?: endpoints, earlierPhrase = if (cutShort) id else null)
         }
 
         /** The endpoints as the app reads them (AraStore.endpointsOf). */
@@ -73,19 +76,54 @@ class WakeModelChoiceTest {
         Endpoint(id, "https://$id.example", wake = EndpointWake.of(mode, threshold, modelId))
 
     @Test
+    fun theOneSettingForThePhoneIsReadFromWhatIsStored() {
+        // Nothing stored: off, the default threshold, no model.
+        assertEquals(EndpointWake.OFF, EndpointCodec.legacyWake(null, null, null))
+        assertEquals(EndpointWake.of(WakeMode.Always, 0.7f, mine), EndpointCodec.legacyWake(always, 0.7f, mine))
+        // A blank choice is none; a mode no build knows is off; the threshold stays in the detector's range.
+        assertNull(EndpointCodec.legacyWake(always, 0.7f, " ").modelId)
+        assertEquals(WakeMode.Off, EndpointCodec.legacyWake("nonsense", null, mine).wakeMode)
+        assertEquals(EndpointWake.MAX_THRESHOLD, EndpointCodec.legacyWake(visible, 5f, null).threshold)
+        // It is what an endpoint without a wake of its own reads, the model included.
+        assertEquals(listOf<String?>(mine, mine), Phone(listOf(bare("a"), bare("b")), always, wakeModel = mine).models())
+        assertEquals(listOf<String?>(null), Phone(listOf(bare("a")), always, wakeModel = "").models())
+    }
+
+    @Test
+    fun theAdoptionStoresTheChoiceForThePhoneAndTheListOnlyWhereItChanged() {
+        val plain = listOf(bare("a"), bare("b"))
+        // No choice stored (a blank one is none): the model of the earlier file. One stored already is kept.
+        assertEquals(jarvis, EndpointCodec.adoptingLegacyWakeModel(null, plain, jarvis).first)
+        assertEquals(jarvis, EndpointCodec.adoptingLegacyWakeModel(" ", plain, jarvis).first)
+        assertEquals(mine, EndpointCodec.adoptingLegacyWakeModel(mine, plain, jarvis).first)
+        // No list stored yet (the endpoint is still read from the keys of older builds): nothing to write.
+        assertEquals<Pair<String, List<Endpoint>?>>(jarvis to null, EndpointCodec.adoptingLegacyWakeModel(null, null, jarvis))
+        // A list of which no endpoint takes the model is not written again: none has a wake of its own,
+        // each has a model already, or the stored document was unreadable (an empty list).
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, plain, jarvis).second)
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, listOf(own("a", WakeMode.Always, 0.5f, mine)), jarvis).second)
+        assertNull(EndpointCodec.adoptingLegacyWakeModel(null, emptyList(), jarvis).second)
+        // An endpoint with a wake of its own and no model takes it: the list is written, the rest of it as it was.
+        assertEquals(
+            listOf(own("a", WakeMode.WhileVisible, 0.8f, jarvis), bare("b")),
+            EndpointCodec.adoptingLegacyWakeModel(mine, listOf(own("a", WakeMode.WhileVisible, 0.8f), bare("b")), jarvis).second,
+        )
+    }
+
+    @Test
     fun onePhraseFileForThePhoneBecomesEveryEndpointsModel() {
         // Main today: one mode and threshold, endpoints without a wake of their own, and wake/phrase.onnx.
-        val phone = Phone(listOf(bare("a"), bare("b")), WakeMode.Always, 0.7f, earlierPhrase = jarvis).started()
+        val phone = Phone(listOf(bare("a"), bare("b")), always, 0.7f, earlierPhrase = jarvis).started()
         val wake = EndpointWake.of(WakeMode.Always, 0.7f, jarvis)
         assertEquals(listOf<EndpointWake?>(wake, wake), phone.read().map { it.wake })
         assertNull(phone.earlierPhrase)
         // A file that is no catalog model comes under an id of its own, all the same.
-        assertEquals(listOf<String?>(mine), Phone(listOf(bare("a")), WakeMode.WhileVisible, earlierPhrase = mine).started().models())
+        assertEquals(listOf<String?>(mine), Phone(listOf(bare("a")), visible, earlierPhrase = mine).started().models())
     }
 
     @Test
     fun withoutAPhraseFileNoEndpointHasAModel() {
-        val phone = Phone(listOf(bare("a"), bare("b")), WakeMode.WhileVisible, 0.4f).started()
+        val phone = Phone(listOf(bare("a"), bare("b")), visible, 0.4f).started()
         val wake = EndpointWake.of(WakeMode.WhileVisible, 0.4f)
         assertEquals(listOf<EndpointWake?>(wake, wake), phone.read().map { it.wake })
         assertNull(phone.wakeModel)
@@ -94,15 +132,15 @@ class WakeModelChoiceTest {
     @Test
     fun theOneChoiceOfABuildWithALibraryBecomesEveryEndpointsModel() {
         // The phrase is in the library already, and wake_model holds the choice.
-        val chosen = Phone(listOf(bare("a"), bare("b")), WakeMode.Always, 0.6f, wakeModel = mine).started()
+        val chosen = Phone(listOf(bare("a"), bare("b")), always, 0.6f, wakeModel = mine).started()
         val wake = EndpointWake.of(WakeMode.Always, 0.6f, mine)
         assertEquals(listOf<EndpointWake?>(wake, wake), chosen.read().map { it.wake })
         // No choice stored: none was in use.
-        assertEquals(listOf<String?>(null, null), Phone(listOf(bare("a"), bare("b")), WakeMode.Always).started().models())
+        assertEquals(listOf<String?>(null, null), Phone(listOf(bare("a"), bare("b")), always).started().models())
         // Its own migration cut short before the choice was stored: the earlier file is still there.
-        assertEquals(listOf<String?>(jarvis), Phone(listOf(bare("a")), WakeMode.Always, earlierPhrase = jarvis).started().models())
+        assertEquals(listOf<String?>(jarvis), Phone(listOf(bare("a")), always, earlierPhrase = jarvis).started().models())
         // Cut short after it: the choice made since stands.
-        assertEquals(listOf<String?>(mine), Phone(listOf(bare("a")), WakeMode.Always, wakeModel = mine, earlierPhrase = jarvis).started().models())
+        assertEquals(listOf<String?>(mine), Phone(listOf(bare("a")), always, wakeModel = mine, earlierPhrase = jarvis).started().models())
     }
 
     @Test
@@ -110,7 +148,7 @@ class WakeModelChoiceTest {
         // A build with a wake phrase per endpoint and still the one file: every endpoint listened with it.
         val phone = Phone(
             listOf(own("a", WakeMode.Always, 0.5f), own("b", WakeMode.WhileVisible, 0.8f), own("c", WakeMode.Off, 0.5f)),
-            WakeMode.Always, 0.7f, earlierPhrase = jarvis,
+            always, 0.7f, earlierPhrase = jarvis,
         ).started()
         assertEquals(
             listOf<EndpointWake?>(
@@ -141,7 +179,7 @@ class WakeModelChoiceTest {
         assertNull(plain.single().wake)
         // Nothing to store with the endpoint: it reads the choice for the phone.
         assertEquals(plain, EndpointCodec.adoptingWakeModel(plain, jarvis))
-        assertEquals(listOf<String?>(jarvis), Phone(plain, WakeMode.Always, earlierPhrase = jarvis).started().models())
+        assertEquals(listOf<String?>(jarvis), Phone(plain, always, earlierPhrase = jarvis).started().models())
 
         // As a build with a wake phrase per endpoint wrote it: a wake of its own, and no model.
         val ofItsOwn = EndpointCodec.decode(
@@ -161,10 +199,10 @@ class WakeModelChoiceTest {
     @Test
     fun aStartCutShortRepeatsToTheSameEnd() {
         val phones = listOf(
-            Phone(listOf(bare("a"), bare("b")), WakeMode.Always, 0.7f, earlierPhrase = jarvis),
-            Phone(listOf(bare("a")), WakeMode.Always, wakeModel = mine, earlierPhrase = jarvis),
+            Phone(listOf(bare("a"), bare("b")), always, 0.7f, earlierPhrase = jarvis),
+            Phone(listOf(bare("a")), always, wakeModel = mine, earlierPhrase = jarvis),
             Phone(listOf(own("a", WakeMode.Always, 0.5f), own("b", WakeMode.Off, 0.5f)), earlierPhrase = mine),
-            Phone(emptyList(), WakeMode.Always, earlierPhrase = jarvis),
+            Phone(emptyList(), always, earlierPhrase = jarvis),
         )
         for (phone in phones) {
             val done = phone.started()
@@ -179,7 +217,7 @@ class WakeModelChoiceTest {
     @Test
     fun laterStartsLeaveAnEndpointSetToNoModelAlone() {
         // The first write of the list stores every endpoint's wake, model included.
-        val migrated = Phone(listOf(bare("a"), bare("b")), WakeMode.Always, 0.7f, earlierPhrase = jarvis).started().written()
+        val migrated = Phone(listOf(bare("a"), bare("b")), always, 0.7f, earlierPhrase = jarvis).started().written()
         assertEquals(listOf<String?>(jarvis, jarvis), migrated.endpoints.map { it.wake?.modelId })
         // "Stop using" for one of them, and a new endpoint: off, without a model.
         val changed = migrated.written { list ->

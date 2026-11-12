@@ -790,7 +790,9 @@ same embeddings. A phrase of a background endpoint brings that endpoint to the
 front (the wake waits until its page has loaded); when two listening endpoints
 share a phrase model, the one shown takes it, else the first in the list,
 whichever of their thresholds the score reaches (so the lowest of them is the
-one that counts). The service
+one that counts). The card's *Also listening* line names the background
+endpoints a phrase heard now would bring to the front, so not one that shares
+its model with the endpoint shown or with one before it. The service
 of mode *Always* runs while any listening endpoint is in that mode. The one
 device-wide wake setting of earlier builds becomes every endpoint's own on
 update, with the phrase model that was in use, so the endpoint shown keeps
@@ -835,8 +837,11 @@ visible* (runs only while Ara is in front) · *Always* (a foreground service of
 type microphone with an ongoing notification; Android 14 lets it start only
 while Ara is in front, so it starts when you open Ara; if it is refused, it is
 retried later with a growing delay). Detection pauses while the web app
-reports the mic in use. A microphone error stops detection for 30 s (doubling
-up to 10 min on repeated errors), or until Ara is opened again.
+reports the mic in use. A listener error (the microphone, or a model that
+cannot be run) stops detection for 30 s (doubling up to 10 min on repeated
+errors), or until Ara is opened again or the endpoints listen with other
+phrase models than before (another one chosen for an endpoint, or an
+endpoint no longer listened for).
 
 **Models are not bundled** (licence and size). The phrase models are the
 phone's: one list, the same in every endpoint's wake phrase card. Which of
@@ -863,13 +868,21 @@ the card of the endpoint shown; the app refuses it as well, so that no
 endpoint is left with a model that is gone. Stop using it on that endpoint's
 own card first.
 
+The list and the job that changes it (a download, an upload, a removal) are
+the phone's as well, the same in the home screen's and the split-screen
+window's card: one job runs at a time, whichever window started it. A removal
+asks who uses the model as its last step before the file goes, and a model is
+chosen only while its file is on the phone and no job works on it.
+
 An endpoint without a model is not listened for, whatever its mode, and its
 card says so; the same holds for one whose model is no longer on the list or
 not downloaded.
 
 The feature models (`melspectrogram.onnx`, `embedding_model.onnx`) come with
 the first phrase model; *Advanced* can download them again. A downloaded or
-uploaded model is only added after it loads. The single phrase model of
+uploaded model is only added after it loads and gives a score for a window of
+silence, so a file that is no phrase model (one of the feature models, picked
+by mistake) is refused instead of stopping the listener. The single phrase model of
 earlier builds is moved into the list on update (as Hey Jarvis when it is that
 file, otherwise as "Earlier model") and stays in use, for every endpoint, as
 that one file was; so does the one model chosen for the whole phone by a build

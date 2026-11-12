@@ -289,6 +289,27 @@ object EndpointCodec {
         endpoints.map { e -> e.wake?.let { e.copy(wake = it.adopting(modelId)) } ?: e }
 
     /**
+     * The one device-wide wake setting of builds before per-instance wake
+     * phrases, from its stored values: off, the default threshold and no
+     * model where a value is absent (a blank model is none). [modelId] is the
+     * one phrase model chosen for the phone by the builds that had the model
+     * library; it has no default, so that no reader leaves it out.
+     */
+    fun legacyWake(mode: String?, threshold: Float?, modelId: String?): EndpointWake =
+        EndpointWake.of(WakeMode.fromKey(mode), threshold ?: EndpointWake.DEFAULT_THRESHOLD, modelId?.takeIf { it.isNotBlank() })
+
+    /**
+     * What is stored once the one phrase file of earlier builds has joined
+     * the library as [id]. First: the device-wide choice, which the endpoints
+     * without a wake of their own read ([legacyWake]); [storedChoice] stays
+     * where there is one. Second: the endpoint list as stored ([stored]) with
+     * [adoptingWakeModel] applied, or null when there is nothing to write: no
+     * list stored yet, or no endpoint in it that takes the model.
+     */
+    fun adoptingLegacyWakeModel(storedChoice: String?, stored: List<Endpoint>?, id: String): Pair<String, List<Endpoint>?> =
+        (storedChoice?.takeIf { it.isNotBlank() } ?: id) to stored?.let { adoptingWakeModel(it, id) }?.takeIf { it != stored }
+
+    /**
      * The endpoint an older build's settings describe: its base URL and
      * certificate alias, with health upload on as it was for that one server
      * (the phone synced to it until now). None without a base URL.
