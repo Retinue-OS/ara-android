@@ -175,10 +175,18 @@ object KeyboardLogic {
      * a device comes and goes, which its keyboardStatus() keeps from it; and
      * the end of an earlier page's request (typed, secret-typed, cancelled —
      * still running when another endpoint's page was loaded) that a device is
-     * connected, and how much was typed.
+     * connected, and how much was typed. The end of a request this page load
+     * made itself ([requested]: the ids the gate accepted for it) still
+     * passes when its switch was turned off meanwhile — it is its own, and
+     * the page would otherwise wait for it until its watchdog gives up.
      */
-    fun eventForPage(event: KeyboardEvent, serverAllows: Boolean): Boolean =
-        serverAllows || (event.state == KeyboardEvent.ERROR && event.error == KeyboardError.NotEnabled)
+    fun eventForPage(event: KeyboardEvent, serverAllows: Boolean, requested: Set<String>): Boolean =
+        serverAllows ||
+            (event.state == KeyboardEvent.ERROR && event.error == KeyboardError.NotEnabled) ||
+            (event.state in FINAL_STATES && event.id != null && event.id in requested)
+
+    /** The events that end a request: its id's last word. */
+    private val FINAL_STATES = setOf(KeyboardEvent.TYPED, KeyboardEvent.SECRET_TYPED, KeyboardEvent.SECRET_CANCELLED, KeyboardEvent.ERROR)
 
     /** The `count` of a `typed` event: the text's characters, a CRLF line break as one. */
     fun charCount(text: CharSequence): Int {

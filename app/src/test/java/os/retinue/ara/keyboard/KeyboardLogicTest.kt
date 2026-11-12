@@ -139,11 +139,38 @@ class KeyboardLogicTest {
             KeyboardEvent.error("t1", KeyboardError.NotConnected),
         )
         for (event in events) {
-            assertTrue(KeyboardLogic.eventForPage(event, serverAllows = true), event.toString())
-            assertFalse(KeyboardLogic.eventForPage(event, serverAllows = false), event.toString())
+            assertTrue(KeyboardLogic.eventForPage(event, serverAllows = true, requested = emptySet()), event.toString())
+            assertFalse(KeyboardLogic.eventForPage(event, serverAllows = false, requested = emptySet()), event.toString())
         }
-        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = false))
-        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = true))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = false, requested = emptySet()))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = true, requested = emptySet()))
+    }
+
+    @Test
+    fun aPageHearsTheEndOfItsOwnRequestAfterItsSwitchWasTurnedOff() {
+        // Accepted for this page load while its switch was on; the switch is off now.
+        val mine = setOf("t1", "s1", "k1")
+        val ends = listOf(
+            KeyboardEvent.typed("t1", 3000),
+            KeyboardEvent.typed("k1", 1),
+            KeyboardEvent(KeyboardEvent.SECRET_TYPED, "s1"),
+            KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, "s1"),
+            KeyboardEvent.error("t1", KeyboardError.Cancelled),
+            KeyboardEvent.error("k1", KeyboardError.NotConnected),
+        )
+        for (event in ends) assertTrue(KeyboardLogic.eventForPage(event, serverAllows = false, requested = mine), event.toString())
+
+        // The end of a request of an earlier page load (its ids were cleared with the load) stays dropped.
+        val earlier = listOf(
+            KeyboardEvent.typed("t2", 3000),
+            KeyboardEvent(KeyboardEvent.SECRET_TYPED, "s2"),
+            KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, "s2"),
+            KeyboardEvent.error("t2", KeyboardError.Cancelled),
+        )
+        for (event in earlier) assertFalse(KeyboardLogic.eventForPage(event, serverAllows = false, requested = mine), event.toString())
+        // Nor does an end without an id, or a status, pass by an id.
+        assertFalse(KeyboardLogic.eventForPage(KeyboardEvent.typed(null, 3), serverAllows = false, requested = mine))
+        assertFalse(KeyboardLogic.eventForPage(KeyboardEvent(KeyboardEvent.STATUS, "t1"), serverAllows = false, requested = mine))
     }
 
     @Test

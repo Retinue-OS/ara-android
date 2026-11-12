@@ -609,7 +609,7 @@ object KeyboardRuntime {
             PageDecision.OpenScreen -> PageOutcome.OpenScreen
             PageDecision.TypeNow -> {
                 typeForPage(request, expectedHost = null)
-                PageOutcome.Done
+                PageOutcome.Typing
             }
             PageDecision.OpenSecret -> {
                 windows.ask()

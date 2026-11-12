@@ -1269,6 +1269,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         if (base == null) {
             page.loadedBase = null
             page.loadedEndpointId = null
+            page.clearKeyboardRequests()
             // First run: the settings page opens at a new endpoint, once.
             val firstRun = s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow
             if (firstRun) firstRunEditorShown = true
@@ -1284,6 +1285,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
             page.loadedBase = base
             page.loadedEndpointId = endpointId
+            page.clearKeyboardRequests()
             bridge.install()
             page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
@@ -1861,8 +1863,14 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             inFront = ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, covered = dashboardCovered),
             serverHost = settings.endpointSet.pageEndpoint(page.loadedEndpointId)?.hostLabel,
         )
-        when (val outcome = KeyboardRuntime.fromPage(request, facts)) {
-            PageOutcome.Done -> Unit
+        val outcome = KeyboardRuntime.fromPage(request, facts)
+        // Accepted: its end is this page load's own, whatever its switch says by then (events are
+        // posted, so none of this request's has gone out yet; a dialog that fails answers at once).
+        if (outcome is PageOutcome.Typing || outcome is PageOutcome.Confirm || outcome is PageOutcome.OpenSecret) {
+            page.keyboardRequestAccepted(request.id)
+        }
+        when (outcome) {
+            PageOutcome.Done, PageOutcome.Typing -> Unit
             PageOutcome.OpenScreen -> openKeyboard()
             is PageOutcome.Confirm -> startConfirmation(outcome.token)
             is PageOutcome.OpenSecret -> (request as? PageRequest.Secret)?.let { openSecretDialog(it, outcome) }

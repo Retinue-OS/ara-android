@@ -98,6 +98,26 @@ object ShellPage {
      */
     fun keyboardAllowed(): Boolean = KeyboardLogic.serverMayType(settings.endpointSet, loadedEndpointId)
 
+    /**
+     * The ids of the keyboard requests the gate accepted for the page as now
+     * loaded (type, key, secret, confirmation): their end reaches it even if
+     * its server's switch is turned off before it ([KeyboardLogic.eventForPage]).
+     * Cleared when another page is loaded; bounded, as only a few run at once.
+     */
+    private val keyboardRequests = LinkedHashSet<String>()
+    private const val MAX_KEYBOARD_REQUESTS = 32
+
+    /** The gate accepted the page's request [id]. */
+    fun keyboardRequestAccepted(id: String?) {
+        if (id == null) return
+        keyboardRequests.remove(id)
+        keyboardRequests += id
+        while (keyboardRequests.size > MAX_KEYBOARD_REQUESTS) keyboardRequests.remove(keyboardRequests.first())
+    }
+
+    /** Another page is loaded: what the one before asked is not its own. */
+    fun clearKeyboardRequests() = keyboardRequests.clear()
+
     /** The keyboard status as the page may see it (nothing of the device while its server may not type). */
     private fun keyboardStatus(): KeyboardStatus = KeyboardLogic.statusForPage(KeyboardRuntime.status.value, keyboardAllowed())
 
@@ -154,10 +174,11 @@ object ShellPage {
 
     /**
      * Keyboard events (and the status before them) go to the page, whichever
-     * window shows it — `status` only while its server may type.
+     * window shows it — `status` only while its server may type, the end of
+     * its own request in any case.
      */
     private val keyboardListener = KeyboardListener { event ->
-        if (webView != null && KeyboardLogic.eventForPage(event, keyboardAllowed())) bridge.keyboardEvent(event)
+        if (webView != null && KeyboardLogic.eventForPage(event, keyboardAllowed(), keyboardRequests)) bridge.keyboardEvent(event)
     }
 
     /** [window] was created: the first one creates the page and shows it. */

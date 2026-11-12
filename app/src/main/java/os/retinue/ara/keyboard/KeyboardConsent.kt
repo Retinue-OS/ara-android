@@ -187,8 +187,11 @@ data class PageFacts(
 
 /** What the window showing the page still has to do once the runtime has taken a request. */
 sealed class PageOutcome {
-    /** Nothing: typed, typing, or answered. */
+    /** Nothing: answered (or a Stop). */
     data object Done : PageOutcome()
+
+    /** Typing (or pressing) now: the request runs, and its end is the page's. */
+    data object Typing : PageOutcome()
 
     /** Start ConfirmTypeActivity for the confirmation [token] (the window is reserved). */
     data class Confirm(val token: String) : PageOutcome()
