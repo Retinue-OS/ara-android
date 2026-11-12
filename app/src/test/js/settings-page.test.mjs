@@ -1,7 +1,7 @@
 // Tests of the settings page's decisions (assets/settings/logic.mjs): the
 // endpoint draft rules and what closing the editor does, the certificate
 // import's notes, the per-device values with the dashboard's bounds, the
-// health, phone call and wake lines, the phrase model rows, and the instance
+// health, phone call, typing and wake lines, the phrase model rows, and the instance
 // frame's message; and that the page (index.html) has the elements its script
 // (page.mjs) works on. No dependencies:
 //   node app/src/test/js/settings-page.test.mjs
@@ -234,6 +234,32 @@ ok("the call switch is its card's: an endpoint's draft neither carries nor chang
   assert.deepEqual(Object.keys(L.draftMessage(d)).sort(), [
     'background', 'baseUrl', 'certificateAlias', 'forgetPassword', 'healthUpload', 'id', 'isNew', 'password', 'username',
   ]);
+});
+
+ok('typing on other devices says when the phone\'s keyboard is off, for the endpoint shown', () => {
+  // `allowed` is the current endpoint's own switch (SettingsPageState.typingInfo), the keyboard
+  // the phone's: off for this endpoint, the keyboard being off stands in nobody's way.
+  const on = { available: true, enabled: true }, off = { available: true, enabled: false };
+  for (const [t, k] of [[undefined, off], [null, off], [{}, off], [{ allowed: false }, off], [{ allowed: true }, on],
+    // A phone without Bluetooth: the keyboard card says so, nothing here can fix it.
+    [{ allowed: true }, { available: false, enabled: false }]]) {
+    assert.deepEqual(L.typingNotes(t, k), [], JSON.stringify([t, k]));
+  }
+  for (const k of [off, undefined, null]) {
+    const notes = L.typingNotes({ allowed: true }, k);
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].text, /keyboard for other devices is off/);
+    assert.equal(notes[0].action, 'keyboard.open');
+  }
+});
+
+ok("the typing switch is its card's: an endpoint's draft neither carries nor changes it", () => {
+  // As the call switch: one that slipped into a row would not reach the editor, so a save
+  // sends none and the app keeps the endpoint's own (EndpointDraft.toEndpoint).
+  const d = L.draftOf({ ...home, typeOnDevices: true });
+  assert.equal('typeOnDevices' in d, false);
+  assert.equal('typeOnDevices' in L.newDraft('n'), false);
+  assert.equal('typeOnDevices' in L.draftMessage(d), false);
 });
 
 ok('the wake notes follow the mode, with the action that fixes each', () => {

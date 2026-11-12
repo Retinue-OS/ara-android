@@ -196,6 +196,18 @@ object ShellDecisions {
     }
 
     /**
+     * Whether the page may make the shell type now: only while the user is
+     * looking at it — the activity resumed, its window focused (in split
+     * screen too: the other half may be what they use), the keyguard gone —
+     * and the dashboard not [covered] by the app's own settings page,
+     * launcher editor or folder editor, under which it cannot be seen.
+     * Stricter than a wake. (A window of the keyboard's own open over it is
+     * the gate's `busy`, KeyboardLogic.decide.)
+     */
+    fun mayType(resumed: Boolean, windowFocused: Boolean, keyguardLocked: Boolean, covered: Boolean): Boolean =
+        resumed && windowFocused && !keyguardLocked && !covered
+
+    /**
      * Whether a pending wake's instance is the one the window shows: always
      * for a wake of the instance shown ([wakeEndpoint] null), otherwise once
      * the switch to it has reached the window. Until then the wake waits, so

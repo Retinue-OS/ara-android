@@ -16,6 +16,7 @@ import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.net.CertificateImport
 import os.retinue.ara.settings.AppPage
 import os.retinue.ara.settings.CallsInfo
+import os.retinue.ara.settings.TypingInfo
 import os.retinue.ara.settings.CurrentEndpoint
 import os.retinue.ara.settings.PageDraft
 import os.retinue.ara.settings.SettingsAction
@@ -96,6 +97,8 @@ class SettingsPageTest {
         assertEquals(SettingsAction.DeviceSet("retinue.shelf.size", "9"), p("""{"type":"device.set","key":"retinue.shelf.size","value":"9"}"""))
         assertEquals(SettingsAction.DirectCalls(true), p("""{"type":"calls.direct","on":true}"""))
         assertEquals(SettingsAction.CallsPermission, p("""{"type":"calls.permission"}"""))
+        assertEquals(SettingsAction.TypeOnDevices(true), p("""{"type":"typing.allowed","on":true}"""))
+        assertEquals(SettingsAction.TypeOnDevices(false), p("""{"type":"typing.allowed","on":false}"""))
         assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
         assertEquals(SettingsAction.LauncherUsageAccess, p("""{"type":"launcher.usageAccess"}"""))
         assertEquals(SettingsAction.ChooseCertificate("r3", "https://agents.example.com", null), p("""{"type":"endpoint.certificate","request":"r3","baseUrl":"https://agents.example.com","current":null}"""))
@@ -109,7 +112,7 @@ class SettingsPageTest {
         for (bad in listOf(
             null, "", "nope", "[]", """{"type":"unknown"}""", """{"type":"endpoint.select","id":"a b"}""",
             """{"type":"health.interval","minutes":0}""", """{"type":"health.interval","minutes":"5"}""",
-            """{"type":"health.upload","on":"true"}""", """{"type":"calls.direct"}""", """{"type":"calls.direct","on":1}""", """{"type":"wake.mode","mode":"sometimes"}""",
+            """{"type":"health.upload","on":"true"}""", """{"type":"calls.direct"}""", """{"type":"calls.direct","on":1}""", """{"type":"typing.allowed"}""", """{"type":"typing.allowed","on":"true"}""", """{"type":"wake.mode","mode":"sometimes"}""",
             """{"type":"update.channel","channel":"beta"}""", """{"type":"wake.model.use"}""", """{"type":"wake.model.remove","id":""}""", """{"type":"device.set","key":"k","value":3}""",
             """{"type":"endpoint.save","request":"r 1","draft":{"id":"x"}}""", """{"type":"endpoint.save","request":"r1"}""",
             """{"type":"endpoint.certificateImport"}""", """{"type":"endpoint.certificateImport","request":"r 4"}""",
@@ -211,6 +214,10 @@ class SettingsPageTest {
         // The current endpoint's call switch, for its card; the list the editor's drafts come from has none.
         assertEquals("""{"direct":true,"permissionGranted":false,"telephony":true}""", json["calls"].toString())
         assertFalse(json["endpoints"].toString().contains("directCalls"))
+        // Its typing switch likewise (home's is off here); the list has none either.
+        assertEquals("""{"allowed":false}""", json["typing"].toString())
+        assertEquals("""{"allowed":true}""", state.copy(typing = TypingInfo(allowed = true)).toJson()["typing"].toString())
+        assertFalse(json["endpoints"].toString().contains("typeOnDevices"))
         assertEquals("true", json["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("false", state.copy(usageAccess = false).toJson()["launcher"]!!.jsonObject["usageAccess"].toString())
         assertEquals("""{"type":"state","state":{}}""", SettingsMessages.state(JsonObject(emptyMap())))
@@ -235,6 +242,17 @@ class SettingsPageTest {
     }
 
     @Test
+    fun theTypingSwitchShownIsTheCurrentEndpointsOwn() {
+        val home = Endpoint("home", "https://agents.example.com", typeOnDevices = true)
+        val admin = Endpoint("admin", "https://admin.example.com")
+        fun shown(current: String?) = SettingsPageState.typingInfo(ShellSettings(endpoints = listOf(home, admin), currentEndpointId = current))
+        assertEquals(TypingInfo(allowed = true), shown("home"))
+        // On for home says nothing about admin.
+        assertEquals(TypingInfo(allowed = false), shown("admin"))
+        assertEquals(TypingInfo(allowed = false), SettingsPageState.typingInfo(ShellSettings()))
+    }
+
+    @Test
     fun theSectionLoadsAfreshWhenWhatSignsItInChanges() {
         val home = Endpoint("home", "https://agents.example.com", certificateAlias = "ara-phone", username = "reto", secret = "sealed-1", name = "Retinue")
         val key = SettingsPageState.frameKey(home)
@@ -248,7 +266,7 @@ class SettingsPageTest {
             assertNotEquals(key, SettingsPageState.frameKey(changed), changed.toString())
         }
         // What does not sign it in changes nothing: the health and call switches, the fetched name.
-        assertEquals(key, SettingsPageState.frameKey(home.copy(healthUpload = true, directCalls = true, name = "Home")))
+        assertEquals(key, SettingsPageState.frameKey(home.copy(healthUpload = true, directCalls = true, typeOnDevices = true, name = "Home")))
         assertFalse(key.contains("sealed"), "nothing of the password")
     }
 }

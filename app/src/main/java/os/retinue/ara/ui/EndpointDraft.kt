@@ -72,9 +72,9 @@ data class EndpointDraft(
      * one the stored password stays, unless the draft forgets it or has no
      * user name. A changed address drops the fetched name, the other
      * server's. What else the editor does not hold stays the endpoint's as
-     * it is stored, each set on its own card: its call switch (off for a
-     * new endpoint) and its wake phrase (off, without a phrase model, for a
-     * new endpoint).
+     * it is stored, each set on its own card: its call switch and its
+     * switch for typing on other devices (both off for a new endpoint) and
+     * its wake phrase (off, without a phrase model, for a new endpoint).
      */
     fun toEndpoint(existing: Endpoint?, sealed: String?): Endpoint {
         val sameAddress = existing != null && existing.base == base

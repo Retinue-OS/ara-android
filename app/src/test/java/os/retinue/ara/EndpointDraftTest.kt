@@ -88,6 +88,19 @@ class EndpointDraftTest {
     }
 
     @Test
+    fun savingLeavesTheTypingSwitchAsItIsStored() {
+        // Like the call switch, it is its card's: the editor's draft does not hold it, a save keeps it.
+        val allowed = stored.copy(typeOnDevices = true)
+        assertEquals(allowed, home.toEndpoint(allowed, sealed = null))
+        assertEquals(allowed.copy(healthUpload = false), home.copy(healthUpload = false).toEndpoint(allowed, sealed = null))
+        assertFalse(home.toEndpoint(stored.copy(typeOnDevices = false), sealed = null).typeOnDevices)
+        // Another address keeps it too (the endpoint's, not the server's name).
+        assertTrue(home.copy(baseUrl = "new.example.com").toEndpoint(allowed, sealed = null).typeOnDevices)
+        // A new endpoint starts with it off.
+        assertFalse(fresh.copy(baseUrl = "https://admin.example.com").toEndpoint(null, sealed = null).typeOnDevices)
+    }
+
+    @Test
     fun theBackgroundSwitchIsStoredAsTheEditorHasIt() {
         // On: the endpoint keeps working while another is shown. Nothing else of it changes.
         val working = home.copy(background = true).toEndpoint(stored, sealed = null)

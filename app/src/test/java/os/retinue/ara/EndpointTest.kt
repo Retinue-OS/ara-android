@@ -15,7 +15,8 @@ import os.retinue.ara.net.EndpointNames
 class EndpointTest {
 
     private val home = Endpoint(
-        "home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, directCalls = true, name = "Retinue",
+        "home", "https://agents.example.com", certificateAlias = "ara-phone", healthUpload = true, directCalls = true,
+        typeOnDevices = true, name = "Retinue",
     )
     private val admin = Endpoint("admin", "https://admin.example.com", username = "reto", secret = "c2VhbGVk", name = "Admin")
 
@@ -29,6 +30,8 @@ class EndpointTest {
         assertTrue(raw.contains("\"healthUpload\":true"))
         // Each endpoint's call switch is stored with it: on for home, off for admin.
         assertTrue(raw.contains("\"directCalls\":true") && raw.contains("\"directCalls\":false"), raw)
+        // So is its switch for typing on other devices.
+        assertTrue(raw.contains("\"typeOnDevices\":true") && raw.contains("\"typeOnDevices\":false"), raw)
     }
 
     @Test
@@ -39,12 +42,14 @@ class EndpointTest {
             """"name":"Retinue","nameFetchedAt":1730000000000}]}"""
         val decoded = EndpointCodec.decode(old)!!.single()
         assertFalse(decoded.directCalls)
+        // Nor may its page type on other devices: that, too, takes the user's own switch.
+        assertFalse(decoded.typeOnDevices)
         // The rest reads as it was stored, health data on included.
-        assertEquals(home.copy(directCalls = false, nameFetchedAt = 1730000000000), decoded)
+        assertEquals(home.copy(directCalls = false, typeOnDevices = false, nameFetchedAt = 1730000000000), decoded)
         // Written again, the document is the old one with the switch in it, off, and with what else an
         // endpoint has by now: not kept working in the background, no wake phrase of its own.
         assertEquals(
-            old.replace("\"healthUpload\":true,", "\"healthUpload\":true,\"directCalls\":false,")
+            old.replace("\"healthUpload\":true,", "\"healthUpload\":true,\"directCalls\":false,\"typeOnDevices\":false,")
                 .replace("\"nameFetchedAt\":1730000000000", "\"nameFetchedAt\":1730000000000,\"background\":false,\"wake\":null"),
             EndpointCodec.encode(listOf(decoded)),
         )
@@ -67,6 +72,7 @@ class EndpointTest {
         assertEquals("https://a.example", decoded[0].baseUrl)
         assertFalse(decoded[0].healthUpload)
         assertFalse(decoded[0].directCalls)
+        assertFalse(decoded[0].typeOnDevices)
     }
 
     @Test
@@ -80,6 +86,7 @@ class EndpointTest {
         assertTrue(migrated[0].healthUpload)
         // Calls were never placed directly for it: that takes the user's own switch.
         assertFalse(migrated[0].directCalls)
+        assertFalse(migrated[0].typeOnDevices)
         assertNull(migrated[0].username)
         assertEquals(emptyList(), EndpointCodec.legacy(null, "alias"))
         assertEquals(emptyList(), EndpointCodec.legacy("  ", null))
@@ -118,6 +125,19 @@ class EndpointTest {
         assertEquals(listOf(home.copy(directCalls = false), admin), set.update("home") { it.copy(directCalls = false) }.endpoints)
         // An endpoint removed meanwhile: nothing is switched.
         assertEquals(set, set.update("gone") { it.copy(directCalls = true) })
+    }
+
+    @Test
+    fun aPageIsAnsweredByTheSwitchesOfItsOwnEndpointWhileItIsShown() {
+        // EndpointSet.pageEndpoint: what CallLogic.directCalls and KeyboardLogic.serverMayType decide by.
+        val set = EndpointSet(listOf(home, admin), "home")
+        assertEquals(home, set.pageEndpoint("home"))
+        // The page of admin, while home is shown (a switch meanwhile): no endpoint answers for it.
+        assertNull(set.pageEndpoint("admin"))
+        assertNull(set.pageEndpoint(null))
+        assertNull(EndpointSet.EMPTY.pageEndpoint("home"))
+        assertNull(set.remove("home").pageEndpoint("home"))
+        assertEquals(admin, set.select("admin").pageEndpoint("admin"))
     }
 
     @Test

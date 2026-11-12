@@ -57,10 +57,10 @@ interface ShellHost {
 }
 
 /**
- * The user agent suffix of the contract (plan §4); 6: `placeCall`; 5: reserved
- * for the keyboard for other devices; 4: the app has a settings page of its
- * own and holds the dashboard's per-device preferences; 3: the endpoint
- * members of the bridge exist.
+ * The user agent suffix of the contract (plan §4); 6: `placeCall`; 5: the
+ * keyboard for other devices (keyboardStatus/Type/Key/Secret/Open); 4: the app
+ * has a settings page of its own and holds the dashboard's per-device
+ * preferences; 3: the endpoint members of the bridge exist.
  */
 const val SHELL_UA_SUFFIX = " RetinueShell/6 (Android)"
 

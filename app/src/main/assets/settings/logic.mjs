@@ -2,8 +2,8 @@
 // be saved as and what closing the editor does with it, what a certificate
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
-// health line, the notes of the phone calls, and the wake phrase's notes and
-// model rows. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs
+// health line, the notes of the phone calls and of typing on other devices,
+// and the wake phrase's notes and model rows. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs
 // runs it under Node. The page itself is page.mjs; the app's side is
 // os.retinue.ara.settings (SettingsBridge, SettingsMessages, SettingsState).
 
@@ -276,6 +276,19 @@ export function callNotes(c) {
   }];
 }
 
+// ── Typing on other devices ─────────────────────────────────────────────────
+// Like the call switch: `t.allowed` is the current endpoint's own switch (not
+// part of an endpoint draft), the keyboard (`k`, state.keyboard) is the
+// phone's. Both must be on for anything to be typed: what stands in the way,
+// with the action that fixes it.
+export function typingNotes(t, k) {
+  if (!t || !t.allowed || (k && k.available === false) || (k && k.enabled)) return [];
+  return [{
+    text: 'The keyboard for other devices is off on this phone, so nothing is typed.',
+    action: 'keyboard.open', label: 'Open keyboard',
+  }];
+}
+
 // ── Wake phrase ─────────────────────────────────────────────────────────────
 // What stands between the chosen mode and a working wake phrase, each with the
 // action that fixes it where the app has one.
@@ -327,6 +340,16 @@ export function usageAccessNote(launcher) {
       text: 'The tray counts the apps you open from Ara. With usage access it also counts those opened from a notification, from Recents or from another app.',
       label: 'Allow usage access',
     };
+}
+
+// ── Keyboard for other devices ──────────────────────────────────────────────
+// One line for the card: off, on and waiting, or which device it types into.
+export function keyboardLine(k) {
+  if (!k || !k.available) return 'This phone has no Bluetooth.';
+  if (!k.enabled) return 'Off.';
+  if (k.connected && k.host) return `Connected to ${k.host} (${k.layout}).`;
+  if (k.host) return `On; ${k.host} is not connected.`;
+  return 'On; no device paired yet.';
 }
 
 // The other instances listened for now, which wake (and come to the front)

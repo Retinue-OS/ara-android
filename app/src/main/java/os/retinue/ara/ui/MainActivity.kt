@@ -49,7 +49,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -78,6 +82,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -88,6 +93,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,6 +106,11 @@ import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthTrigger
+import os.retinue.ara.keyboard.KeyboardEvent
+import os.retinue.ara.keyboard.KeyboardRuntime
+import os.retinue.ara.keyboard.PageFacts
+import os.retinue.ara.keyboard.PageOutcome
+import os.retinue.ara.keyboard.PageRequest
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.LauncherCodec
@@ -156,6 +167,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
          * ([WakeRuntime.EXTRA_WAKE_TOKEN]): the activity is exported.
          */
         const val ACTION_WAKE = "os.retinue.ara.action.WAKE"
+
+        /** How long the typing strip stays after the last key a page caused (see [TypingStrip]). */
+        private const val STRIP_LINGER_MS = 3_000L
 
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
@@ -448,6 +462,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 }
                 // The tray needs the apps before it is first pulled up (it only comes up as far as they go).
                 LaunchedEffect(Unit) { viewModel.refreshApps() }
+                // The settings page or an editor closed over the dashboard: an end waiting for it goes now.
+                val covered = dashboardCovered
+                LaunchedEffect(covered) { if (!covered) page.releaseKeyboardEvents() }
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                     ShellLayout(launcher, trayItems, alternateOpen)
                     // Sheets are windows above everything here, so they step aside for the folder editor.
@@ -554,6 +571,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                         )
                     }
                     authPrompt?.let { AuthDialog(it) }
+                    // Last, so over the page and the app's own pages.
+                    TypingStrip()
                 }
             }
         }
@@ -689,6 +708,58 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     /**
+     * While a page types on a device, and for [STRIP_LINGER_MS] after the last
+     * key it caused (a single key is over in 24 ms), a strip of the app's own
+     * says so, with Stop: that stops what is typed and makes the page's next
+     * request ask first (KeyboardRuntime.stopFromStrip). It sits at the
+     * bottom, above the launcher bar (or the keyboard), clear of the
+     * dashboard's top menu; over the app's own pages too. Sheets and dialogs
+     * are windows of their own and cover it, but a page cannot start typing
+     * under one: the window has no focus then.
+     */
+    @Composable
+    private fun BoxScope.TypingStrip() {
+        val typing by KeyboardRuntime.pageTyping.collectAsStateWithLifecycle()
+        var device by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(typing) {
+            val t = typing
+            val left = if (t == null) 0L else STRIP_LINGER_MS - (SystemClock.elapsedRealtime() - t.at)
+            if (t == null || (!t.typing && left <= 0)) {
+                device = null
+                return@LaunchedEffect
+            }
+            device = t.device
+            if (t.typing) return@LaunchedEffect
+            delay(left)
+            device = null
+        }
+        val name = device ?: return
+        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
+                .padding(start = 16.dp, end = 16.dp, bottom = (if (imeVisible) 0.dp else LauncherBarHeight) + 8.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.inverseSurface,
+            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+            shadowElevation = 6.dp,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 16.dp, end = 4.dp)) {
+                Text(
+                    stringResource(R.string.keyboard_strip_typing, name),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(onClick = KeyboardRuntime::stopFromStrip) {
+                    Text(stringResource(R.string.keyboard_strip_stop), color = MaterialTheme.colorScheme.inversePrimary)
+                }
+            }
+        }
+    }
+
+    /**
      * The tray starts to come up: the apps are read again (one may have been
      * installed), so is Android's usage, and the page says where its top menu
      * ends, so the tray stops below it.
@@ -772,6 +843,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
         val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
+        val keyboard by KeyboardRuntime.status.collectAsStateWithLifecycle()
         val state = settingsPageState(
             context = LocalContext.current,
             settings = stored ?: ShellSettings(),
@@ -796,6 +868,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             update = update,
             installAllowed = installAllowed,
             usageAccess = usageAccess,
+            keyboard = keyboard,
         )
         val message = SettingsMessages.state(state.toJson())
         val view = remember { SettingsWebView(this@MainActivity, this@MainActivity) }
@@ -843,6 +916,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
             is SettingsAction.DirectCalls -> setDirectCalls(action.on)
             SettingsAction.CallsPermission -> requestCallPermission()
+            is SettingsAction.TypeOnDevices -> settings.current?.let { viewModel.setTypeOnDevices(it.id, action.on) }
             SettingsAction.LauncherEdit -> showLauncherEditor = true
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
@@ -866,6 +940,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             SettingsAction.UpdateCancel -> UpdateRuntime.cancelConfirmation()
             SettingsAction.UpdateAllowInstalls -> startSystemPage(UpdateRuntime.installSettings(this))
             is SettingsAction.DeviceSet -> viewModel.setDeviceWebSetting(action.key, action.value)
+            SettingsAction.KeyboardOpen -> openKeyboard()
         }
     }
 
@@ -991,6 +1066,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     override fun onStart() {
         super.onStart()
+        // The keyboard's service cannot start while the process starts in the
+        // background (a job, a broadcast): it starts now, with Ara in front.
+        KeyboardRuntime.retry()
         page.windowStarted(this)
         // The window coming to the front shows the page.
         if (!parking) page.take(this)
@@ -1012,6 +1090,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         // Also here: the other window may have had it meanwhile (both up in a desktop mode).
         if (!parking) page.take(this)
         resumed = true
+        page.releaseKeyboardEvents()
         UpdateRuntime.onShellResumed()
         HealthSyncRuntime.onShellResumed()
         tryDeliverWake()
@@ -1026,7 +1105,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             parking = false
             page.take(this)
         }
-        if (hasFocus) tryDeliverWake()
+        if (hasFocus) {
+            tryDeliverWake()
+            // Back from the phone's confirmation or password dialog: the page hears the end of its request now.
+            page.releaseKeyboardEvents()
+        }
     }
 
     /** Split screen begins or ends: a waiting wake may go out now (see [ShellDecisions.pendingWake]). */
@@ -1177,6 +1260,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun applySettings(s: ShellSettings) {
         val aliasChanged = s.certificateAlias != settings.certificateAlias
         val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
+        val typingAllowed = page.keyboardAllowed()
         page.settings = s
         settingsLoaded = true
         // A wake accepted before the settings were read, or whose instance was removed since.
@@ -1193,6 +1277,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         if (base == null) {
             page.loadedBase = null
             page.loadedEndpointId = null
+            page.clearKeyboardRequests()
             // First run: the settings page opens at a new endpoint, once.
             val firstRun = s.endpoints.isEmpty() && !firstRunEditorShown && !isSplitWindow
             if (firstRun) firstRunEditorShown = true
@@ -1208,6 +1293,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
             page.loadedBase = base
             page.loadedEndpointId = endpointId
+            page.clearKeyboardRequests()
             bridge.install()
             page.pageReady = false
             // A pending wake waits for this load and goes out as the event (onPageFinished).
@@ -1217,6 +1303,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         } else {
             if (labelsChanged) bridge.endpointsChanged(labels)
             if (deviceChanged) bridge.deviceSettingsChanged(s.deviceWebSettings)
+            // The page's keyboard status says whether its server may type: re-read (a `status` event).
+            if (page.keyboardAllowed() != typingAllowed) page.keyboardStatusChanged()
             openPendingLink()
             tryDeliverWake()
         }
@@ -1753,7 +1841,94 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
+            is WebMessage.KeyboardType -> keyboardFromPage(PageRequest.Type(message.text, message.enter, message.id))
+            is WebMessage.KeyboardKey -> keyboardFromPage(PageRequest.Key(message.name, message.id))
+            is WebMessage.KeyboardSecret -> keyboardFromPage(PageRequest.Secret(message.label, message.enter, message.id))
+            WebMessage.KeyboardOpen -> keyboardFromPage(PageRequest.Open)
+            WebMessage.KeyboardCancel -> keyboardFromPage(PageRequest.Cancel)
             is WebMessage.PlaceCall -> placeCall(message.number)
+        }
+    }
+
+    /**
+     * The one way a page's keyboard request goes (type, key, secret, open,
+     * cancel): this gathers what the window knows, KeyboardRuntime.fromPage
+     * decides by KeyboardLogic.decide — in this order, the page's server may
+     * type ([ShellPage.keyboardAllowed], otherwise `not-enabled`); the
+     * keyboard on and a device connected; the user looking at the dashboard
+     * ([ShellDecisions.mayType]: resumed, focused, unlocked, not covered by
+     * the app's settings page, launcher editor or folder editor — a script in
+     * a page nobody is looking at makes nothing happen on the other device,
+     * `not-in-front`); no confirmation or password dialog open (`busy`);
+     * then the rule and the device's mode, which type at once or ask first.
+     * What is left here is starting the window that asks. Typing that
+     * started passes this once, and runs to its end (or Stop).
+     */
+    private fun keyboardFromPage(request: PageRequest) {
+        val facts = PageFacts(
+            serverAllows = page.keyboardAllowed(),
+            inFront = dashboardInFront(),
+            serverHost = settings.endpointSet.pageEndpoint(page.loadedEndpointId)?.hostLabel,
+        )
+        val outcome = KeyboardRuntime.fromPage(request, facts)
+        // Accepted: its end is this page load's own, whatever its switch says by then (events are
+        // posted, so none of this request's has gone out yet; a dialog that fails answers at once).
+        if (outcome is PageOutcome.Typing || outcome is PageOutcome.Confirm || outcome is PageOutcome.OpenSecret) {
+            page.keyboardRequestAccepted(request.id)
+        }
+        when (outcome) {
+            PageOutcome.Done, PageOutcome.Typing -> Unit
+            PageOutcome.OpenScreen -> openKeyboard()
+            is PageOutcome.Confirm -> startConfirmation(outcome.token)
+            is PageOutcome.OpenSecret -> (request as? PageRequest.Secret)?.let { openSecretDialog(it, outcome) }
+        }
+    }
+
+    /**
+     * The user is looking at the dashboard in this window
+     * ([ShellDecisions.mayType]): what the gate asks of a page's request, and
+     * what the end of one waits for before the page hears it (ShellPage).
+     */
+    internal fun dashboardInFront(): Boolean {
+        val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+        return ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, covered = dashboardCovered)
+    }
+
+    /** The app's own pages over the dashboard, under which the page cannot be seen. */
+    private val dashboardCovered: Boolean
+        get() = showSettings || showLauncherEditor || folderEditor != null
+
+    /** The phone's question for the confirmation [token] (the runtime holds the request and answers it once). */
+    private fun startConfirmation(token: String) {
+        try {
+            startActivity(ConfirmTypeActivity.intent(this, token))
+        } catch (e: Exception) {
+            Log.w(TAG, "confirmation did not start", e)
+            KeyboardRuntime.confirmDeclined(token)
+        }
+    }
+
+    /** The keyboard screen (pairing, layout, live typing). */
+    internal fun openKeyboard() {
+        startActivity(Intent(this, KeyboardActivity::class.java))
+    }
+
+    /**
+     * The page asks for a secret to be typed and the gate let it: the native
+     * dialog (the gate made sure a device is connected, so no dialog asks
+     * for a password that could not be typed).
+     */
+    private fun openSecretDialog(request: PageRequest.Secret, outcome: PageOutcome.OpenSecret) {
+        try {
+            startActivity(
+                SecretTypeActivity.intent(
+                    this, request.id, request.label, request.enter, outcome.host, outcome.serverHost, outcome.unconfirmed,
+                ),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "secret dialog did not start", e)
+            KeyboardRuntime.windowFailed()
+            KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, request.id))
         }
     }
 
