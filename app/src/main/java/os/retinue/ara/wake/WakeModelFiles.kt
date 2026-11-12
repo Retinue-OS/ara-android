@@ -11,6 +11,8 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,7 +33,7 @@ data class WakeModelStatus(val melspectrogram: Boolean, val embedding: Boolean, 
  * release; the phrase models form a library ([WakeModelCatalog] plus the
  * user's own uploads and URL downloads, see [WakeModelIndex]), one file per
  * model under `wake/phrases/`, named by its id. Which one is in use is a
- * setting, not a file. Callers serialise changes (one model job at a time).
+ * setting, not a file. Changes run one at a time ([changes]).
  */
 object WakeModelFiles {
 
@@ -47,6 +49,12 @@ object WakeModelFiles {
     /** Refuse anything larger: the stock models are about 1.3 MB each. */
     private const val MAX_BYTES = 50L * 1024 * 1024
     private const val MAX_REDIRECTS = 5
+
+    /**
+     * One change to the files and the index at a time, whoever asks: each
+     * window has its own view model, and the index is read, changed and written.
+     */
+    private val changes = Mutex()
 
     fun dir(context: Context): File = File(context.filesDir, DIR).apply { mkdirs() }
     private fun phrasesDir(context: Context): File = File(dir(context), PHRASES).apply { mkdirs() }
@@ -87,24 +95,36 @@ object WakeModelFiles {
 
     private fun newUserId() = WakeModelIndex.USER_PREFIX + UUID.randomUUID().toString()
 
+    private fun legacyFile(context: Context) = File(dir(context), LEGACY_PHRASE)
+
     /**
-     * Move the single `wake/phrase.onnx` of earlier builds into the library,
-     * once: as the catalog model it is byte for byte, else as a model of the
-     * user's own. Returns the id it became (to be chosen in its stead), or
-     * null when there was nothing to move. Synchronous and cheap (one hash of a
+     * Bring the single `wake/phrase.onnx` of earlier builds into the library:
+     * as the catalog model it is byte for byte, else as a model of the user's
+     * own. Returns the id it became (to be chosen in its stead), or null when
+     * there was nothing to bring. The earlier file is copied and stays until
+     * [legacyAdopted], and the id follows from its content, so a start cut
+     * short anywhere repeats this to the same end. Synchronous and cheap (a
      * small file), so it can run before anything reads the library.
      */
     fun migrateLegacy(context: Context): String? {
-        val legacy = File(dir(context), LEGACY_PHRASE)
+        dropStaleTemps(context)
+        val legacy = legacyFile(context)
         if (legacy.length() <= 0) {
             legacy.delete()
             return null
         }
         return try {
-            val known = WakeModelCatalog.bySha256(sha256(legacy))
-            val id = known?.id ?: newUserId()
-            commit(legacy, phraseFile(context, id))
-            if (known == null) {
+            val hash = sha256(legacy)
+            val known = WakeModelCatalog.bySha256(hash)
+            val id = known?.id ?: WakeModelIndex.idOfContent(hash)
+            val dest = phraseFile(context, id)
+            val tmp = legacy.inputStream().use { writeTemp(it, dest) }
+            try {
+                commit(tmp, dest)
+            } finally {
+                tmp.delete()
+            }
+            if (known == null && userModels(context).none { it.id == id }) {
                 writeUserModels(context, userModels(context) + WakePhraseModel(id, "Earlier model", WakeModelSource.File))
             }
             id
@@ -114,8 +134,25 @@ object WakeModelFiles {
         }
     }
 
+    /** The model [migrateLegacy] returned is stored as the one in use: the earlier file can go. */
+    fun legacyAdopted(context: Context) {
+        legacyFile(context).delete()
+    }
+
+    /**
+     * A job cancelled mid-download (its window closed) leaves its `.part` file
+     * behind; at process start no job runs, so whatever is there is stale.
+     */
+    private fun dropStaleTemps(context: Context) {
+        phrasesDir(context).listFiles { f -> f.name.endsWith(".part") }?.forEach { it.delete() }
+    }
+
     /** Download melspectrogram.onnx and embedding_model.onnx from the openWakeWord release. */
-    suspend fun downloadFeatureModels(context: Context, settings: ShellSettings) {
+    suspend fun downloadFeatureModels(context: Context, settings: ShellSettings) = changes.withLock {
+        fetchFeatureModels(context, settings)
+    }
+
+    private suspend fun fetchFeatureModels(context: Context, settings: ShellSettings) {
         val mel = melFile(context)
         val embedding = embeddingFile(context)
         val melTmp = download(context, settings, WakeModelCatalog.MELSPECTROGRAM_URL, mel)
@@ -135,22 +172,22 @@ object WakeModelFiles {
 
     /** The feature models are fetched along with the first phrase model, so one tap is enough. */
     private suspend fun ensureFeatureModels(context: Context, settings: ShellSettings) {
-        if (!status(context, null).featuresReady) downloadFeatureModels(context, settings)
+        if (!status(context, null).featuresReady) fetchFeatureModels(context, settings)
     }
 
     /** Download the list's model [id] (a catalog or URL model) into its file. */
-    suspend fun downloadModel(context: Context, settings: ShellSettings, id: String) {
+    suspend fun downloadModel(context: Context, settings: ShellSettings, id: String) = changes.withLock {
         val model = model(context, id) ?: throw IOException("No such model")
         val url = model.url ?: throw IOException("${model.name} has no download address")
         ensureFeatureModels(context, settings)
-        fetchInto(context, settings, url, phraseFile(context, id))
+        fetchInto(context, settings, url, phraseFile(context, id), model.sha256)
     }
 
     /**
      * Add a model from [url] to the list and download it; returns its id. A URL
      * already on the list is downloaded again into that entry.
      */
-    suspend fun addFromUrl(context: Context, settings: ShellSettings, url: String): String {
+    suspend fun addFromUrl(context: Context, settings: ShellSettings, url: String): String = changes.withLock {
         val trimmed = url.trim()
         requireHttp(trimmed)
         ensureFeatureModels(context, settings)
@@ -160,14 +197,14 @@ object WakeModelFiles {
         if (existing == null) {
             writeUserModels(context, userModels(context) + WakePhraseModel(id, WakeModelNames.ofUrl(trimmed), WakeModelSource.Url, trimmed))
         }
-        return id
+        id
     }
 
     /**
      * Copy a model the user picked (Storage Access Framework) into the list,
      * under the file's name; returns its id. It is added only if it loads.
      */
-    suspend fun importModel(context: Context, settings: ShellSettings, uri: Uri): String {
+    suspend fun importModel(context: Context, settings: ShellSettings, uri: Uri): String = changes.withLock {
         val name = WakeModelNames.ofFile(displayName(context, uri))
         val id = newUserId()
         val dest = phraseFile(context, id)
@@ -184,24 +221,31 @@ object WakeModelFiles {
         writeUserModels(context, userModels(context) + WakePhraseModel(id, name, WakeModelSource.File))
         // After the model is safely in: without the feature models it cannot be used yet.
         runCatching { ensureFeatureModels(context, settings) }.onFailure { Log.w(TAG, "feature models not downloaded", it) }
-        return id
+        id
     }
 
     /**
      * Take model [id] off the phone: a catalog model's download is deleted (it
      * stays listed, to download again); a model of the user's own leaves the list.
      */
-    suspend fun remove(context: Context, id: String) {
+    suspend fun remove(context: Context, id: String) = changes.withLock {
         withContext(Dispatchers.IO) {
+            // Only a model of the list: another id may spell the same file name.
+            if (model(context, id) == null) throw IOException("No such model")
             phraseFile(context, id).delete()
             val user = userModels(context)
             if (user.any { it.id == id }) writeUserModels(context, user.filterNot { it.id == id })
         }
     }
 
-    private suspend fun fetchInto(context: Context, settings: ShellSettings, url: String, dest: File) {
+    /** [expected]: the SHA-256 the file must have (a catalog model's). */
+    private suspend fun fetchInto(context: Context, settings: ShellSettings, url: String, dest: File, expected: String? = null) {
         val tmp = download(context, settings, url, dest)
         try {
+            // A catalog row holds the release's file and nothing else.
+            if (expected != null && !withContext(Dispatchers.IO) { sha256(tmp) }.equals(expected, ignoreCase = true)) {
+                throw IOException("The download is not the expected file")
+            }
             check(melFile(context), embeddingFile(context), tmp)
             commit(tmp, dest)
         } finally {

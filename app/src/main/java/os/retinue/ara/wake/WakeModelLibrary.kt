@@ -2,6 +2,7 @@ package os.retinue.ara.wake
 
 import java.net.URI
 import java.net.URLDecoder
+import java.util.UUID
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -35,7 +36,7 @@ data class WakePhraseModel(
     val source: WakeModelSource,
     /** Where it downloads from (catalog and URL models). */
     val url: String? = null,
-    /** SHA-256 (hex) of the catalog file, to recognise it on the phone. */
+    /** SHA-256 (hex) of the catalog file: a download must match it, and it is recognised by it on the phone. */
     val sha256: String? = null,
 ) {
     /** Only the user's own models can be taken off the list. */
@@ -141,6 +142,10 @@ object WakeModelIndex {
     }
 
     const val USER_PREFIX = "user:"
+
+    /** The id of a model of the user's own known only by its file's hash: the same file, the same id. */
+    fun idOfContent(sha256: String): String =
+        USER_PREFIX + UUID.nameUUIDFromBytes(sha256.lowercase().toByteArray(Charsets.US_ASCII))
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 }

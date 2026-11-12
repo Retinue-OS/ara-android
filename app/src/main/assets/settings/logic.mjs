@@ -247,7 +247,15 @@ export function wakeNotes(w) {
   const notes = [];
   const on = w.mode && w.mode !== 'off';
   if (on && !w.micGranted) notes.push({ text: 'Microphone permission is needed. Ara asks for it when you choose a mode.' });
-  if (on && !w.modelsReady) notes.push({ text: 'No phrase model is in use yet: download one of the list and tap Use, or upload your own.' });
+  if (on && !w.modelsReady) {
+    // A model in use with a feature model missing (an upload while offline): the list would contradict the other note.
+    const chosen = Array.isArray(w.models) && w.models.some((m) => m.active);
+    notes.push({
+      text: chosen
+        ? 'The feature models are missing: download them under Advanced.'
+        : 'No phrase model is in use yet: download one of the list and tap Use, or upload your own.',
+    });
+  }
   if (w.mode === 'always') {
     if (!w.notificationsAllowed) {
       notes.push({

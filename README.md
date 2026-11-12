@@ -797,7 +797,7 @@ up to 10 min on repeated errors), or until Ara is opened again.
 **Models are not bundled** (licence and size). The wake phrase's card lists
 the phrase models, and marks the one in use as *Active*:
 
-- **Downloadable models** — Hey Jarvis (the default, for testing), Hey
+- **Downloadable models** — Hey Jarvis (listed first, for testing), Hey
   Mycroft, Hey Rhasspy and Alexa from openWakeWord's v0.5.1 release. Tap
   **Download** first, then **Use this model**; a downloaded model can be
   deleted again while another is in use.

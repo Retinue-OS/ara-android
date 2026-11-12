@@ -31,7 +31,11 @@ class AraApp : Application() {
         // The one phrase model of earlier builds joins the library first, and stays the one in use.
         val migrated = WakeModelFiles.migrateLegacy(this)
         scope.launch {
-            if (migrated != null) store.adoptWakeModelId(migrated)
+            if (migrated != null) {
+                // The earlier file goes only once the choice is stored; a failure here must not stop the settings below.
+                runCatching { store.adoptWakeModelId(migrated) }
+                    .onSuccess { WakeModelFiles.legacyAdopted(this@AraApp) }
+            }
             store.settings
                 .map { Triple(it.wakeMode, it.wakeThreshold, it.wakeModelId) }
                 .distinctUntilChanged()

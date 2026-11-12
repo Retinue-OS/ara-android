@@ -64,6 +64,17 @@ class WakeModelLibraryTest {
     }
 
     @Test
+    fun aModelKnownByItsContentKeepsItsId() {
+        val hash = "ab".repeat(32)
+        val id = WakeModelIndex.idOfContent(hash)
+        assertEquals(id, WakeModelIndex.idOfContent(hash.uppercase()), "a repeated migration finds the same entry")
+        assertTrue(id != WakeModelIndex.idOfContent("cd".repeat(32)))
+        // It is an id the index keeps.
+        val model = WakePhraseModel(id, "Earlier model", WakeModelSource.File)
+        assertEquals(listOf(model), WakeModelIndex.decode(WakeModelIndex.encode(listOf(model))))
+    }
+
+    @Test
     fun theListHasTheCatalogFirstThenTheUsersOwn() {
         val mine = WakePhraseModel("user:1", "hey_retinue.onnx", WakeModelSource.File)
         val list = wakeModelList(listOf(mine)) { it.id == mine.id }

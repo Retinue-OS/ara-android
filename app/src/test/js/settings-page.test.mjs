@@ -169,6 +169,9 @@ ok('the wake notes follow the mode, with the action that fixes each', () => {
   const visible = L.wakeNotes({ mode: 'visible', micGranted: false, modelsReady: false, notificationsAllowed: false });
   assert.equal(visible.length, 2);
   assert.ok(visible.every((n) => !n.action), 'nothing to open for these');
+  assert.match(visible[1].text, /No phrase model is in use/);
+  const offline = L.wakeNotes({ mode: 'visible', micGranted: true, modelsReady: false, models: [{ id: 'user:1', active: true }] });
+  assert.match(offline[0].text, /feature models are missing/, 'a model in use is not reported as none');
   const always = L.wakeNotes({ mode: 'always', micGranted: true, modelsReady: true, notificationsAllowed: false, fullScreenAllowed: false, overlayAllowed: false });
   assert.deepEqual(always.map((n) => n.action), ['wake.notifications', 'wake.fullScreen', 'wake.overlay']);
   assert.equal(L.wakeModelsLine({ melspectrogram: true, embedding: false }),
