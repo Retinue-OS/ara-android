@@ -12,12 +12,14 @@ import os.retinue.ara.settings.FailureInfo
 import os.retinue.ara.settings.SettingsPageState
 import os.retinue.ara.settings.UpdatesInfo
 import os.retinue.ara.settings.WakeInfo
+import os.retinue.ara.settings.wakeModelRows
 import os.retinue.ara.shell.PageState
 import os.retinue.ara.shell.PageStatus
 import os.retinue.ara.update.InstalledBuild
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.update.UpdateState
 import os.retinue.ara.wake.WakeMode
+import os.retinue.ara.wake.WakeModelEntry
 import os.retinue.ara.wake.WakeModelStatus
 import os.retinue.ara.wake.WakeStatus
 
@@ -28,8 +30,12 @@ internal data class WakeConditions(
     val notificationsAllowed: Boolean,
     val fullScreenAllowed: Boolean,
     val overlayAllowed: Boolean,
+    /** The feature models' files. */
     val models: WakeModelStatus,
+    /** The phone's phrase models, the same for every instance. */
+    val library: List<WakeModelEntry>,
     val modelBusy: Boolean,
+    val modelBusyId: String?,
     val modelMessage: String?,
     /** The instances listened for now (WakeRuntime.listening). */
     val listening: Set<String> = emptySet(),
@@ -75,15 +81,17 @@ internal fun settingsPageState(
             threshold = shownWake.threshold,
             status = wakeStatusText(context, shownWakeStatus(wake, shown?.id, shownWake.wakeMode)),
             micGranted = wake.micGranted,
-            modelsReady = wake.models.ready,
+            // The shown instance's own model: one of the list, and on the phone.
+            modelsReady = wake.models.featuresReady &&
+                wake.library.any { it.downloaded && it.model.id == shownWake.modelId },
             notificationsAllowed = wake.notificationsAllowed,
             fullScreenAllowed = wake.fullScreenAllowed,
             overlayAllowed = wake.overlayAllowed,
             melspectrogram = wake.models.melspectrogram,
             embedding = wake.models.embedding,
-            phrase = wake.models.phrase,
-            modelUrl = settings.wakeModelUrl,
+            models = wakeModelRows(wake.library, shownWake.modelId),
             busy = wake.modelBusy,
+            busyId = wake.modelBusyId,
             message = wake.modelMessage,
             alsoListening = settings.endpoints.filter { it.id != shown?.id && it.id in wake.listening }.map { labels[it.id] ?: it.hostLabel },
         ),

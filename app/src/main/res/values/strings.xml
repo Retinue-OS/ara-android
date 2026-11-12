@@ -148,7 +148,11 @@
     <string name="wake_status_paused_other_app">Paused while another app uses the microphone.</string>
     <string name="wake_status_error">Wake detection stopped: %1$s</string>
     <string name="wake_models_done">Models ready.</string>
-    <string name="wake_models_failed">Model download failed: %1$s</string>
+    <string name="wake_models_failed">That did not work: %1$s</string>
+    <string name="wake_model_downloaded">%1$s downloaded. Tap Use to listen for it.</string>
+    <string name="wake_model_added">%1$s added, and in use for %2$s.</string>
+    <string name="wake_model_added_unused">%1$s added.</string>
+    <string name="wake_model_removed">%1$s removed.</string>
     <string name="wake_channel_name">Wake phrase</string>
     <string name="wake_channel_desc">Shown while Ara listens for the wake phrase in the background.</string>
     <string name="wake_notification_title">Listening for the wake phrase</string>

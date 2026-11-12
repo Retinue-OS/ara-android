@@ -248,8 +248,8 @@ object WakeRuntime {
         val now = SystemClock.elapsedRealtime()
 
         val mic = micGranted()
-        val featuresReady = WakeModelFiles.status(app).featuresReady
-        // The instances that could listen: those with their phrase model on the device.
+        val featuresReady = WakeModelFiles.status(app, null).featuresReady
+        // The instances that could listen: those whose phrase model is in the library and on the device.
         val phrases = if (!featuresReady) emptyMap() else targets.mapNotNull { t ->
             WakeModelFiles.phraseFileFor(app, t.modelId)?.let { t to WakePhrase(t.endpointId, it, t.threshold) }
         }.toMap()

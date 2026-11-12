@@ -2,10 +2,10 @@
 // be saved as and what closing the editor does with it, what a certificate
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
-// health line, and the wake phrase's notes. Kept free of DOM work, so
-// app/src/test/js/settings-page.test.mjs runs it under Node. The page itself
-// is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
-// SettingsMessages, SettingsState).
+// health line, and the wake phrase's notes and model rows. Kept free of DOM
+// work, so app/src/test/js/settings-page.test.mjs runs it under Node. The
+// page itself is page.mjs; the app's side is os.retinue.ara.settings
+// (SettingsBridge, SettingsMessages, SettingsState).
 
 // ── The dashboard's per-device preferences ──────────────────────────────────
 // Held by the app for every endpoint (DeviceWebSettings), under the
@@ -270,7 +270,15 @@ export function wakeNotes(w) {
   const notes = [];
   const on = w.mode && w.mode !== 'off';
   if (on && !w.micGranted) notes.push({ text: 'Microphone permission is needed. Ara asks for it when you choose a mode.' });
-  if (on && !w.modelsReady) notes.push({ text: 'Download the feature models and a phrase model first, under Advanced.' });
+  if (on && !w.modelsReady) {
+    // A model in use with a feature model missing (an upload while offline): the list would contradict the other note.
+    const chosen = Array.isArray(w.models) && w.models.some((m) => m.active);
+    notes.push({
+      text: chosen
+        ? 'The feature models are missing: download them under Advanced.'
+        : 'No phrase model is in use for this endpoint yet: choose one of the list (download it first where needed), or upload your own.',
+    });
+  }
   if (w.mode === 'always') {
     if (!w.notificationsAllowed) {
       notes.push({
@@ -319,7 +327,42 @@ export function alsoListeningLine(w) {
 export function wakeModelsLine(w) {
   if (!w) return '';
   const yes = (b) => (b ? 'present' : 'missing');
-  return `Melspectrogram: ${yes(w.melspectrogram)} · Embedding: ${yes(w.embedding)} · Phrase: ${yes(w.phrase)}`;
+  return `Feature models: melspectrogram ${yes(w.melspectrogram)} · embedding ${yes(w.embedding)}. They are downloaded with the first phrase model.`;
+}
+
+// One row of the phrase model list: what it is, whether it is the one the
+// endpoint shown uses, and the buttons it offers. The list is the phone's, the
+// same under every endpoint; using a model is the shown endpoint's choice. A
+// model must be downloaded before it can be used; the user's own stay on the
+// list after another is chosen, to go back to.
+const SOURCE_TEXT = { builtin: 'openWakeWord', file: 'Your file', url: 'From a URL' };
+
+export function wakeModelRow(m, w) {
+  const busy = !!(w && w.busy);
+  const working = busy && w.busyId === m.id;
+  const parts = [SOURCE_TEXT[m.source] || ''];
+  if (working) parts.push(m.downloaded ? 'working…' : 'downloading…');
+  else if (!m.downloaded) parts.push('not downloaded');
+  const actions = [];
+  if (!m.downloaded) {
+    if (m.url) actions.push({ label: 'Download', msg: { type: 'wake.model.download', id: m.id }, primary: true });
+  } else if (m.active) {
+    actions.push({ label: 'Stop using', msg: { type: 'wake.model.none' } });
+  } else {
+    actions.push({ label: 'Use this model', msg: { type: 'wake.model.use', id: m.id }, primary: true });
+  }
+  if (m.removable) actions.push({ label: 'Remove', msg: { type: 'wake.model.remove', id: m.id }, danger: true, confirm: true });
+  else if (m.downloaded && !m.active) actions.push({ label: 'Delete download', msg: { type: 'wake.model.remove', id: m.id } });
+  // Choosing a model is instant; downloads and removals wait for the job under way.
+  for (const a of actions) a.disabled = busy && a.msg.type !== 'wake.model.use' && a.msg.type !== 'wake.model.none';
+  return { name: m.name, detail: parts.filter(Boolean).join(' · '), active: !!m.active, actions };
+}
+
+// The line over the list: which model the endpoint shown listens for.
+export function wakeActiveLine(w) {
+  const models = (w && Array.isArray(w.models)) ? w.models : [];
+  const active = models.find((m) => m.active);
+  return active ? `In use: ${active.name}` : 'No phrase model in use.';
 }
 
 // ── The instance's own section ──────────────────────────────────────────────

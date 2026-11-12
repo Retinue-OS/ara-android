@@ -52,9 +52,10 @@ data class Endpoint(
      */
     val background: Boolean = false,
     /**
-     * The wake phrase of this instance on this phone. Null in a list an older
-     * build wrote: the one device-wide wake setting of those builds stands in
-     * (see EndpointCodec.withLegacyWake), and the next write stores it here.
+     * The wake phrase of this instance on this phone: mode, threshold and
+     * phrase model. Null in a list an older build wrote: the one device-wide
+     * wake setting of those builds stands in (see EndpointCodec.withLegacyWake),
+     * and the next write stores it here.
      */
     val wake: EndpointWake? = null,
 ) {
@@ -87,9 +88,22 @@ data class EndpointWake(
     val mode: String = WakeMode.Off.key,
     /** Score at or above which the phrase counts as heard (openWakeWord's default 0.5). */
     val threshold: Float = DEFAULT_THRESHOLD,
+    /**
+     * The phrase model listened for, by [os.retinue.ara.wake.WakePhraseModel.id]
+     * (null: none chosen). The models themselves are the phone's library
+     * ([os.retinue.ara.wake.WakeModelFiles.library]); an id that is not in
+     * it, or whose model is not downloaded, counts as none.
+     */
     val modelId: String? = null,
 ) {
     val wakeMode: WakeMode get() = WakeMode.fromKey(mode)
+
+    /**
+     * This wake with the model [id], unless it has one already: how the one
+     * phrase file of earlier builds, moved into the library as [id], stays
+     * the one listened for (see [EndpointCodec.adoptingWakeModel]).
+     */
+    fun adopting(id: String): EndpointWake = if (modelId == null) copy(modelId = id) else this
 
     companion object {
         const val DEFAULT_THRESHOLD = 0.5f
@@ -152,6 +166,15 @@ data class EndpointSet(val endpoints: List<Endpoint>, val currentId: String?) {
     /** The endpoints that work for the phone while not shown, in list order. */
     val backgroundEndpoints: List<Endpoint>
         get() = endpoints.filter { stateOf(it) == InstanceState.Background }
+
+    /** No endpoint listens for the phrase model [modelId] any more (it leaves the library). */
+    fun withoutWakeModel(modelId: String): EndpointSet = EndpointSet(
+        endpoints.map { e ->
+            val wake = e.wake
+            if (wake != null && wake.modelId == modelId) e.copy(wake = wake.copy(modelId = null)) else e
+        },
+        currentId,
+    )
 
     companion object {
         val EMPTY = EndpointSet(emptyList(), null)
@@ -225,14 +248,29 @@ object EndpointCodec {
 
     /**
      * [endpoints] with the wake setting of builds before per-instance wake
-     * phrases ([legacy], the one device-wide mode and threshold) filled in
-     * where an endpoint has none yet. Every endpoint gets it: the phrase woke
-     * whichever endpoint was shown, so each keeps doing so when shown. Only
-     * the shown one listens until another is set to work in the background,
-     * so nothing changes for the user.
+     * phrases ([legacy]: the one device-wide mode and threshold, and the one
+     * phrase model chosen for the phone where a build had a library of them)
+     * filled in where an endpoint has none yet. Every endpoint gets it: the
+     * phrase woke whichever endpoint was shown, so each keeps doing so when
+     * shown. Only the shown one listens until another is set to work in the
+     * background, so nothing changes for the user.
      */
     fun withLegacyWake(endpoints: List<Endpoint>, legacy: EndpointWake): List<Endpoint> =
         if (endpoints.all { it.wake != null }) endpoints else endpoints.map { if (it.wake == null) it.copy(wake = legacy) else it }
+
+    /**
+     * [endpoints], the list as stored, once the one phrase file of earlier
+     * builds has joined the library as [modelId]: an endpoint with a wake of
+     * its own and no model gets it. Such an endpoint is of a build that had
+     * per-instance wake phrases and still the one phrase file, which every
+     * endpoint listened with. An endpoint without a wake of its own is left
+     * as it is: it reads the device-wide choice ([withLegacyWake]).
+     *
+     * Only for a start that still finds the earlier file: that is what tells
+     * such an endpoint from one set to no model later on.
+     */
+    fun adoptingWakeModel(endpoints: List<Endpoint>, modelId: String): List<Endpoint> =
+        endpoints.map { e -> e.wake?.let { e.copy(wake = it.adopting(modelId)) } ?: e }
 
     /**
      * The endpoint an older build's settings describe: its base URL and

@@ -93,7 +93,7 @@ On first start there is no endpoint yet, so the page opens at a new one.
 | **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
-| **Wake phrase** (with the endpoint) | The endpoint's own wake phrase on this phone: mode, with what each needs from Android, and the sensitivity, plus the other endpoints listened for in the background; under *Advanced*, the models, kept for every endpoint (see [Wake phrase](#wake-phrase)). |
+| **Wake phrase** (with the endpoint) | The endpoint's own wake phrase on this phone: mode, with what each needs from Android, the sensitivity, and its phrase model, chosen from the phone's list of models (one list, kept for every endpoint), plus the other endpoints listened for in the background; under *Advanced*, a model from a URL and the feature models (see [Wake phrase](#wake-phrase)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -788,11 +788,13 @@ own phrase model and threshold, in one listener: the audio, the melspectrogram
 and the embedding models run once, and every distinct phrase model scores the
 same embeddings. A phrase of a background endpoint brings that endpoint to the
 front (the wake waits until its page has loaded); when two listening endpoints
-share a phrase, the one shown takes it, else the first in the list, whichever
-of their thresholds the score reaches. The service
+share a phrase model, the one shown takes it, else the first in the list,
+whichever of their thresholds the score reaches (so the lowest of them is the
+one that counts). The service
 of mode *Always* runs while any listening endpoint is in that mode. The one
 device-wide wake setting of earlier builds becomes every endpoint's own on
-update, so the endpoint shown keeps waking as before.
+update, with the phrase model that was in use, so the endpoint shown keeps
+waking as before.
 
 Ara runs [openWakeWord](https://github.com/dscripka/openWakeWord) on the device
 with ONNX Runtime: 16 kHz mono audio in 80 ms frames → `melspectrogram.onnx`
@@ -836,15 +838,36 @@ retried later with a growing delay). Detection pauses while the web app
 reports the mic in use. A microphone error stops detection for 30 s (doubling
 up to 10 min on repeated errors), or until Ara is opened again.
 
-**Models are not bundled** (licence and size). On the settings page, under the wake phrase's *Advanced*:
+**Models are not bundled** (licence and size). The phrase models are the
+phone's: one list, the same in every endpoint's wake phrase card. Which of
+them wakes an endpoint is that endpoint's own choice (`Endpoint.wake.modelId`),
+and the card marks the model of the endpoint shown as *Active*:
 
-1. **Download feature models** — `melspectrogram.onnx` and
-   `embedding_model.onnx` from openWakeWord's v0.5.1 release.
-2. **Phrase model** — download from a URL (default: the release's
-   `hey_jarvis_v0.1.onnx`, for testing) or **Choose file…** to import an
-   `.onnx` from the device.
+- **Downloadable models** — Hey Jarvis (listed first, for testing), Hey
+  Mycroft, Hey Rhasspy and Alexa from openWakeWord's v0.5.1 release. Tap
+  **Download** first, then **Use this model**, which is the choice of the
+  endpoint shown; a downloaded model can be deleted again while that endpoint
+  uses another.
+- **Your own** — **Upload a model file…** imports an `.onnx` from the phone;
+  it is listed under its file name and is in use at once, for the endpoint
+  that was shown when you started (should another come to the front
+  meanwhile). Under *Advanced*, **Add from URL** does the same for a model on a
+  server (a model on the shown endpoint's origin is fetched with that
+  endpoint's client certificate). Your models stay on the list when you choose
+  another, so you can switch back; **Remove** deletes one. **Stop using**
+  leaves the endpoint shown without a model.
 
-A downloaded or imported model replaces the old one only after it loads.
+An endpoint without a model is not listened for, whatever its mode, and its
+card says so; the same holds for one whose model is no longer on the list or
+not downloaded.
+
+The feature models (`melspectrogram.onnx`, `embedding_model.onnx`) come with
+the first phrase model; *Advanced* can download them again. A downloaded or
+uploaded model is only added after it loads. The single phrase model of
+earlier builds is moved into the list on update (as Hey Jarvis when it is that
+file, otherwise as "Earlier model") and stays in use, for every endpoint, as
+that one file was; so does the one model chosen for the whole phone by a build
+that had the list before the endpoints had their own choice.
 
 ### Recommended phrase: "Hey Retinue"
 
@@ -861,7 +884,7 @@ To train it: open openWakeWord's
 thousands of variations with Piper TTS and trains the small classifier), and
 export the `.onnx`. Put the file somewhere the phone can reach — e.g. on the
 Retinue host, where the client certificate is used for the download — and enter
-its URL, or copy it to the phone and use **Choose file…**. Raise the threshold
+its URL under **Add from URL**, or copy it to the phone and use **Upload a model file…**. Raise the threshold
 if it wakes too easily, lower it if it is hard to trigger.
 
 ---
