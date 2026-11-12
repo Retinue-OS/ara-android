@@ -16,6 +16,9 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.health.HealthSyncStatus
+import os.retinue.ara.keyboard.HidKeys
+import os.retinue.ara.keyboard.KeyboardLogic
+import os.retinue.ara.keyboard.KeyboardStatus
 
 /**
  * A message the page's `window.RetinueShell` (see assets/retinue-shell.js) posts
@@ -66,6 +69,25 @@ sealed class WebMessage {
 
     /** `setHealthAutoSync(bool)`: sync when Ara comes to the front. */
     data class HealthAutoSync(val on: Boolean) : WebMessage()
+
+    /** `keyboardType(text, opts)`: type [text] into the connected device (RetinueShell/5). */
+    data class KeyboardType(val text: String, val enter: Boolean, val id: String?) : WebMessage()
+
+    /** `keyboardKey(name, opts)`: press one named key (HidKeys.NAMED); [id] is echoed in its event. */
+    data class KeyboardKey(val name: String, val id: String? = null) : WebMessage()
+
+    /**
+     * `keyboardSecret(opts)`: open the native secret dialog. The page names
+     * what is asked for ([label]); the secret itself never comes from or goes
+     * to the page.
+     */
+    data class KeyboardSecret(val label: String?, val enter: Boolean, val id: String?) : WebMessage()
+
+    /** `keyboardOpen()`: the native keyboard screen. */
+    data object KeyboardOpen : WebMessage()
+
+    /** `keyboardCancel()`: stop what is being typed. */
+    data object KeyboardCancel : WebMessage()
 
     /** `placeCall(number)`: call [number] — as it came from the page, see CallLogic. */
     data class PlaceCall(val number: String) : WebMessage()
@@ -140,6 +162,22 @@ object ShellMessages {
                 WebMessage.HealthSyncInterval(minutes.toInt())
             }
             "health.auto" -> WebMessage.HealthAutoSync(obj.bool("on") ?: return null)
+            "keyboard.type" -> {
+                // Over-long text is passed on (the runtime refuses it as `too-long`, so the page hears why).
+                val text = obj.str("text") ?: return null
+                WebMessage.KeyboardType(text, obj.bool("enter") ?: false, KeyboardLogic.cleanId(obj.str("id")))
+            }
+            "keyboard.key" -> WebMessage.KeyboardKey(
+                obj.str("name")?.takeIf { it in HidKeys.NAMED } ?: return null,
+                KeyboardLogic.cleanId(obj.str("id")),
+            )
+            "keyboard.secret" -> WebMessage.KeyboardSecret(
+                label = KeyboardLogic.cleanLabel(obj.str("label")),
+                enter = obj.bool("enter") ?: false,
+                id = KeyboardLogic.cleanId(obj.str("id")),
+            )
+            "keyboard.open" -> WebMessage.KeyboardOpen
+            "keyboard.cancel" -> WebMessage.KeyboardCancel
             // Any string goes on, an empty one too: CallLogic refuses what is no number, and the page hears why.
             "call.place" -> WebMessage.PlaceCall(obj.str("number") ?: return null)
             else -> null
@@ -221,6 +259,17 @@ object ShellMessages {
     fun healthStatus(status: HealthSyncStatus): String = receiveScript(
         buildJsonObject {
             put("type", "health.status")
+            put("status", status.toJson())
+        },
+    )
+
+    /** The type of the `retinue-shell` events about the keyboard for other devices. */
+    const val KEYBOARD_EVENT = "keyboard"
+
+    /** The keyboard status the page's `keyboardStatus()` answers from (sent before a `status` event). */
+    fun keyboardStatus(status: KeyboardStatus): String = receiveScript(
+        buildJsonObject {
+            put("type", "keyboard.status")
             put("status", status.toJson())
         },
     )

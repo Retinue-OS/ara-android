@@ -244,4 +244,16 @@ class SplitScreenDecisionsTest {
         assertFalse(ShellDecisions.parkSplitWindow(true, false, sinceLastAttemptMs = ShellDecisions.PARK_RETRY_MS - 1))
         assertTrue(ShellDecisions.parkSplitWindow(true, false, sinceLastAttemptMs = ShellDecisions.PARK_RETRY_MS))
     }
+
+    @Test
+    fun theShellTypesOnlyWhileTheUserLooks() {
+        assertTrue(ShellDecisions.mayType(resumed = true, windowFocused = true, keyguardLocked = false, covered = false))
+        // Paused (a translucent dialog over it), unfocused (the other half of a
+        // split screen, the shade), locked, or covered by the app's own settings
+        // page or an editor: no. (A keyboard window open is the gate's busy, KeyboardGateTest.)
+        assertFalse(ShellDecisions.mayType(resumed = false, windowFocused = true, keyguardLocked = false, covered = false))
+        assertFalse(ShellDecisions.mayType(resumed = true, windowFocused = false, keyguardLocked = false, covered = false))
+        assertFalse(ShellDecisions.mayType(resumed = true, windowFocused = true, keyguardLocked = true, covered = false))
+        assertFalse(ShellDecisions.mayType(resumed = true, windowFocused = true, keyguardLocked = false, covered = true))
+    }
 }

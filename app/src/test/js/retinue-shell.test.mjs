@@ -330,6 +330,67 @@ console.log('endpoint bridge tests passed');
 }
 console.log('device settings bridge tests passed');
 
+// ---- Keyboard for other devices (RetinueShell/5): status, typing, keys, the secret dialog ----
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, CustomEvent, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const target = new EventTarget();
+  ctx.addEventListener = target.addEventListener.bind(target);
+  ctx.removeEventListener = target.removeEventListener.bind(target);
+  ctx.dispatchEvent = target.dispatchEvent.bind(target);
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  // As web/ShellBridge.kt substitutes it: the status JSON as a string literal.
+  const status = { available: true, enabled: true, connected: true, host: { name: 'Quest 3', address: 'AA:BB' }, layout: 'de-CH' };
+  const kb = src.replace('"__RETINUE_KEYBOARD_STATUS__"', JSON.stringify(JSON.stringify(status)));
+  vm.createContext(ctx);
+  vm.runInContext(kb, ctx);
+  const shell = ctx.RetinueShell;
+  // The device by name only, whatever the shell sends: no Bluetooth address reaches the page.
+  assert.deepEqual(JSON.parse(shell.keyboardStatus()), { ...status, host: { name: 'Quest 3' } });
+  shell.keyboardType('Grüezi', { id: 'm1', enter: true });
+  shell.keyboardType('two', '{"id":"m2"}');   // opts as JSON, as the contract writes it
+  // Invalid arguments throw: the page's call fails at once, nothing is posted.
+  assert.throws(() => shell.keyboardType(42, {}), TypeError);
+  shell.keyboardKey('enter');
+  shell.keyboardKey('tab', { id: 'k1' });
+  shell.keyboardKey('escape', '{"id":"k2"}');  // opts as JSON
+  assert.throws(() => shell.keyboardKey('format-disk'), TypeError);
+  shell.keyboardSecret({ id: 's1', label: 'Meta account', enter: true });
+  shell.keyboardSecret('nonsense');            // unreadable opts: a plain dialog
+  shell.keyboardOpen();
+  shell.keyboardCancel();
+  assert.deepEqual(posts, [
+    { type: 'keyboard.type', text: 'Grüezi', enter: true, id: 'm1' },
+    { type: 'keyboard.type', text: 'two', enter: false, id: 'm2' },
+    { type: 'keyboard.key', name: 'enter' },
+    { type: 'keyboard.key', name: 'tab', id: 'k1' },
+    { type: 'keyboard.key', name: 'escape', id: 'k2' },
+    { type: 'keyboard.secret', label: 'Meta account', enter: true, id: 's1' },
+    { type: 'keyboard.secret', enter: false },
+    { type: 'keyboard.open' },
+    { type: 'keyboard.cancel' },
+  ]);
+  // The shell pushes a new status before its event: a listener reads the new one.
+  const heard = [];
+  ctx.addEventListener('retinue-shell', (e) => {
+    if (e.detail.type === 'keyboard') heard.push([e.detail.state, JSON.parse(shell.keyboardStatus()).connected]);
+  });
+  ctx.__retinueShellReceive({ type: 'keyboard.status', status: { available: true, enabled: true, connected: false, host: null, layout: 'us' } });
+  ctx.dispatchEvent(new CustomEvent('retinue-shell', { detail: { type: 'keyboard', state: 'status' } }));
+  assert.deepEqual(heard, [['status', false]]);
+  // Garbage is ignored.
+  ctx.__retinueShellReceive({ type: 'keyboard.status', status: 'nope' });
+  assert.equal(JSON.parse(shell.keyboardStatus()).layout, 'us');
+}
+{
+  // The bare asset: the members exist, the keyboard is off.
+  assert.deepEqual(JSON.parse(window.RetinueShell.keyboardStatus()), { available: false, enabled: false, connected: false, host: null, layout: 'us' });
+}
+console.log('keyboard bridge tests passed');
+
 // placeCall (RetinueShell/6): the number goes to the shell as a string, an empty
 // one too (the shell answers it with invalid-number); nothing without one.
 {

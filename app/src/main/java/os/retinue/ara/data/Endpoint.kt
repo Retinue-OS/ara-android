@@ -12,9 +12,10 @@ import os.retinue.ara.wake.WakeMode
 
 /**
  * One Retinue server this phone can show: where it is, how the shell signs in
- * there, whether the phone's health data may go to its letterbox and whether
- * its page may place phone calls directly. The shell keeps a list of these
- * and shows one at a time (see [ShellSettings]).
+ * there, whether the phone's health data may go to its letterbox, whether
+ * its page may place phone calls directly and whether it may type on other
+ * devices. The shell keeps a list of these and shows one at a time (see
+ * [ShellSettings]).
  *
  * The password is the one secret here, and it is stored sealed
  * ([CredentialVault]): [secret] is ciphertext, never the clear text. The
@@ -45,6 +46,15 @@ data class Endpoint(
      * off for a new endpoint until the user says otherwise.
      */
     val directCalls: Boolean = false,
+    /**
+     * This endpoint's page may type on other devices through the phone's
+     * keyboard (RetinueShell keyboardType, keyboardKey, keyboardSecret). Off,
+     * each such request of its page is refused as `not-enabled`, and
+     * `keyboardStatus()` tells it the keyboard is off. Its own switch, like
+     * [directCalls] (see EndpointSet.pageEndpoint); off for a new endpoint
+     * until the user says otherwise.
+     */
+    val typeOnDevices: Boolean = false,
     /**
      * The instance's own name, the `short_name` of its web manifest, as last
      * fetched (see EndpointNames); null until the first successful fetch. It is
@@ -163,6 +173,15 @@ data class EndpointSet(val endpoints: List<Endpoint>, val currentId: String?) {
         val current = if (currentId == id) list.firstOrNull()?.id else currentId
         return EndpointSet(list, current)
     }
+
+    /**
+     * The endpoint whose switches answer a page loaded for [pageEndpointId]:
+     * that endpoint while it is the one shown, and none otherwise (no page of
+     * one loaded, the endpoint removed or left meanwhile). One server's switch
+     * never answers for another's page: CallLogic.directCalls and
+     * KeyboardLogic.serverMayType both decide by this.
+     */
+    fun pageEndpoint(pageEndpointId: String?): Endpoint? = current?.takeIf { it.id == pageEndpointId }
 
     /** Show the endpoint [id]; an unknown id changes nothing. */
     fun select(id: String): EndpointSet =

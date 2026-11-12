@@ -52,6 +52,21 @@
          on; emergency numbers only ever open the dialer. -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
+    <!-- Keyboard for other devices (keyboard/KeyboardRuntime): the phone as a
+         Bluetooth HID keyboard. Connect to register and type, advertise to be
+         discoverable for pairing; a connectedDevice foreground service keeps
+         the registration while Ara is in the background. Asked for only when
+         the user switches the keyboard on. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Held while typing: a press whose release came after the phone slept
+         would repeat on the other device. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
@@ -222,6 +237,45 @@
             android:name=".wake.WakeService"
             android:exported="false"
             android:foregroundServiceType="microphone|shortService" />
+
+        <!-- Keyboard for other devices: keeps the HID registration while Ara is
+             in the background (see keyboard/KeyboardService). -->
+        <service
+            android:name=".keyboard.KeyboardService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|shortService" />
+
+        <!-- The keyboard screen: pairing, layout, live typing. Not exported. -->
+        <activity
+            android:name=".ui.KeyboardActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:label="@string/keyboard_title" />
+
+        <!-- The secret path: a password typed into the connected device, never
+             shown to the page. It opens in the shell's task; FLAG_SECURE (set
+             in code) blanks it in Recents and screenshots. Not noHistory: a
+             locked password manager shows its unlock screen over the dialog
+             and hands the fill back to it afterwards, which a noHistory
+             activity, finished once covered, would never get. configChanges:
+             turning the phone (or any other change) must not recreate it and
+             cancel what the user is filling in. -->
+        <activity
+            android:name=".ui.SecretTypeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|fontScale|fontWeightAdjustment|density|locale|layoutDirection|colorMode|touchscreen|mcc|mnc|grammaticalGender"
+            android:theme="@style/Theme.Ara.Translucent"
+            android:windowSoftInputMode="stateAlwaysVisible" />
+
+        <!-- The phone's own question before a page types what acts on another
+             device (ui/ConfirmTypeActivity): in the shell's task, FLAG_SECURE
+             set in code, and like the secret dialog not recreated by a
+             configuration change, which would end it as declined. -->
+        <activity
+            android:name=".ui.ConfirmTypeActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|fontScale|fontWeightAdjustment|density|locale|layoutDirection|colorMode|touchscreen|mcc|mnc|grammaticalGender"
+            android:theme="@style/Theme.Ara.Translucent" />
 
         <!-- The package installer reports the outcome of an update here (through
              a PendingIntent of Ara's own, so the receiver is not exported). -->

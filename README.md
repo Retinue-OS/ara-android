@@ -14,9 +14,12 @@ a specialized browser and home launcher around the
 - It adds the few things a browser tab cannot do: an on-device **wake phrase**,
   **native text-to-speech** where the WebView has none, the **client
   certificate** (mutual TLS) and stored **sign-in** for the Retinue edge, the
-  list of **endpoints** (several Retinue servers, one shown at a time), and
+  list of **endpoints** (several Retinue servers, one shown at a time),
   **Health Connect sync** (the phone's health data, as files, to the Retinue
-  server — per endpoint, where switched on).
+  server — per endpoint, where switched on), and the **keyboard for other
+  devices** (the phone as a Bluetooth keyboard, so Retinue can type into a
+  headset, a TV or another computer, passwords from the password manager
+  included).
 
 The old native voice loop (SpeechRecognizer, `/message` job polling, the answer
 screen) is gone: continuous conversation is now a per-thread mode of the web
@@ -72,9 +75,9 @@ load. It has three parts, from the phone outwards:
    endpoints themselves, voice timing and the shelf, home screen, split screen,
    the launcher bar and updates.
 2. **This app with *endpoint*** — what this phone does with the endpoint shown
-   now: its health data, its wake phrase, and whether a call asked for by
-   voice there is placed directly (and, once the app receives them, its
-   notifications).
+   now: its health data, its wake phrase, whether a call asked for by
+   voice there is placed directly, and whether its page may type on other
+   devices (and, once the app receives them, its notifications).
 3. **This instance** — the endpoint's own settings (its name and colour, agent
    models, the system pages), embedded from the server's
    `/settings-instance.html`, which the server lets only itself and this page
@@ -96,6 +99,7 @@ On first start there is no endpoint yet, so the page opens at a new one.
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
 | **Wake phrase** (with the endpoint) | The endpoint's own wake phrase on this phone: mode, with what each needs from Android, the sensitivity, and its phrase model, chosen from the phone's list of models (one list, kept for every endpoint), plus the other endpoints listened for in the background; under *Advanced*, a model from a URL and the feature models (see [Wake phrase](#wake-phrase)). |
 | **Phone calls** (with the endpoint) | **Call directly by voice**: whether a call you ask for in a voice conversation with the endpoint shown is placed without a tap, instead of opening the dialer. Each endpoint has its own switch, off for a new endpoint (see [Phone calls](#phone-calls)). |
+| **Typing on other devices** (with the endpoint) | **This server may type on other devices**: whether the endpoint's page may make the phone's keyboard type at all. Each endpoint has its own switch, off for a new endpoint; the phone's own keyboard switch must be on as well (see [Keyboard for other devices](#keyboard-for-other-devices)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -110,10 +114,10 @@ server.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5:
-  reserved for the keyboard for other devices; 4: the app has a settings page
-  of its own and holds the dashboard's per-device preferences; 3: the endpoint
-  members of the bridge exist; 2: the Health Connect members).
+- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5: the
+  keyboard for other devices; 4: the app has a settings page of its own and
+  holds the dashboard's per-device preferences; 3: the endpoint members of the
+  bridge exist; 2: the Health Connect members).
 - **Same-origin** links stay in the view; links to **other web origins** open in
   the default browser; **other schemes** (`tel:`, `sms:`, `mailto:`, `geo:`, …)
   go to Android (to browsable handlers only, as from a browser). `intent:` URLs
@@ -165,6 +169,30 @@ The web app detects the shell and talks to it through:
   the app's page) and the per-device preferences: `deviceSettings()` → a JSON
   string of them, `setDeviceSetting(key, value)` (`null` removes one); see
   [Per-device preferences](#per-device-preferences).
+  RetinueShell/5 adds the [keyboard for other devices](#keyboard-for-other-devices):
+  `keyboardStatus()` → a JSON string `{available, enabled, connected,
+  host: {name}|null, layout}` (the device's name only; its Bluetooth address
+  stays in the app); `keyboardType(text, opts)` with `opts`
+  `{id, enter}` (an object or its JSON; at most 4000 characters, returns at
+  once; a line break is typed as Shift+Enter, a tab as Tab);
+  `keyboardKey(name, opts)` with `opts` `{id}` — `enter`, `tab`, `backspace`,
+  `escape`, `up`, `down`, `left`, `right`, `home`, `end`, `delete`, `space`;
+  `keyboardSecret(opts)` with `{id, label, enter}` (opens the native secret
+  dialog); `keyboardOpen()` (the native keyboard screen); `keyboardCancel()`
+  (stops a text being typed and closes an open secret dialog or
+  confirmation, which then ends as `cancelled`; never a secret being
+  typed). Typing, keys and the secret dialog are taken only from a
+  page whose endpoint may type on other devices (otherwise `not-enabled`,
+  for `keyboardOpen()` and `keyboardCancel()` too, and `keyboardStatus()` says the keyboard is not enabled and nothing of the
+  device), only while the user is looking at the dashboard — resumed,
+  focused, unlocked, not under the app's own settings page or editors
+  (otherwise `not-in-front` at once) — and not while the phone's
+  confirmation or the secret dialog is open (`busy`). What acts on the
+  other device is confirmed on the phone first (see
+  [From the dashboard](#keyboard-for-other-devices)); declined or not
+  answered in time, it ends as `cancelled`.
+  An `id` is echoed when it is 1–64 of `A–Z a–z 0–9 . _ : -`, and dropped
+  otherwise; invalid arguments throw.
   RetinueShell/6 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
@@ -191,7 +219,20 @@ The web app detects the shell and talks to it through:
   `interval`, `no-permission`, `unavailable`, `no-backend-support`,
   `disabled`); a changed endpoint list sends `type` `endpoints`, changed
   per-device preferences `type` `device-settings` with the `keys` that
-  changed. Nobody has to take these.
+  changed. The keyboard sends `type` `keyboard` with a `state`: `typed`
+  (`count`, the characters typed — a CRLF line break as one; a key press
+  too), `error` (`error`:
+  `not-enabled`, `not-connected`, `not-in-front`, `too-long`,
+  `unsupported-char`, `busy`, `cancelled`, `failed`),
+  `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
+  it is current before any `keyboard` event arrives), each with the request's
+  `id` where it had one. The end of a request reaches the page once the
+  dashboard is in front again, at the latest 1.5 s after it came, and no
+  later event overtakes it. While the page's endpoint may not type, it hears
+  `not-enabled` errors, `status` when that switch changes, and the end
+  (`typed`, `error`, `secret-typed`, `secret-cancelled`) of a request with an
+  `id` that it made before the switch was turned off; nothing else of the
+  keyboard. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
   `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
   `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,
@@ -986,6 +1027,210 @@ Retinue host, where the client certificate is used for the download — and ente
 its URL under **Add from URL**, or copy it to the phone and use **Upload a model file…**. Raise the threshold
 if it wakes too easily, lower it if it is hard to trigger.
 
+## Keyboard for other devices
+
+The phone as a **Bluetooth keyboard** for a device that takes one but cannot
+run Retinue itself — a VR headset, a TV, a streaming box, someone else's
+computer. Retinue can then type there: text the user asks for in a thread
+("type the text above"), single keys, and passwords from the user's password
+manager. Nothing about it is specific to one kind of device; it is a standard
+boot keyboard (`keyboard/HidKeys.kt`) registered through Android's HID device
+profile (`BluetoothHidDevice`, Android 9+), the same mechanism keyboard-emulator
+apps use.
+
+**Switching it on and pairing.** Settings → *Keyboard for other devices* →
+*Open keyboard* opens the native keyboard screen. Switching *Act as a Bluetooth
+keyboard* on asks for Android's *connect* Bluetooth permission, registers Ara
+as a keyboard and starts a foreground service (type `connectedDevice`, with
+an ongoing notification) so the registration survives Ara going to the
+background — only while Bluetooth is on (when the app was started in the
+background, the service starts the next time Ara comes to the front). *Make
+this phone discoverable* asks for the *advertise* permission then, and
+Android for two minutes of visibility; the other device then pairs with the
+phone from its own Bluetooth settings. The screen lists the paired devices
+with *Connect*/*Disconnect*, and says when Bluetooth is off, when another app
+holds the keyboard role, and — after ten seconds without an answer from it —
+when the phone has no HID device profile at all. Off, Ara unregisters and the
+service leaves.
+
+**Which device it types into.** Only the one the user chose: the one they
+tapped *Connect* for — while that connection is pending (up to 30 s), no
+other — or one paired with the phone in the last three minutes (from the
+other device, or in Android's own Bluetooth settings: pairing takes the user
+on both sides), and from then on the one it last typed into. Another paired
+device that connects to the phone by itself is disconnected again, so a text
+never lands on a device nobody picked. Ara reconnects to the chosen device
+when it starts, when the keyboard is switched on, when Bluetooth comes on,
+and when that device connects to the phone for something else or is bonded
+anew (its own Bluetooth broadcast; Ara does not page it). *Disconnect* holds:
+Ara connects to no device — not even the chosen one connecting by itself —
+but one paired just now, until the user taps *Connect* (or switches the
+keyboard on afresh).
+
+**Layouts.** A keyboard sends key positions, and the other device turns them
+into characters with the layout *it* is set to; so Ara types for that layout,
+chosen once per device (by Bluetooth address) on the keyboard screen: English
+(US), German (Switzerland), French (Switzerland), German (Germany). A new
+device starts with a guess from the phone's language, kept for that device
+when it first connects. The tables follow the layouts as Windows, Linux,
+ChromeOS and Android hosts (the Quest included) define them; on a Mac set to
+a German or Swiss layout the AltGr characters (`@`, `#`, `[`, `{`, `\`, `|`,
+`~`, `€`) sit elsewhere and come out wrong — English (US) types correctly on
+a Mac. Characters a layout makes with a dead key (`É`, `ô`, capital umlauts on
+the Swiss layouts) are typed as the dead key and the letter, for the letters
+every host composes (á é í ó ú ý, à è ì ò ù, â ê î ô û, ä ë ï ö ü ÿ, ã ñ õ and
+their capitals); others (`ń`, `ś`, …) count as missing, and so do `´` and `¨`
+alone (dead key and space make `'` and `"` on Linux hosts). A text is mapped
+whole before anything is sent: a character the layout cannot type is
+reported (`unsupported-char`) and nothing is typed, so no half text is left
+on the other device. When the host's Caps Lock is on (its LED report says
+so), Ara presses it off before the text and on again after, so letters keep
+their case; a newly connected host counts as off until it says otherwise (a
+host that remaps Caps Lock — to Escape, say — gets those two presses as
+that). A line break is typed as Shift+Enter
+(a new line, not "send", in chat apps and text areas — but in a terminal, a
+URL bar or a one-line field Shift+Enter submits like Enter, which is why the
+dashboard never types a line break without a tap, and the phone asks before
+one); Enter after the text is an explicit option.
+
+**Pacing.** Every key is pressed and released on its own (so `ll` is two
+presses), modifiers are pressed a report ahead of their key, and there is a
+pause of 12 ms after every report: hosts drop keys that arrive faster (the
+Quest among them). Typing goes one request at a time; a request while one is
+running is refused as `busy`. The phone is kept awake while it types (a
+press whose release came only after it slept would repeat). If the device
+goes away mid-text, Ara releases all keys and reports `failed`; *Stop typing*
+on the keyboard screen stops anything, a password too, before the next
+character (never between a dead key and its letter) and reports `cancelled`.
+The page's `keyboardCancel()` stops a text and closes an open password
+dialog or confirmation (which ends as `cancelled`), but not a password being typed — a page cutting that short would
+learn its length, and leave part of it on the device.
+
+**From the dashboard.** The page asks with `keyboardType(text, {id, enter})`
+and `keyboardKey(name, {id})` and hears the outcome — `typed` or `error`, with
+the request's `id` — as `keyboard` events (see the
+[contract](#shell--web-contract)). The app types only what a page of the
+configured origin hands over, through the same origin-restricted bridge as
+everything else, and every such request goes through one gate
+(`KeyboardLogic.decide`), in this order: the endpoint's own switch,
+*This server may type on other devices* (Settings → *This app with
+endpoint* → *Typing on other devices*; off for a new endpoint, and off, the
+page gets `not-enabled` and a `keyboardStatus()` that says the keyboard is
+off, without the device's name, its layout or whether one is connected);
+the keyboard on and a device connected; the user looking at the dashboard —
+Ara resumed, its window focused, the phone unlocked, the page not under the
+app's own settings page, launcher editor or folder editor (a script in a
+page nobody is looking at gets `not-in-front`); no confirmation or password
+dialog open (`busy`; one such window at a time); then the rule below.
+Typing that started then runs to its end (or Stop). A call with invalid
+arguments throws; every other request with an id gets exactly one final
+event. The page hears it once the dashboard is in front again, at the latest
+1.5 s after it came (`PageEventHold`): a key approved on the phone is typed
+in 24 ms, while the confirmation is still closing, and the step the page
+sends on hearing it would otherwise be refused as `not-in-front`.
+
+The phone itself asks before anything that can make the other device *do*
+something, and lets plain one-line text type by itself, so that typing by
+voice stays hands-free. A request **only writes** when it is a text without
+Enter, not empty, without a blank at either end and without a carriage
+return, line feed or tab; everything else **acts**: Enter, a line break, a
+tab, a blank at an end (a space presses a focused button), and every key.
+This is the web app's own rule for what it runs by itself (`runs_by_itself`
+in the retinue repository's `scripts/shell_actions.py`, with Python's blanks;
+`KeyboardRuleTest` pins its cases), so nothing the dashboard types by itself
+meets a confirmation. What the phone asks is set for each device, next to
+its layout on the keyboard screen: *Ask every time*; *One-line text by
+itself* (where every device starts: it asks when a request acts); or *Never
+ask*, which the screen asks about once more, since a page can open that
+screen (for the same reason its switch, when it turns the keyboard on, its
+keys, Connect and Disconnect, the choice of layout and this choice take no
+tap for 0.6 s after it appears and after any other touch on it).
+After *Stop* on the strip, the next request asks, whatever the mode, until
+the user approves one (a confirmation or the password dialog's *Type*). The confirmation is a small window of the app's own
+(`ConfirmTypeActivity`, `FLAG_SECURE`): it names the device and the host of
+the server that asked, as the app's settings have it (never the name the
+server gives itself); shows the text exactly, in a box that scrolls, with
+line breaks, tabs and blanks at the ends made visible, its length, and
+whether Enter follows and line breaks go as Shift+Enter — or *Press* and the
+key; and how many characters the dashboard typed on that device without
+asking since the last approval (a count only; an approval and a disconnect
+reset it). *Type* takes no tap for 0.6 s after the window appears and after
+any touch on it that is not on the button, and for a text longer than its
+box not before the box was scrolled to its end. An approval covers exactly
+that request, once, on that device: if another device is connected by then,
+nothing is typed (`not-connected`). Declined, left, or not answered within
+25 s (12 s for a key), or closed by the page's own `keyboardCancel()`, it
+ends as `cancelled`; after three in a row that were not approved (the page's
+cancel counts as one), requests that would ask are `cancelled` without a
+window for a minute. While a page types, and for three seconds after its last key, a
+strip of the app's own above the launcher bar says *Typing on* the device,
+with *Stop*.
+
+What a script that got into the page, or a server taken over, can still do:
+type plain one-line text without Enter on a device set to *One-line text by
+itself* or *Never ask* — characters land wherever the device's focus is, and
+a letter can be an app's shortcut there; do everything on a device set to
+*Never ask*; raise the confirmation at any time with any text, for the user
+to decline, and close it again with `keyboardCancel()`; and raise the
+password dialog. Nothing of it while the
+endpoint's switch is off.
+
+**Passwords — the secret path.** `keyboardSecret({id, label, enter})` opens a
+**native dialog**, outside the WebView, titled with the page's label ("Meta
+account") and naming the device it types into (by the name the device gave
+itself, cleaned like the label). Its field is a password field
+with the autofill hint *password*, so the user's password manager (Bitwarden,
+KeePassDX, …) offers to fill it — a locked one may show its unlock screen
+first, and the dialog waits under it; the user can also type. *Type* sends it
+to that device; if another one is connected by then, nothing is typed. What
+holds:
+
+- the secret is never logged, never stored by Ara, never handed to the page,
+  the server or any agent;
+- the page hears only `secret-typed` or `secret-cancelled` (or an `error` that
+  says nothing about the secret: a character the layout lacks is `failed` to
+  the page, and the phone itself says why). The typing is held — busy to
+  every other request — to a multiple of three seconds, stopped or not, so
+  how long it took, which a page could watch, says little of the length; the
+  page cannot cut it short;
+- Ara's own copies are overwritten: the char array the field's characters are
+  copied into (as soon as they are mapped to key presses), the lists of those
+  presses, and every key report once sent. The autofill session is cancelled
+  (no "save password?" prompt) and the field is cleared. What Ara cannot
+  wipe: the IME and the autofill service hand the text over as a string in
+  Android's own code, the field's buffer keeps old characters until reused,
+  and an autofill service sees what the user types into a field it serves;
+- the dialog's window is `FLAG_SECURE` (no screenshots, blank in Recents), the
+  keyboard is told not to learn from it, and the field cannot be long-pressed
+  to copy;
+- no dialog opens while no device is connected (the page hears
+  `not-connected` instead), so nobody is asked for a password that could not
+  be typed; a dialog nobody answers closes itself after ten minutes
+  (`secret-cancelled`);
+- it names the host of the server that asked, as the confirmation does, and
+  when the dashboard typed on that device without asking since the last
+  approval, says how many characters and starts with *Press Enter after*
+  unticked, whatever the page asked for (the page may have moved the focus
+  to where Enter does something else).
+
+**Live mode.** The keyboard screen's *Type live* field sends every change at
+once: new characters typed, deletions as Backspace (an edit in the middle of
+the field is sent as deleting back to it and retyping the rest). Changes are
+queued and sent in order — none is dropped while an earlier one is still
+being typed, the buttons below (Enter, Tab, Backspace, Esc, the arrows) in
+the same queue — and the field takes only characters the device's layout can
+type, up to 4000 (a pasted `\r\n` becomes one line break); a line break goes
+as Shift+Enter. If an edit cannot be sent (no device, stopped), waiting
+edits are dropped by a Stop, or the device's layout is changed (the field
+holds what the old one could type, and an edit retypes with the new one),
+the field is cleared, with a note: what reached the device stays there. The field takes no suggestions and no
+personalised learning, and takes part in no autofill.
+
+**Limits.** The other device treats the input as it would from any keyboard:
+a password typed into a field that does not mask it is visible there, and a
+text typed into the wrong field lands in the wrong field. Mouse and touchpad
+are not offered (the descriptor is a keyboard only).
+
 ---
 
 ## Known gaps
@@ -1014,6 +1259,13 @@ if it wakes too easily, lower it if it is hard to trigger.
 shell/     ShellUrls, UrlRouter, ShellDecisions,   — pure: origins, navigation routing, Back/Home/wake
            ShellMessages, FileNames,                  decisions, the bridge wire format, download
            ContentDisposition, ShellLinks             file names, view or save, retinue-shell: links (unit-tested)
+keyboard/  HidKeys, KeyLayouts, KeyPacer,          — pure: the HID descriptor and reports, characters →
+           KeyboardLogic, KeyboardConsent,            presses per layout, pacing, prechecks, the page's
+           PageEventHold                              gate, the rule, modes, pause, count, when the
+                                                      page hears an end (unit-tested)
+           KeyboardRuntime, KeyboardService,        — HID registration, connections, typing; the
+           KeyboardPrefs                              foreground service; on/off, last device, layouts
+                                                      and modes
 health/    HealthSyncLogic, HealthRecords,          — pure: sync gating and back-off, file envelope and name,
            HealthSyncer                               rounds, records → JSON, the order of one sync (unit-tested)
            HealthSyncRuntime, HealthRoundStore      — Health Connect reads, letterbox probe and upload,
@@ -1040,7 +1292,9 @@ ui/        MainActivity, SplitShellActivity,        — the Compose shell (home 
            LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor),
            LauncherFolders,
            LauncherEditorScreen, SettingsPageModel,   the launcher bar's editor, the settings page's state
-           HealthRationaleActivity
+           HealthRationaleActivity,
+           KeyboardActivity, SecretTypeActivity,    the keyboard screen, the secret dialog,
+           ConfirmTypeActivity                        the confirmation before typing
 settings/  AppPage, SettingsMessages,               — pure: the settings page's address and policy, its
            SettingsState                              messages both ways, its state (unit-tested)
            AppPageServer, SettingsBridge,           — the page served from the APK, its line to the app,

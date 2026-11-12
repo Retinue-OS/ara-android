@@ -9,8 +9,11 @@
 //     endpoints(), selectEndpoint(id), and (RetinueShell/4) the app's own
 //     settings page (settingsPage) and the dashboard's per-device
 //     preferences the app holds for every endpoint: deviceSettings(),
-//     setDeviceSetting(key, value), and (RetinueShell/6) placeCall(number),
-//     whose outcome comes as a `call` event. Shell -> web events arrive as
+//     setDeviceSetting(key, value), (RetinueShell/5) the keyboard for other
+//     devices: keyboardStatus(), keyboardType(text, opts),
+//     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(),
+//     keyboardCancel(), and (RetinueShell/6) placeCall(number), whose outcome
+//     comes as a `call` event. Shell -> web events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
 //
@@ -121,6 +124,36 @@
   }
   try { takeDevice(JSON.parse("__RETINUE_DEVICE_SETTINGS__")); } catch (_) { /* the bare asset: none */ }
 
+  // ---- Keyboard for other devices (RetinueShell/5) -------------------------
+  //
+  // The phone as a Bluetooth keyboard for a device that cannot run Retinue
+  // itself. keyboardStatus() answers at once from a copy the shell baked in
+  // and replaces with its `keyboard.status` messages (sent before each
+  // `keyboard` event). Typing is the shell's: the page hands over text, a key
+  // name, or asks for the native secret dialog — and hears the outcome as
+  // `keyboard` events. A secret never passes through the page.
+  var keyboard = { available: false, enabled: false, connected: false, host: null, layout: 'us' };
+  function takeKeyboard(s) {
+    if (!s || typeof s !== 'object') return;
+    keyboard = {
+      available: !!s.available,
+      enabled: !!s.enabled,
+      connected: !!s.connected,
+      // The device's name only: its Bluetooth address stays in the app.
+      host: s.host && typeof s.host === 'object' && typeof s.host.name === 'string' && s.host.name
+        ? { name: s.host.name }
+        : null,
+      layout: typeof s.layout === 'string' ? s.layout : 'us',
+    };
+  }
+  try { takeKeyboard(JSON.parse("__RETINUE_KEYBOARD_STATUS__")); } catch (_) { /* the bare asset: off */ }
+  var KEYBOARD_KEYS = ['enter', 'tab', 'backspace', 'escape', 'up', 'down', 'left', 'right', 'home', 'end', 'delete', 'space'];
+  function keyboardOpts(opts) {
+    if (typeof opts === 'string') { try { opts = JSON.parse(opts); } catch (_) { opts = null; } }
+    return opts && typeof opts === 'object' ? opts : {};
+  }
+  function keyboardId(o) { return typeof o.id === 'string' && o.id ? o.id : undefined; }
+
   var shell = {
     platform: 'android',
     version: '__RETINUE_SHELL_VERSION__',
@@ -176,6 +209,36 @@
       health.auto_on_resume = !!on;
       post({ type: 'health.auto', on: !!on });
     },
+    // {available, enabled, connected, host: {name}|null, layout} as a JSON string
+    // (the host by name only: its Bluetooth address stays in the app).
+    keyboardStatus: function () { return JSON.stringify(keyboard); },
+    // Type `text` into the connected device; opts {id, enter} (an object or
+    // its JSON). Returns at once; a `keyboard` event says `typed` or `error`.
+    // A line break is typed as Shift+Enter (a new line in chat apps and text
+    // areas, but a submit in a terminal or a one-line field), a tab as Tab.
+    // Invalid arguments throw (the page's call fails at once) rather than
+    // vanishing without the event the page waits for.
+    keyboardType: function (text, opts) {
+      if (typeof text !== 'string') throw new TypeError('keyboardType: text must be a string');
+      var o = keyboardOpts(opts);
+      post({ type: 'keyboard.type', text: text, enter: !!o.enter, id: keyboardId(o) });
+    },
+    // Press one key: enter, tab, backspace, escape, up, down, left, right, home, end, delete, space;
+    // opts {id} (an object or its JSON). A `keyboard` event says `typed` or `error`.
+    keyboardKey: function (name, opts) {
+      if (KEYBOARD_KEYS.indexOf(name) < 0) throw new TypeError('keyboardKey: unknown key ' + String(name));
+      post({ type: 'keyboard.key', name: name, id: keyboardId(keyboardOpts(opts)) });
+    },
+    // The native secret dialog; opts {id, label, enter}. The page hears only
+    // `secret-typed` or `secret-cancelled` (or an `error`), never the secret.
+    keyboardSecret: function (opts) {
+      var o = keyboardOpts(opts);
+      post({ type: 'keyboard.secret', label: typeof o.label === 'string' ? o.label : undefined, enter: !!o.enter, id: keyboardId(o) });
+    },
+    // The native keyboard screen: switch on, pair, layout, live typing.
+    keyboardOpen: function () { post({ type: 'keyboard.open' }); },
+    // Stop what is being typed; its request ends with an `error` `cancelled`.
+    keyboardCancel: function () { post({ type: 'keyboard.cancel' }); },
     // A call the user asked for in a spoken conversation: placed at once when
     // direct calls are on for this endpoint (each has its own switch in the
     // app's settings), else the dialer opens (always for emergency numbers
@@ -268,6 +331,7 @@
     if (!msg) return;
     if (msg.type === 'health.status') takeHealth(msg.status);
     else if (msg.type === 'endpoints.status') takeEndpoints(msg.endpoints);
+    else if (msg.type === 'keyboard.status') takeKeyboard(msg.status);
     else if (msg.type === 'device.status') {
       var changed = takeDevice(msg.settings);
       if (changed.length) {

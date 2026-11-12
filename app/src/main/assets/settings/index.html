@@ -9,7 +9,8 @@
        phone, in three sections. This app (its endpoints, the dashboard's
        per-device preferences it holds for all of them, home screen, split
        screen, launcher bar, updates), this app with the endpoint on screen
-       (health data, wake phrase, phone calls), and this instance, embedded
+       (health data, wake phrase, phone calls, typing on other devices), and
+       this instance, embedded
        from the endpoint's own settings-instance.html. Served by the app from
        its assets at a reserved address (os.retinue.ara.settings.AppPage), so
        it opens with or without a server; it talks to the app through
@@ -111,6 +112,17 @@
           put it in a folder.</p>
         <p data-launcher-usage></p>
         <div class="actions"><button type="button" class="btn" data-launcher-usage-access>Allow usage access</button></div>
+      </section>
+
+      <section class="card">
+        <h3>Keyboard for other devices</h3>
+        <p class="hint">This phone as a Bluetooth keyboard for a device that
+          cannot run Retinue itself — a headset, a TV, someone else's computer.
+          Text you ask Ara to type, and passwords from your password manager,
+          arrive there as key presses. Passwords go through a dialog of the
+          app's own and are never seen by the dashboard or by Ara.</p>
+        <p data-keyboard-line></p>
+        <div class="actions"><button type="button" class="btn" data-keyboard-open>Open keyboard</button></div>
       </section>
 
       <section class="card">
@@ -223,6 +235,18 @@
             SOS for those.</p>
           <div data-calls-notes></div>
         </div>
+      </section>
+      <section class="card" data-typing hidden>
+        <h3>Typing on other devices</h3>
+        <label class="switch-row"><span>This server may type on other devices</span>
+          <input type="checkbox" role="switch" data-typing-allowed></label>
+        <p class="hint">Its dashboard may then type into the device this
+          phone is connected to as a keyboard, press keys there and open the
+          password dialog. Off: the phone refuses every such request of this
+          endpoint's page. Each endpoint has its own switch. What the phone
+          asks you before it types is set for each device on the keyboard
+          screen.</p>
+        <div data-typing-notes></div>
       </section>
       <section class="card" data-notifications hidden>
         <h3>Notifications</h3>
