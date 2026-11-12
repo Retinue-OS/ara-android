@@ -41,9 +41,11 @@ class EndpointTest {
         assertFalse(decoded.directCalls)
         // The rest reads as it was stored, health data on included.
         assertEquals(home.copy(directCalls = false, nameFetchedAt = 1730000000000), decoded)
-        // Written again, the document is the old one with the switch in it, off.
+        // Written again, the document is the old one with the switch in it, off (and the
+        // fields of instance states and per-instance wake phrases, at their defaults).
         assertEquals(
-            old.replace("\"healthUpload\":true,", "\"healthUpload\":true,\"directCalls\":false,"),
+            old.replace("\"healthUpload\":true,", "\"healthUpload\":true,\"directCalls\":false,")
+                .replace("\"nameFetchedAt\":1730000000000}", "\"nameFetchedAt\":1730000000000,\"background\":false,\"wake\":null}"),
             EndpointCodec.encode(listOf(decoded)),
         )
     }
