@@ -141,8 +141,10 @@ function endpointItem(row) {
   who.append(el('div', 'name', row.label), el('div', 'url', row.baseUrl), el('div', 'summary', L.endpointSummary(row)));
   li.append(who);
   if (row.current) {
-    li.append(el('span', 'active', 'Active'));
+    li.append(el('span', 'active', L.STATE_TEXT.foreground));
   } else {
+    const st = L.instanceState(row);
+    li.append(el('span', `state ${st}`, L.STATE_TEXT[st]));
     const use = button('Use', () => send({ type: 'endpoint.select', id: row.id }));
     use.setAttribute('aria-label', `Show ${row.label}`);
     li.append(use);
@@ -191,6 +193,9 @@ function renderWake() {
   const w = state.wake || {};
   for (const r of document.querySelectorAll('input[name="wake-mode"]')) r.checked = r.value === w.mode;
   $('[data-wake-status]').textContent = w.status || '';
+  const also = L.alsoListeningLine(w);
+  $('[data-wake-also]').textContent = also;
+  $('[data-wake-also]').hidden = !also;
   const notes = $('[data-wake-notes]');
   notes.replaceChildren(...L.wakeNotes(w).map(noteBox));
   const threshold = $('[data-wake-threshold]');
@@ -209,6 +214,7 @@ function wakeModelItem(m, w) {
   const li = el('li', `endpoint model${row.active ? ' current' : ''}`);
   const who = el('div', 'who');
   who.append(el('div', 'name', row.name), el('div', 'summary', row.detail));
+  if (row.usedBy) who.append(el('div', 'summary used', row.usedBy));
   li.append(who);
   if (row.active) li.append(el('span', 'active', 'Active'));
   const actions = el('div', 'actions');
@@ -258,9 +264,10 @@ function renderUpdates() {
 
 function renderEndpointSection() {
   const cur = state.current;
-  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-calls]', '[data-notifications]']) $(sel).hidden = !cur;
+  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-wake-card]', '[data-calls]', '[data-notifications]']) $(sel).hidden = !cur;
   if (!cur) return;
   $('[data-endpoint-name]').textContent = cur.label;
+  $('[data-wake-name]').textContent = cur.label;
   $('[data-health-name]').textContent = cur.label;
   const st = state.health || {};
   const available = !!st.available;
@@ -350,6 +357,7 @@ function fillEditor() {
   $('[data-draft-user]').value = d.username;
   $('[data-draft-password]').value = d.password;
   $('[data-draft-health]').checked = !!d.healthUpload;
+  $('[data-draft-background]').checked = !!d.background;
   $('[data-draft-remove-card]').hidden = !!d.isNew;
   renderEditorState();
 }
@@ -447,6 +455,7 @@ $('[data-draft-password]').addEventListener('input', (e) => {
   renderEditorState();
 });
 $('[data-draft-health]').addEventListener('change', (e) => { editor.draft.healthUpload = e.target.checked; renderEditorState(); });
+$('[data-draft-background]').addEventListener('change', (e) => { editor.draft.background = e.target.checked; renderEditorState(); });
 $('[data-draft-forget]').addEventListener('click', () => {
   editor.draft.forgetPassword = true;
   editor.draft.password = '';

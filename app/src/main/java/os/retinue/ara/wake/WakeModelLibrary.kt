@@ -3,6 +3,10 @@ package os.retinue.ara.wake
 import java.net.URI
 import java.net.URLDecoder
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -153,3 +157,75 @@ object WakeModelIndex {
 /** The list the settings page shows: the catalog first, then the user's own in the order added. */
 fun wakeModelList(user: List<WakePhraseModel>, downloaded: (WakePhraseModel) -> Boolean): List<WakeModelEntry> =
     (WakeModelCatalog.builtins + user).distinctBy { it.id }.map { WakeModelEntry(it, downloaded(it)) }
+
+/**
+ * What every window shows of the phone's models, and the one job that changes
+ * them. The files are the phone's while each window has its own view model:
+ * kept once for the process (WakeModelFiles.state), both wake cards show the
+ * same list and the same job, no card offers a second job while one runs (one
+ * asked for all the same waits its turn, [beginInTurn]), and a model that is
+ * being removed in one window is not chosen in the other. Main thread.
+ */
+class WakeModelState {
+    private val _features = MutableStateFlow(WakeModelStatus(melspectrogram = false, embedding = false, phrase = false))
+
+    /** The feature models' files (its `phrase` is not used: see [library]). */
+    val features: StateFlow<WakeModelStatus> = _features.asStateFlow()
+
+    private val _library = MutableStateFlow<List<WakeModelEntry>>(emptyList())
+
+    /** The phone's phrase models (the list), with whether each is downloaded. */
+    val library: StateFlow<List<WakeModelEntry>> = _library.asStateFlow()
+
+    private val _busy = MutableStateFlow(false)
+
+    /** A model job (a download, an upload, a removal) is under way, in whichever window. */
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private val _busyId = MutableStateFlow<String?>(null)
+
+    /** The list's model the job works on, for its row. */
+    val busyId: StateFlow<String?> = _busyId.asStateFlow()
+
+    /** The files as they were read just now. */
+    fun show(features: WakeModelStatus, library: List<WakeModelEntry>) {
+        _features.value = features
+        _library.value = library
+    }
+
+    /** A job begins ([id]: the list's model it works on); false when one runs already: one at a time for the phone. */
+    fun begin(id: String?): Boolean {
+        if (_busy.value) return false
+        _busyId.value = id
+        _busy.value = true
+        return true
+    }
+
+    /**
+     * A job begins as soon as no other runs. The cards offer none while one
+     * runs, but one may be asked for all the same: a file picked in a picker
+     * that was open already, a removal confirmed in its dialog. It is not
+     * dropped: it waits its turn, and has begun nothing while it waits (so a
+     * window that closes meanwhile leaves no job behind).
+     */
+    suspend fun beginInTurn(id: String?) {
+        while (!begin(id)) busy.first { !it }
+    }
+
+    /** The job is over: every window shows the files as it left them. */
+    fun end(features: WakeModelStatus, library: List<WakeModelEntry>) {
+        _busyId.value = null
+        show(features, library)
+        // Free last: a job that waited its turn begins right here, on its own model.
+        _busy.value = false
+    }
+
+    /**
+     * Whether an instance may take the model [id] as its phrase now: its file
+     * is on the phone ([onPhone], asked of the files, not of a list shown),
+     * and it is not the model the job under way works on, which may be going.
+     * A removal is such a job from before it asks who uses the model until
+     * the file is gone, so no choice of it comes between the two.
+     */
+    fun mayUse(id: String, onPhone: Boolean): Boolean = onPhone && !(_busy.value && _busyId.value == id)
+}

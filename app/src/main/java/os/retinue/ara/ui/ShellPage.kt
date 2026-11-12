@@ -108,8 +108,8 @@ object ShellPage {
      * A wake heard while a window is visible goes to the window showing the
      * page, or else to the visible one that came up last.
      */
-    private val onWake: () -> Unit = {
-        (owner?.takeIf { it in started } ?: started.lastOrNull { !it.parking })?.onDirectWake()
+    private val onWake: (String) -> Unit = { endpointId ->
+        (owner?.takeIf { it in started } ?: started.lastOrNull { !it.parking })?.onDirectWake(endpointId)
     }
 
     /**

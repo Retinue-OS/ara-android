@@ -26,6 +26,7 @@ data class PageDraft(
     val password: String,
     val forgetPassword: Boolean,
     val healthUpload: Boolean,
+    val background: Boolean = false,
 )
 
 /** What the settings page (assets/settings/page.mjs) asks of the app. */
@@ -79,12 +80,12 @@ sealed class SettingsAction {
     data class WakeModeSet(val mode: WakeMode) : SettingsAction()
     data class WakeThreshold(val value: Float) : SettingsAction()
     data object WakeFeatures : SettingsAction()
-    /** Add a phrase model from a URL to the list (and use it). */
+    /** Add a phrase model from a URL to the list (and use it for the endpoint shown). */
     data class WakePhrase(val url: String) : SettingsAction()
-    /** Add a picked file to the list (and use it). */
+    /** Add a picked file to the list (and use it for the endpoint shown). */
     data object WakePick : SettingsAction()
     data class WakeModelDownload(val id: String) : SettingsAction()
-    /** Listen for model [id]; null: for none. */
+    /** The endpoint shown listens for model [id]; null: for none. */
     data class WakeModelUse(val id: String?) : SettingsAction()
     data class WakeModelRemove(val id: String) : SettingsAction()
     data object WakeFullScreen : SettingsAction()
@@ -143,6 +144,7 @@ object SettingsMessages {
                         password = d.text("password", MAX_TEXT) ?: "",
                         forgetPassword = d.bool("forgetPassword") ?: false,
                         healthUpload = d.bool("healthUpload") ?: false,
+                        background = d.bool("background") ?: false,
                     ),
                 )
             }
@@ -227,6 +229,7 @@ object SettingsMessages {
         forgetPassword = d.forgetPassword,
         healthUpload = d.healthUpload,
         name = existing?.knownName,
+        background = d.background,
     )
 
     /** How the page names a [EndpointDraft.Problem]. */

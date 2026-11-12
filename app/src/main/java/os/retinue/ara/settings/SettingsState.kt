@@ -9,6 +9,7 @@ import kotlinx.serialization.json.put
 import os.retinue.ara.data.DeviceWebSettings
 import os.retinue.ara.data.Endpoint
 import os.retinue.ara.data.EndpointLabels
+import os.retinue.ara.data.InstanceState
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.wake.WakeModelEntry
 
@@ -27,6 +28,10 @@ data class EndpointRow(
     val current: Boolean,
     /** The instance's name as last fetched, for the editor's title. */
     val name: String?,
+    /** It keeps working while another is shown (Endpoint.background). */
+    val background: Boolean = false,
+    /** [InstanceState.key]: foreground (shown), background or disabled. */
+    val state: String = InstanceState.Disabled.key,
 )
 
 /** The endpoint shown, and where its own parts of the page come from. */
@@ -60,8 +65,9 @@ data class CallsInfo(
     val telephony: Boolean,
 )
 
+/** The wake phrase card: the instance shown, its phrase on this phone, and what the phone needs for it. */
 data class WakeInfo(
-    /** [os.retinue.ara.wake.WakeMode.key]. */
+    /** [os.retinue.ara.wake.WakeMode.key], of the instance shown. */
     val mode: String,
     val threshold: Float,
     val status: String,
@@ -72,12 +78,19 @@ data class WakeInfo(
     val overlayAllowed: Boolean,
     val melspectrogram: Boolean,
     val embedding: Boolean,
-    /** The phrase models of the list, in its order. */
+    /** The phone's phrase models, in the list's order; the active one is the shown instance's. */
     val models: List<WakeModelRow>,
     val busy: Boolean,
     /** The model a job works on, while [busy]. */
     val busyId: String?,
     val message: String?,
+    /**
+     * The other instances a phrase heard now would wake (labels): they work
+     * in the background. One that shares its phrase model with the instance
+     * shown, or with one before it, is not among them: that phrase wakes the
+     * other one.
+     */
+    val alsoListening: List<String> = emptyList(),
 )
 
 /** One phrase model of the wake phrase's list. */
@@ -89,14 +102,27 @@ data class WakeModelRow(
     /** Where it downloads from (catalog and URL models). */
     val url: String?,
     val downloaded: Boolean,
-    /** The model listened for. */
+    /** The model the instance shown listens for. */
     val active: Boolean,
     /** The user's own: taken off the list by removing it. */
     val removable: Boolean,
+    /**
+     * The other instances whose model this is (their labels), whatever their
+     * mode or state: while there are any, it is not deleted or removed here.
+     */
+    val usedBy: List<String> = emptyList(),
 )
 
-/** The list's rows; [activeId] is the model listened for (its row is active only while downloaded). */
-fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeModelRow> = library.map { e ->
+/**
+ * The list's rows; [activeId] is the model the instance shown listens for (its
+ * row is active only while downloaded), [usedBy] the other instances that use
+ * a model, by its id.
+ */
+fun wakeModelRows(
+    library: List<WakeModelEntry>,
+    activeId: String?,
+    usedBy: (modelId: String) -> List<String> = { emptyList() },
+): List<WakeModelRow> = library.map { e ->
     WakeModelRow(
         id = e.model.id,
         name = e.model.name,
@@ -105,7 +131,21 @@ fun wakeModelRows(library: List<WakeModelEntry>, activeId: String?): List<WakeMo
         downloaded = e.downloaded,
         active = e.downloaded && e.model.id == activeId,
         removable = e.model.removable,
+        usedBy = usedBy(e.model.id),
     )
+}
+
+/**
+ * The list's rows on the card of the instance shown in [settings]: its model
+ * is the active one, and a model of other instances names them (the same
+ * instances that keep it from being removed, EndpointSet.otherUsersOfWakeModel).
+ */
+fun wakeModelRows(library: List<WakeModelEntry>, settings: ShellSettings): List<WakeModelRow> {
+    val set = settings.endpointSet
+    val labels = EndpointLabels.labels(settings.endpoints)
+    return wakeModelRows(library, set.current?.wake?.modelId) { id ->
+        set.otherUsersOfWakeModel(id).map { labels[it.id] ?: it.hostLabel }
+    }
 }
 
 data class UpdatesInfo(
@@ -167,6 +207,8 @@ data class SettingsPageState(
                             put("healthUpload", e.healthUpload)
                             put("current", e.current)
                             put("name", e.name.json())
+                            put("background", e.background)
+                            put("state", e.state)
                         },
                     )
                 }
@@ -238,6 +280,7 @@ data class SettingsPageState(
                                     put("downloaded", m.downloaded)
                                     put("active", m.active)
                                     put("removable", m.removable)
+                                    put("usedBy", buildJsonArray { m.usedBy.forEach { add(JsonPrimitive(it)) } })
                                 },
                             )
                         }
@@ -246,6 +289,7 @@ data class SettingsPageState(
                 put("busy", wake.busy)
                 put("busyId", wake.busyId.json())
                 put("message", wake.message.json())
+                put("alsoListening", buildJsonArray { wake.alsoListening.forEach { add(JsonPrimitive(it)) } })
             },
         )
         put(
@@ -274,6 +318,7 @@ data class SettingsPageState(
         fun endpointRows(settings: ShellSettings): List<EndpointRow> {
             val labels = EndpointLabels.labels(settings.endpoints)
             val current = settings.current?.id
+            val set = settings.endpointSet
             return settings.endpoints.map { e ->
                 EndpointRow(
                     id = e.id,
@@ -286,6 +331,8 @@ data class SettingsPageState(
                     healthUpload = e.healthUpload,
                     current = e.id == current,
                     name = e.knownName,
+                    background = e.background,
+                    state = set.stateOf(e).key,
                 )
             }
         }

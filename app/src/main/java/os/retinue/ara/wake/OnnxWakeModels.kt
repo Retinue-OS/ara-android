@@ -21,22 +21,37 @@ import java.nio.FloatBuffer
  *    output `[1, 1]` — the wake score in 0..1.
  * Input names are read from the sessions rather than assumed.
  */
-class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Closeable {
+class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFiles: List<File>) : Closeable {
+
+    /** The usual case: one phrase model. */
+    constructor(melFile: File, embeddingFile: File, keywordFile: File) : this(melFile, embeddingFile, listOf(keywordFile))
 
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val options: OrtSession.SessionOptions
     private val mel: OrtSession
     private val embed: OrtSession
-    private val keyword: OrtSession
+
+    /** One session per phrase model, in the order given; they share the mel and embedding models. */
+    private val keywords: List<OrtSession>
 
     private val melInput: String
     private val embedInput: String
-    private val keywordInput: String
+    private val keywordInputs: List<String>
 
-    /** How many embeddings the keyword model reads (16 for the stock models). */
-    val keywordFrames: Int
+    /** How many embeddings each keyword model reads (16 for the stock models). */
+    val keywordFrameCounts: List<Int>
+
+    /** How many embeddings the first keyword model reads. */
+    val keywordFrames: Int get() = keywordFrameCounts.first()
+
+    /** The most embeddings any keyword model reads: the window the feature pipeline keeps. */
+    val maxKeywordFrames: Int get() = keywordFrameCounts.max()
+
+    /** Number of phrase models. */
+    val keywordCount: Int get() = keywords.size
 
     init {
+        require(keywordFiles.isNotEmpty()) { "At least one phrase model is needed" }
         // A file that fails to load must not leak the sessions opened before it.
         val opened = mutableListOf<AutoCloseable>()
         try {
@@ -45,16 +60,11 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
             options.setInterOpNumThreads(1)
             mel = env.createSession(melFile.absolutePath, options).also { opened += it }
             embed = env.createSession(embeddingFile.absolutePath, options).also { opened += it }
-            keyword = env.createSession(keywordFile.absolutePath, options).also { opened += it }
+            keywords = keywordFiles.map { env.createSession(it.absolutePath, options).also { s -> opened += s } }
             melInput = mel.inputNames.first()
             embedInput = embed.inputNames.first()
-            keywordInput = keyword.inputNames.first()
-            keywordFrames = run {
-                val info = keyword.inputInfo[keywordInput]?.info as? TensorInfo
-                val shape = info?.shape
-                val n = if (shape != null && shape.size >= 2) shape[1] else -1L
-                if (n > 0) n.toInt() else 16
-            }
+            keywordInputs = keywords.map { it.inputNames.first() }
+            keywordFrameCounts = keywords.mapIndexed { i, keyword -> frameCount(keyword, keywordInputs[i]) }
         } catch (e: Throwable) {
             opened.asReversed().forEach { runCatching { it.close() } }
             throw e
@@ -77,12 +87,21 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
         return runOne(embed, embedInput, flat, longArrayOf(1, window.size.toLong(), bins.toLong(), 1))
     }
 
-    /** The wake score for the last [keywordFrames] embeddings. */
-    fun score(features: Array<FloatArray>): Float {
-        val dim = features.firstOrNull()?.size ?: return 0f
-        val flat = FloatArray(features.size * dim)
-        features.forEachIndexed { r, row -> System.arraycopy(row, 0, flat, r * dim, dim) }
-        val out = runOne(keyword, keywordInput, flat, longArrayOf(1, features.size.toLong(), dim.toLong()))
+    /** The first phrase model's wake score for the last [keywordFrames] embeddings. */
+    fun score(features: Array<FloatArray>): Float = score(0, features)
+
+    /**
+     * Phrase model [index]'s wake score. [features] may hold more embeddings
+     * than it reads (the window is [maxKeywordFrames] long): it gets the last
+     * of them.
+     */
+    fun score(index: Int, features: Array<FloatArray>): Float {
+        val frames = keywordFrameCounts[index]
+        val window = if (features.size > frames) features.copyOfRange(features.size - frames, features.size) else features
+        val dim = window.firstOrNull()?.size ?: return 0f
+        val flat = FloatArray(window.size * dim)
+        window.forEachIndexed { r, row -> System.arraycopy(row, 0, flat, r * dim, dim) }
+        val out = runOne(keywords[index], keywordInputs[index], flat, longArrayOf(1, window.size.toLong(), dim.toLong()))
         return out.firstOrNull() ?: 0f
     }
 
@@ -106,10 +125,47 @@ class OnnxWakeModels(melFile: File, embeddingFile: File, keywordFile: File) : Cl
                 env.createSession(file.absolutePath, options).close()
             }
         }
+
+        /**
+         * Throws unless [file] is a phrase model the listener can score: it
+         * loads, reads no more embeddings than the feature pipeline keeps, and
+         * gives a score for a window of them (silence here), fed as [score]
+         * feeds it. A file that only loads, one of the feature models say,
+         * would stop the listener at its first window, and with it every
+         * phrase listened for. Needs no feature model.
+         */
+        fun checkScores(file: File) {
+            val env = OrtEnvironment.getEnvironment()
+            OrtSession.SessionOptions().use { options ->
+                env.createSession(file.absolutePath, options).use { session ->
+                    val input = session.inputNames.first()
+                    val frames = frameCount(session, input)
+                    // A longer window never comes, and the pipeline keeps the longest any model asks for.
+                    require(frames <= WakeFeatures.EMBEDDING_MAX) {
+                        "it reads $frames embeddings at a time, more than the ${WakeFeatures.EMBEDDING_MAX} that are kept"
+                    }
+                    val size = WakeFeatures.EMBEDDING_SIZE
+                    val window = FloatBuffer.wrap(FloatArray(frames * size))
+                    OnnxTensor.createTensor(env, window, longArrayOf(1, frames.toLong(), size.toLong())).use { tensor ->
+                        session.run(mapOf(input to tensor)).use { result ->
+                            val scores = (result.get(0) as? OnnxTensor)?.floatBuffer
+                            require(scores != null && scores.hasRemaining()) { "it gives no score" }
+                        }
+                    }
+                }
+            }
+        }
+
+        /** How many embeddings a phrase model reads at a time: its input's second dimension, 16 where that is not fixed. */
+        private fun frameCount(session: OrtSession, input: String): Int {
+            val shape = (session.inputInfo[input]?.info as? TensorInfo)?.shape
+            val n = if (shape != null && shape.size >= 2) shape[1] else -1L
+            return if (n > 0) n.toInt() else 16
+        }
     }
 
     override fun close() {
-        runCatching { keyword.close() }
+        keywords.forEach { runCatching { it.close() } }
         runCatching { embed.close() }
         runCatching { mel.close() }
         runCatching { options.close() }

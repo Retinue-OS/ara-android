@@ -12,6 +12,7 @@ import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.update.UpdateRuntime
 import os.retinue.ara.wake.WakeModelFiles
 import os.retinue.ara.wake.WakeRuntime
+import os.retinue.ara.wake.WakeTargets
 
 /**
  * Process start: wake detection, the updater and health sync follow the stored
@@ -28,18 +29,21 @@ class AraApp : Application() {
         UpdateRuntime.init(this)
         HealthSyncRuntime.init(this)
         val store = AraStore(this)
-        // The one phrase model of earlier builds joins the library first, and stays the one in use.
+        // The one phrase model of earlier builds joins the library first, and stays the one its endpoints listen for.
         val migrated = WakeModelFiles.migrateLegacy(this)
+        // What every window's wake card shows of the models, from the start.
+        WakeModelFiles.refreshState(this)
         scope.launch {
             if (migrated != null) {
                 // The earlier file goes only once the choice is stored; a failure here must not stop the settings below.
-                runCatching { store.adoptWakeModelId(migrated) }
+                runCatching { store.adoptLegacyWakeModel(migrated) }
                     .onSuccess { WakeModelFiles.legacyAdopted(this@AraApp) }
             }
             store.settings
-                .map { Triple(it.wakeMode, it.wakeThreshold, it.wakeModelId) }
+                // Each instance shown or working in the background listens for its own phrase.
+                .map { WakeTargets.of(it) }
                 .distinctUntilChanged()
-                .collect { (mode, threshold, model) -> WakeRuntime.configure(mode, threshold, model) }
+                .collect { WakeRuntime.configure(it) }
         }
     }
 }

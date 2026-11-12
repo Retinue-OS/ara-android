@@ -1,7 +1,6 @@
 package os.retinue.ara.data
 
 import os.retinue.ara.update.UpdateChannel
-import os.retinue.ara.wake.WakeMode
 
 /**
  * The shell's device-local configuration. The one secret in it, an endpoint's
@@ -13,15 +12,6 @@ data class ShellSettings(
     val endpoints: List<Endpoint> = emptyList(),
     /** The endpoint the shell shows (see [EndpointSet.current]). */
     val currentEndpointId: String? = null,
-    val wakeMode: WakeMode = WakeMode.Off,
-    /** Score at or above which the phrase counts as heard (openWakeWord's default 0.5). */
-    val wakeThreshold: Float = DEFAULT_WAKE_THRESHOLD,
-    /**
-     * The phrase model listened for, by [os.retinue.ara.wake.WakePhraseModel.id]
-     * (null: none chosen). The models themselves are the phone's library
-     * ([os.retinue.ara.wake.WakeModelFiles.library]).
-     */
-    val wakeModelId: String? = null,
     /** Check the update channel on its own and install what it offers (see UpdateRuntime). Off until the user turns it on. */
     val autoUpdate: Boolean = false,
     /** Which builds count as updates. */
@@ -46,6 +36,9 @@ data class ShellSettings(
     /** The endpoint the shell shows, or null when none is set up. */
     val current: Endpoint? get() = endpointSet.current
 
+    /** What [endpoint] is to the phone now: shown, working in the background, or resting. */
+    fun stateOf(endpoint: Endpoint): InstanceState = endpointSet.stateOf(endpoint)
+
     /** The current endpoint's base URL as the user typed it ("" for none). */
     val baseUrl: String get() = current?.baseUrl ?: ""
 
@@ -56,6 +49,6 @@ data class ShellSettings(
     val base: String? get() = current?.base
 
     companion object {
-        const val DEFAULT_WAKE_THRESHOLD = 0.5f
+        const val DEFAULT_WAKE_THRESHOLD = EndpointWake.DEFAULT_THRESHOLD
     }
 }

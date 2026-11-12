@@ -6,8 +6,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
 import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointCodec
+import os.retinue.ara.data.EndpointWake
 import os.retinue.ara.ui.EndpointDraft
 import os.retinue.ara.ui.EndpointDraft.Problem
+import os.retinue.ara.wake.WakeMode
 
 /**
  * What the app saves of the settings page's editor (see [EndpointDraft.problem]
@@ -79,9 +82,43 @@ class EndpointDraftTest {
         // Another address: the fetched name was the old server's; the switch is the endpoint's and stays.
         val moved = home.copy(baseUrl = "new.example.com").toEndpoint(stored, sealed = null)
         assertEquals(stored.copy(baseUrl = "new.example.com", name = null, nameFetchedAt = 0L), moved)
-        // A new endpoint starts with it off.
+        // A new endpoint starts with it off, and with its wake phrase off.
         val added = fresh.copy(baseUrl = " https://admin.example.com ", healthUpload = true).toEndpoint(null, sealed = null)
-        assertEquals(Endpoint("new", "https://admin.example.com", healthUpload = true), added)
+        assertEquals(Endpoint("new", "https://admin.example.com", healthUpload = true, wake = EndpointWake.OFF), added)
+    }
+
+    @Test
+    fun theBackgroundSwitchIsStoredAsTheEditorHasIt() {
+        // On: the endpoint keeps working while another is shown. Nothing else of it changes.
+        val working = home.copy(background = true).toEndpoint(stored, sealed = null)
+        assertEquals(stored.copy(background = true), working)
+        // Left on, it stays on; switched off over a stored on, the endpoint rests again.
+        assertEquals(working, home.copy(background = true).toEndpoint(working, sealed = null))
+        assertEquals(stored, home.toEndpoint(working, sealed = null))
+        // A new endpoint is stored as its editor has the switch.
+        val added = fresh.copy(baseUrl = "https://admin.example.com")
+        assertFalse(added.toEndpoint(null, sealed = null).background)
+        assertTrue(added.copy(background = true).toEndpoint(null, sealed = null).background)
+    }
+
+    @Test
+    fun savingLeavesTheWakePhraseAsItIsStored() {
+        // Mode, threshold and phrase model are set on the wake phrase's card, not in the editor.
+        val listening = stored.copy(wake = EndpointWake.of(WakeMode.Always, 0.35f, "user:hey-retinue"))
+        assertEquals(listening, home.toEndpoint(listening, sealed = null))
+        // Edited, and at another address: like the call switch, the phrase is the endpoint's on this phone.
+        val moved = home.copy(baseUrl = "new.example.com", healthUpload = false, background = true).toEndpoint(listening, sealed = null)
+        assertEquals(
+            listening.copy(baseUrl = "new.example.com", healthUpload = false, name = null, nameFetchedAt = 0L, background = true),
+            moved,
+        )
+        // A new endpoint starts with the phrase off and without a model. Stored without a wake of its
+        // own, it would read the one setting of earlier builds as its own on a phone that still holds it.
+        val added = fresh.copy(baseUrl = "https://admin.example.com").toEndpoint(null, sealed = null)
+        assertEquals(EndpointWake.OFF, added.wake)
+        val earlier = EndpointCodec.legacyWake(WakeMode.Always.key, 0.7f, "oww:hey_jarvis_v0.1")
+        val read = EndpointCodec.withLegacyWake(EndpointCodec.decode(EndpointCodec.encode(listOf(added)))!!, earlier)
+        assertEquals(listOf(added), read)
     }
 
     @Test

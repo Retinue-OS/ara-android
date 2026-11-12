@@ -21,7 +21,7 @@ import os.retinue.ara.data.credentials
 import os.retinue.ara.net.AraHttp
 import os.retinue.ara.shell.UrlRouter
 
-/** Which of the three models a listener needs are on the device (the phrase: the chosen one). */
+/** Which of the three models a listener needs are on the device (the phrase: one model of the library). */
 data class WakeModelStatus(val melspectrogram: Boolean, val embedding: Boolean, val phrase: Boolean) {
     val featuresReady: Boolean get() = melspectrogram && embedding
     val ready: Boolean get() = featuresReady && phrase
@@ -32,8 +32,10 @@ data class WakeModelStatus(val melspectrogram: Boolean, val embedding: Boolean, 
  * §5): the two shared feature models are downloaded from the openWakeWord
  * release; the phrase models form a library ([WakeModelCatalog] plus the
  * user's own uploads and URL downloads, see [WakeModelIndex]), one file per
- * model under `wake/phrases/`, named by its id. Which one is in use is a
- * setting, not a file. Changes run one at a time ([changes]).
+ * model under `wake/phrases/`, named by its id. The library is the phone's;
+ * which of its models an endpoint listens for is that endpoint's setting
+ * (Endpoint.wake), not a file. Changes run one at a time ([changes]), as one
+ * job for the phone that every window sees ([state]).
  */
 object WakeModelFiles {
 
@@ -56,6 +58,21 @@ object WakeModelFiles {
      */
     private val changes = Mutex()
 
+    /** The models as every window shows them, and the one job that changes them (see [WakeModelState]). */
+    val state = WakeModelState()
+
+    /** Read the files again, for every window's wake card. Main thread, as the two below. */
+    fun refreshState(context: Context) = state.show(status(context, null), library(context))
+
+    /** A model job begins in one of the windows ([id]: the model it works on), in its turn when one runs already. */
+    suspend fun beginJob(id: String?) = state.beginInTurn(id)
+
+    /** The job is over, however it ended: the files are read again. */
+    fun endJob(context: Context) = state.end(status(context, null), library(context))
+
+    /** Whether an instance may take the model [id] as its phrase now (see [WakeModelState.mayUse]). */
+    fun mayUse(context: Context, id: String): Boolean = state.mayUse(id, phraseFileFor(context, id) != null)
+
     fun dir(context: Context): File = File(context.filesDir, DIR).apply { mkdirs() }
     private fun phrasesDir(context: Context): File = File(dir(context), PHRASES).apply { mkdirs() }
     fun melFile(context: Context) = File(dir(context), MEL)
@@ -63,6 +80,18 @@ object WakeModelFiles {
 
     /** The file of the phrase model [id] (present or not). */
     fun phraseFile(context: Context, id: String) = File(phrasesDir(context), WakeModelNames.fileName(id))
+
+    /**
+     * The phrase model file an instance listens with ([modelId], its model's
+     * id in the library), or null when it has none to listen with: no model
+     * chosen, one that is no longer on the list (another id may spell the
+     * same file name), or one that is not downloaded. Such an instance is
+     * not listened for.
+     */
+    fun phraseFileFor(context: Context, modelId: String?): File? {
+        if (modelId == null || model(context, modelId) == null) return null
+        return phraseFile(context, modelId).takeIf { it.length() > 0 }
+    }
 
     /** The feature models and the phrase model [id] (null: none chosen, so never ready). */
     fun status(context: Context, id: String?) = WakeModelStatus(
@@ -100,11 +129,12 @@ object WakeModelFiles {
     /**
      * Bring the single `wake/phrase.onnx` of earlier builds into the library:
      * as the catalog model it is byte for byte, else as a model of the user's
-     * own. Returns the id it became (to be chosen in its stead), or null when
-     * there was nothing to bring. The earlier file is copied and stays until
-     * [legacyAdopted], and the id follows from its content, so a start cut
-     * short anywhere repeats this to the same end. Synchronous and cheap (a
-     * small file), so it can run before anything reads the library.
+     * own. Returns the id it became (to be chosen in its stead by the
+     * endpoints that listened with it, see AraStore.adoptLegacyWakeModel), or
+     * null when there was nothing to bring. The earlier file is copied and
+     * stays until [legacyAdopted], and the id follows from its content, so a
+     * start cut short anywhere repeats this to the same end. Synchronous and
+     * cheap (a small file), so it can run before anything reads the library.
      */
     fun migrateLegacy(context: Context): String? {
         dropStaleTemps(context)
@@ -134,9 +164,15 @@ object WakeModelFiles {
         }
     }
 
-    /** The model [migrateLegacy] returned is stored as the one in use: the earlier file can go. */
+    /**
+     * The model [migrateLegacy] returned is stored as the choice of the
+     * endpoints that listened with it: the earlier file can go. While it is
+     * there, a start repeats that adoption, which would undo a later "no
+     * model"; so a file that cannot be deleted is emptied (empty counts as none).
+     */
     fun legacyAdopted(context: Context) {
-        legacyFile(context).delete()
+        val legacy = legacyFile(context)
+        if (!legacy.delete() && legacy.exists()) runCatching { legacy.writeBytes(ByteArray(0)) }
     }
 
     /**
@@ -227,14 +263,24 @@ object WakeModelFiles {
     /**
      * Take model [id] off the phone: a catalog model's download is deleted (it
      * stays listed, to download again); a model of the user's own leaves the list.
+     * [release] lets go of it in the settings and returns who else uses it
+     * (AraStore.releaseWakeModel): with any, it stays, and they are returned.
+     * It is asked here, with the library held and as the last step before the
+     * delete: a removal that waits for another change, or is cancelled while
+     * it waits, has let go of nothing yet, and what it is told still holds
+     * when the file goes.
      */
-    suspend fun remove(context: Context, id: String) = changes.withLock {
+    suspend fun remove(context: Context, id: String, release: suspend () -> List<String>): List<String> = changes.withLock {
         withContext(Dispatchers.IO) {
             // Only a model of the list: another id may spell the same file name.
             if (model(context, id) == null) throw IOException("No such model")
-            phraseFile(context, id).delete()
-            val user = userModels(context)
-            if (user.any { it.id == id }) writeUserModels(context, user.filterNot { it.id == id })
+            val users = release()
+            if (users.isEmpty()) {
+                phraseFile(context, id).delete()
+                val user = userModels(context)
+                if (user.any { it.id == id }) writeUserModels(context, user.filterNot { it.id == id })
+            }
+            users
         }
     }
 
@@ -254,9 +300,9 @@ object WakeModelFiles {
     }
 
     /**
-     * Try to open the feature models with the phrase model [id], so a wrong or
-     * corrupt file is reported in settings rather than when listening starts.
-     * Only runs when all three are present.
+     * Try to open the feature models with the phrase model [id], and to score
+     * with it, so a wrong or corrupt file is reported in settings rather than
+     * when listening starts. Only runs when all three are present.
      */
     suspend fun validate(context: Context, id: String?) = withContext(Dispatchers.IO) {
         if (id == null || !status(context, id).ready) return@withContext
@@ -265,6 +311,7 @@ object WakeModelFiles {
         } catch (e: Exception) {
             throw IOException("The model files could not be loaded: ${e.message}", e)
         }
+        checkScores(phraseFile(context, id))
     }
 
     private fun displayName(context: Context, uri: Uri): String? = try {
@@ -290,7 +337,8 @@ object WakeModelFiles {
 
     /**
      * Check candidate files before they replace anything: all three together
-     * when all are present, otherwise each present one on its own.
+     * when all are present, otherwise each present one on its own. A phrase
+     * model must also give a score, with or without the feature models.
      */
     private suspend fun check(mel: File, embedding: File, phrase: File?) = withContext(Dispatchers.IO) {
         val files = listOfNotNull(mel, embedding, phrase)
@@ -302,6 +350,20 @@ object WakeModelFiles {
             }
         } catch (e: Exception) {
             throw IOException("The model files could not be loaded: ${e.message}", e)
+        }
+        if (phrase != null) checkScores(phrase)
+    }
+
+    /**
+     * A file that loads may still be no phrase model (one of the feature
+     * models, picked by mistake): listening would stop at its first window,
+     * for every instance. It is refused here instead.
+     */
+    private fun checkScores(phrase: File) {
+        try {
+            OnnxWakeModels.checkScores(phrase)
+        } catch (e: Exception) {
+            throw IOException("This is not a wake phrase model: ${e.message}", e)
         }
     }
 

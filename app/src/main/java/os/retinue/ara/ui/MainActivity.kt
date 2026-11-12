@@ -160,6 +160,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
 
+        /** Saved state: [modelPickEndpoint], while the file picker is up. */
+        private const val STATE_MODEL_PICK_ENDPOINT = "os.retinue.ara.state.MODEL_PICK_ENDPOINT"
+
         private const val TAG = "MainActivity"
     }
 
@@ -265,6 +268,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** The pending wake has loaded the start page (once per wake) and waits for it. */
     private var wakeLoadIssued = false
+
+    /**
+     * The instance the pending wake is for, when its phrase was heard while
+     * another was shown: the shell switches to it, and the wake waits until
+     * the switch has reached this window. Null: the instance shown.
+     */
+    private var pendingWakeEndpoint: String? = null
     private var settingsLoaded = false
     private var resumed by mutableStateOf(false)
 
@@ -369,8 +379,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         refreshHomeRole()
     }
 
+    /**
+     * The instance a phrase model is being picked for: the one shown when the
+     * file picker opened (a wake may bring another to the front meanwhile).
+     * Kept in the saved state ([onSaveInstanceState]): Android may recreate
+     * this window behind the picker, and the file still arrives.
+     */
+    private var modelPickEndpoint: String? = null
+
     private val phraseModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) viewModel.importModel(uri)
+        val endpointId = modelPickEndpoint
+        modelPickEndpoint = null
+        if (uri != null) viewModel.importModel(uri, endpointId)
     }
 
     /** The settings page's certificate import under way (one at a time; see [importCertificateFor]). */
@@ -387,6 +407,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Before the picker's result, which comes after onStart.
+        modelPickEndpoint = savedInstanceState?.getString(STATE_MODEL_PICK_ENDPOINT)
 
         pageContainer = FrameLayout(this)
         page.open(this)
@@ -746,6 +768,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val modelBusyId by viewModel.modelBusyId.collectAsStateWithLifecycle()
         val modelMessage by viewModel.modelMessage.collectAsStateWithLifecycle()
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
+        val wakeListening by WakeRuntime.listening.collectAsStateWithLifecycle()
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
         val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
@@ -768,6 +791,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 modelBusy = modelBusy,
                 modelBusyId = modelBusyId,
                 modelMessage = modelMessage,
+                listening = wakeListening,
             ),
             update = update,
             installAllowed = installAllowed,
@@ -823,12 +847,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
             // The slider's range.
-            is SettingsAction.WakeThreshold -> viewModel.setWakeThreshold(action.value.coerceIn(0.1f, 0.9f))
+            is SettingsAction.WakeThreshold -> settings.current?.let { viewModel.setWakeThreshold(it.id, action.value.coerceIn(0.1f, 0.9f)) }
             SettingsAction.WakeFeatures -> viewModel.downloadFeatureModels()
-            is SettingsAction.WakePhrase -> viewModel.addModelFromUrl(action.url)
+            // A new model is for the instance shown now, whichever is shown once it is there.
+            is SettingsAction.WakePhrase -> viewModel.addModelFromUrl(action.url, settings.current?.id)
             SettingsAction.WakePick -> pickPhraseModel()
             is SettingsAction.WakeModelDownload -> viewModel.downloadModel(action.id)
-            is SettingsAction.WakeModelUse -> viewModel.useModel(action.id)
+            is SettingsAction.WakeModelUse -> settings.current?.let { viewModel.useModel(it.id, action.id) }
             is SettingsAction.WakeModelRemove -> viewModel.removeModel(action.id)
             SettingsAction.WakeFullScreen -> WakeAlert.fullScreenIntentSettings(this)?.let(::startSystemPage)
             SettingsAction.WakeOverlay -> startSystemPage(WakeAlert.overlaySettings(this))
@@ -887,7 +912,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         } else if (wantsNotifications) {
             requestNotificationsIfNeeded()
         }
-        viewModel.setWakeMode(mode)
+        // The wake card is the shown instance's: its phrase, on this phone.
+        settings.current?.let { viewModel.setWakeMode(it.id, mode) }
     }
 
     /**
@@ -913,9 +939,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     private fun pickPhraseModel() {
+        modelPickEndpoint = settings.current?.id
         try {
             phraseModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
         } catch (_: ActivityNotFoundException) {
+            modelPickEndpoint = null
             Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
         }
     }
@@ -954,6 +982,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     // --- Lifecycle -----------------------------------------------------------
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        // super saves which picker a result belongs to; this, whom its file is for.
+        super.onSaveInstanceState(outState)
+        modelPickEndpoint?.let { outState.putString(STATE_MODEL_PICK_ENDPOINT, it) }
+    }
 
     override fun onStart() {
         super.onStart()
@@ -1051,16 +1085,19 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val fromHistory = intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
         // The activity is exported: a wake counts only with the detector's fresh
         // one-time token, and never when an old intent is replayed.
-        val isWake = wakeAction &&
-            !ShellDecisions.isReplayedIntent(restored, fromHistory) &&
-            WakeRuntime.consumePendingWake(intent?.getStringExtra(WakeRuntime.EXTRA_WAKE_TOKEN))
+        val taken = if (wakeAction && !ShellDecisions.isReplayedIntent(restored, fromHistory)) {
+            WakeRuntime.takePendingWake(intent?.getStringExtra(WakeRuntime.EXTRA_WAKE_TOKEN))
+        } else {
+            null
+        }
+        val isWake = taken != null
         if (wakeAction && intent != null) {
             // A recreated activity must not see this wake again.
             setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).apply { removeExtra(WakeRuntime.EXTRA_WAKE_TOKEN) })
         }
         val isHome = intent?.hasCategory(Intent.CATEGORY_HOME) == true
         when (ShellDecisions.onNewIntent(isWake, isHome, alreadyInFront && !initial)) {
-            ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true)
+            ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true, endpointId = taken?.endpointId)
             ShellDecisions.IntentAction.HomeEvent -> {
                 closeOverlays()
                 bridge.dispatchEvent("home") { onUnhandledEvent(isWake = false) }
@@ -1142,6 +1179,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
         page.settings = s
         settingsLoaded = true
+        // A wake accepted before the settings were read, or whose instance was removed since.
+        if (pendingWakeAt != 0L && wakeEndpointGone(pendingWakeEndpoint)) endWake()
         page.router = UrlRouter(s.baseUrl)
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
@@ -1191,11 +1230,19 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * screen on and get past the keyguard first. It reaches the page once the
      * page can open the mic ([tryDeliverWake]).
      */
-    private fun acceptWake(fromIntent: Boolean) {
+    private fun acceptWake(fromIntent: Boolean, endpointId: String?) {
+        // A wake for an instance that was removed meanwhile is dropped: it must
+        // not open the page of the instance shown instead. A window the wake
+        // itself brought up has not read the settings yet: [applySettings] checks then.
+        if (wakeEndpointGone(endpointId)) return
         // The page answers in this window.
         page.take(this)
         closeOverlays()
         pendingWakeAt = SystemClock.elapsedRealtime()
+        // A phrase of an instance working in the background brings that one to
+        // the front; the wake goes to its page once that has loaded.
+        pendingWakeEndpoint = endpointId
+        if (endpointId != null && endpointId != settings.current?.id) viewModel.selectEndpoint(endpointId)
         WakeRuntime.wakeAccepted()
         // A wake still waiting when its window ends is dropped then, not on the next event.
         window.decorView.removeCallbacks(wakeExpiry)
@@ -1209,8 +1256,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         tryDeliverWake()
     }
 
-    /** A wake heard while this window is visible (see [ShellPage]). */
-    internal fun onDirectWake() = acceptWake(fromIntent = false)
+    private fun wakeEndpointGone(endpointId: String?): Boolean =
+        ShellDecisions.wakeEndpointGone(endpointId, settingsLoaded, settings.endpoints.map { it.id })
+
+    /** A wake for the instance [endpointId], heard while this window is visible (see [ShellPage]). */
+    internal fun onDirectWake(endpointId: String) = acceptWake(fromIntent = false, endpointId = endpointId)
 
     private fun pendingWakeDecision(): ShellDecisions.PendingWake? {
         val since = pendingWakeAt
@@ -1218,7 +1268,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         return ShellDecisions.pendingWake(
             ageMs = SystemClock.elapsedRealtime() - since,
-            settingsLoaded = settingsLoaded,
+            // A wake for another instance waits until the switch to it has arrived.
+            settingsLoaded = settingsLoaded && ShellDecisions.wakeEndpointShown(pendingWakeEndpoint, settings.current?.id),
             resumed = resumed,
             windowFocused = hasWindowFocus(),
             keyguardLocked = keyguardLocked,
@@ -1246,6 +1297,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun endWake() {
         pendingWakeAt = 0L
         wakeLoadIssued = false
+        pendingWakeEndpoint = null
         setShowWhenLocked(false)
         setTurnScreenOn(false)
     }

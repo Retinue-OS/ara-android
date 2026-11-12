@@ -188,6 +188,7 @@ class SettingsPageTest {
                         WakeModelEntry(WakePhraseModel("user:1", "hey_retinue.onnx", WakeModelSource.File), downloaded = true),
                     ),
                     activeId = "user:1",
+                    usedBy = { id -> if (id == "user:1") listOf("Admin") else emptyList() },
                 ),
                 false, null, null,
             ),
@@ -205,6 +206,7 @@ class SettingsPageTest {
         assertEquals(listOf("oww:hey_jarvis_v0.1", "user:1"), models.map { it["id"]!!.jsonPrimitive.content })
         assertEquals(listOf("false", "true"), models.map { it["active"].toString() }, "only the chosen model is active")
         assertEquals(listOf("false", "true"), models.map { it["removable"].toString() })
+        assertEquals(listOf(emptyList(), listOf("Admin")), models.map { m -> m["usedBy"]!!.jsonArray.map { it.jsonPrimitive.content } })
         assertEquals("true", json["home"]!!.jsonObject["isDefault"].toString())
         // The current endpoint's call switch, for its card; the list the editor's drafts come from has none.
         assertEquals("""{"direct":true,"permissionGranted":false,"telephony":true}""", json["calls"].toString())
