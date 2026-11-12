@@ -41,10 +41,27 @@ class KeyPacerTest {
         val seen = mutableListOf<ByteArray>()
         var n = 0
         val done = KeyPacer.send(listOf(Stroke(MOD_NONE, 4), Stroke(MOD_NONE, 5), Stroke(MOD_NONE, 6)), pause = {}) { r ->
-            seen += r
+            seen += r.copyOf() // the pacer zeroes its reports once sent
             n++ != 2 // the third report (second press) is refused
         }
         assertEquals(1, done)
+        // Press, release, the refused press — and one more release after it.
+        assertEquals(4, seen.size)
+        assertEquals(5, seen[2][2].toInt())
+        assertContentEquals(ByteArray(8), seen.last())
+    }
+
+    @Test
+    fun aRefusedKeyLeavesNoModifierHeld() = runBlocking {
+        val seen = mutableListOf<ByteArray>()
+        var n = 0
+        val done = KeyPacer.send(listOf(Stroke(MOD_LSHIFT, 4)), pause = {}) { r ->
+            seen += r.copyOf()
+            n++ != 1 // Shift went down, the key with it is refused
+        }
+        assertEquals(0, done)
+        assertEquals(3, seen.size)
+        assertContentEquals(byteArrayOf(MOD_LSHIFT.toByte(), 0, 0, 0, 0, 0, 0, 0), seen[0])
         assertContentEquals(ByteArray(8), seen.last())
     }
 
@@ -62,6 +79,8 @@ class KeyPacerTest {
             true
         }
         assertEquals(1, done)
+        // Press, release — and one more release when it stops.
+        assertEquals(3, seen.size)
         assertContentEquals(ByteArray(8), seen.last())
     }
 
