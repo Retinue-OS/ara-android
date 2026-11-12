@@ -1895,7 +1895,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      */
     private fun openSecretDialog(request: PageRequest.Secret, outcome: PageOutcome.OpenSecret) {
         try {
-            startActivity(SecretTypeActivity.intent(this, request.id, request.label, request.enter, outcome.host))
+            startActivity(
+                SecretTypeActivity.intent(
+                    this, request.id, request.label, request.enter, outcome.host, outcome.serverHost, outcome.unconfirmed,
+                ),
+            )
         } catch (e: Exception) {
             Log.w(TAG, "secret dialog did not start", e)
             KeyboardRuntime.windowFailed()

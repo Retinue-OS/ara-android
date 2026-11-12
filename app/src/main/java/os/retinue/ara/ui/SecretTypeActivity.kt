@@ -31,7 +31,12 @@ import os.retinue.ara.keyboard.KeyboardRuntime
  * `secret-typed` or `secret-cancelled` (or an error that says nothing about
  * the secret), and the typing is padded so its duration says little of the
  * length (KeyboardRuntime.typeSecret). The dialog names the device it types
- * into, and nothing is typed if another one is connected by then. The window
+ * into, and nothing is typed if another one is connected by then, and the
+ * host of the server that asked (from the app's own settings, as the
+ * confirmation does). When the dashboard typed on that device without asking
+ * since the user last confirmed, it says how many characters, and "Press
+ * Enter after" starts unticked whatever the page asked for: the page may have
+ * moved the focus to where Enter does something else. The window
  * is FLAG_SECURE (no screenshots, blank in Recents), and the field is a
  * password field with the autofill hint "password", so password managers
  * offer to fill it and keyboards do not learn from it. Ara's own copies — the
@@ -92,9 +97,10 @@ class SecretTypeActivity : Activity() {
             isLongClickable = false // no copying the password out
         }
         field = edit
+        val unasked = intent.getIntExtra(EXTRA_UNASKED, 0)
         val enter = CheckBox(this).apply {
             text = getString(R.string.keyboard_secret_enter)
-            isChecked = intent.getBooleanExtra(EXTRA_ENTER, false)
+            isChecked = intent.getBooleanExtra(EXTRA_ENTER, false) && unasked <= 0
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -105,7 +111,7 @@ class SecretTypeActivity : Activity() {
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(label)
-            .setMessage(getString(R.string.keyboard_secret_message, hostName))
+            .setMessage(message(hostName, unasked))
             .setView(box)
             .setPositiveButton(R.string.keyboard_secret_type) { _, _ -> typeAndFinish(enter.isChecked) }
             .setNegativeButton(R.string.keyboard_secret_cancel) { _, _ -> cancelAndFinish() }
@@ -119,6 +125,13 @@ class SecretTypeActivity : Activity() {
         }
         dialog.show()
     }
+
+    /** Who asks, where it goes, and what the dashboard typed there unasked since the last approval. */
+    private fun message(hostName: String, unasked: Int): String = listOfNotNull(
+        getString(R.string.keyboard_secret_server, intent.getStringExtra(EXTRA_SERVER) ?: getString(R.string.keyboard_confirm_unknown_server)),
+        getString(R.string.keyboard_secret_message, hostName),
+        unasked.takeIf { it > 0 }?.let { resources.getQuantityString(R.plurals.keyboard_confirm_unasked, it, it, hostName) },
+    ).joinToString("\n\n")
 
     private fun typeAndFinish(enter: Boolean) {
         if (settled) return
@@ -177,16 +190,27 @@ class SecretTypeActivity : Activity() {
         private const val EXTRA_LABEL = "label"
         private const val EXTRA_ENTER = "enter"
         private const val EXTRA_HOST = "host"
+        private const val EXTRA_SERVER = "server"
+        private const val EXTRA_UNASKED = "unasked"
 
         /** How long the dialog waits for the user before it closes as cancelled. */
         private const val TIMEOUT_MS = 10 * 60 * 1000L
 
-        /** The dialog for typing into [host] (the connected device's address, the app's own). */
-        fun intent(context: Context, id: String?, label: String?, enter: Boolean, host: String?): Intent =
+        /**
+         * The dialog for typing into [host] (the connected device's address,
+         * the app's own), asked for by [server] (Endpoint.hostLabel); [unasked]:
+         * the characters the dashboard typed there without a confirmation since
+         * the last approval.
+         */
+        fun intent(
+            context: Context, id: String?, label: String?, enter: Boolean, host: String?, server: String?, unasked: Int,
+        ): Intent =
             Intent(context, SecretTypeActivity::class.java)
                 .putExtra(EXTRA_ID, id)
                 .putExtra(EXTRA_LABEL, label)
                 .putExtra(EXTRA_ENTER, enter)
                 .putExtra(EXTRA_HOST, host)
+                .putExtra(EXTRA_SERVER, server)
+                .putExtra(EXTRA_UNASKED, unasked)
     }
 }

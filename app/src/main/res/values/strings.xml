@@ -294,6 +294,7 @@
     <string name="key_down">↓</string>
     <string name="keyboard_secret_default_label">Password</string>
     <string name="keyboard_secret_message">Ara types this into %1$s and forgets it. It is not stored, and neither the dashboard nor Ara sees it.</string>
+    <string name="keyboard_secret_server">%1$s asks for it.</string>
     <string name="keyboard_secret_unknown_host">the connected device</string>
     <string name="keyboard_secret_unsupported">The password was not typed: it has a character the device\'s keyboard layout lacks.</string>
     <string name="keyboard_secret_hint">Password</string>
