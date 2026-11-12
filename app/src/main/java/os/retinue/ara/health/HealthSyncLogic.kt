@@ -330,6 +330,42 @@ object HealthSyncLogic {
         }
     }
 
+    private val peersSerializer = MapSerializer(String.serializer(), PeerSync.serializer())
+
+    /** The background servers' sync state as stored (a JSON object, origin → [PeerSync]). */
+    fun encodePeers(peers: Map<String, PeerSync>): String = json.encodeToString(peersSerializer, peers)
+
+    /** The background servers' sync state of a stored document; empty for none or an unreadable one. */
+    fun decodePeers(raw: String?): Map<String, PeerSync> {
+        if (raw == null) return emptyMap()
+        return try {
+            json.decodeFromString(peersSerializer, raw).filterKeys { it.isNotBlank() }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
+     * The servers an automatic sync goes to besides the shown one: the
+     * endpoints working in the background ([backgroundOrigins], in list
+     * order) whose health switch is on, each server once, the shown one's
+     * server ([currentOrigin]) not again.
+     */
+    fun backgroundTargets(currentOrigin: String?, backgroundOrigins: List<String>): List<String> =
+        backgroundOrigins.distinct().filter { it != currentOrigin }
+
+    /**
+     * Whether a change to the endpoints stops the sync that is running.
+     * Another endpoint shown ([currentChanged]) always does. Otherwise the
+     * part it is at decides: the shown endpoint's stops when its switch was
+     * turned off ([switchedOff]) and not for a background server that was
+     * dropped (those are read afresh once it gets to them); the background
+     * servers' ([inBackground]) stops when one of them was dropped
+     * ([backgroundDropped]).
+     */
+    fun stopsRunning(inBackground: Boolean, currentChanged: Boolean, switchedOff: Boolean, backgroundDropped: Boolean): Boolean =
+        currentChanged || if (inBackground) backgroundDropped else switchedOff
+
     /** The one token of builds before per-origin tokens, as the map: for its origin, if it had one. */
     fun legacyTokens(token: String?, types: String?, origin: String?): Map<String, ChangesToken> =
         if (token.isNullOrEmpty() || types == null || origin.isNullOrBlank()) emptyMap() else mapOf(origin to ChangesToken(token, types))
@@ -507,7 +543,18 @@ data class HealthSyncState(
     val backoffUntil: Long = 0L,
     /** The origin [failures] and [backoffUntil] belong to: a failing server does not hold back another. */
     val backoffOrigin: String? = null,
+    /**
+     * The servers synced in the background (origin → [PeerSync]): those of
+     * endpoints that work while another is shown. Each has its own interval
+     * and back-off; the fields above stay the shown endpoint's, so the
+     * status the page shows is never a background server's.
+     */
+    val peers: Map<String, PeerSync> = emptyMap(),
 ) {
+    /** [origin]'s background sync state, changed by [change]. */
+    fun withPeer(origin: String, change: (PeerSync) -> PeerSync): HealthSyncState =
+        copy(peers = peers + (origin to change(peers[origin] ?: PeerSync())))
+
     /** [origin]'s token, when it was made for these [types] ([HealthSyncLogic.typeKey]); another set starts afresh. */
     fun tokenFor(origin: String, types: String): String? = tokens[origin]?.takeIf { it.types == types }?.token
 
@@ -517,7 +564,50 @@ data class HealthSyncState(
 
     /** Only the tokens of [origins] (the servers still configured): a removed server's position is forgotten. */
     fun retainingTokens(origins: Set<String>): HealthSyncState =
-        if (tokens.keys.all { it in origins }) this else copy(tokens = tokens.filterKeys { it in origins })
+        if (tokens.keys.all { it in origins } && peers.keys.all { it in origins }) {
+            this
+        } else {
+            copy(tokens = tokens.filterKeys { it in origins }, peers = peers.filterKeys { it in origins })
+        }
+}
+
+/**
+ * One background server's automatic syncs: when one was last attempted (its
+ * interval counts from there), when one last stored everything, and its own
+ * back-off after failures (see [HealthSyncLogic.backoffMs]).
+ */
+@Serializable
+data class PeerSync(
+    val lastAttemptAt: Long = 0L,
+    val lastSyncAt: Long = 0L,
+    val lastResult: String? = null,
+    val lastError: String? = null,
+    val lastCount: Int? = null,
+    val failures: Int = 0,
+    val backoffUntil: Long = 0L,
+) {
+    /** Why automatic syncs to it wait, while they back off. */
+    val backoffReason: SkipReason
+        get() = HealthSyncLogic.backoffReason(SyncResult.fromKey(lastResult), lastError)
+
+    /** A sync attempted at [now] stored everything, [count] changes. */
+    fun succeeded(now: Long, count: Int): PeerSync =
+        copy(lastSyncAt = now, lastResult = SyncResult.Ok.key, lastError = null, lastCount = count, failures = 0, backoffUntil = 0L)
+
+    /** A sync attempted at [now] stored nothing ([result], [error]); the next automatic one waits longer. */
+    fun failed(now: Long, result: SyncResult, error: String?, intervalMinutes: Int): PeerSync {
+        val n = failures + 1
+        return copy(
+            lastResult = result.key,
+            lastError = error,
+            lastCount = null,
+            failures = n,
+            backoffUntil = now + HealthSyncLogic.backoffMs(n, intervalMinutes),
+        )
+    }
+
+    /** A sync attempted at [now] was skipped for a reason that is no failure of the server's (no permission). */
+    fun skipped(reason: SkipReason): PeerSync = copy(lastResult = SyncResult.Skipped.key, lastError = reason.key, lastCount = null)
 }
 
 /** One server's position in Health Connect's change log (see [HealthSyncState.tokens]). */

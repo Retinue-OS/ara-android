@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.security.KeyChain
+import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
@@ -113,6 +115,8 @@ import os.retinue.ara.settings.SettingsAction
 import os.retinue.ara.settings.SettingsMessages
 import os.retinue.ara.settings.SettingsPageHost
 import os.retinue.ara.settings.SettingsWebView
+import os.retinue.ara.shell.CallLogic
+import os.retinue.ara.shell.CallOutcome
 import os.retinue.ara.shell.LinkTarget
 import os.retinue.ara.shell.PageFailure
 import os.retinue.ara.shell.PageStatus
@@ -155,6 +159,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
         /** How long an app started beside the split-screen window has to get there (see [splitCheck]). */
         private const val SPLIT_CHECK_MS = 1_500L
+
+        /** Saved state: [modelPickEndpoint], while the file picker is up. */
+        private const val STATE_MODEL_PICK_ENDPOINT = "os.retinue.ara.state.MODEL_PICK_ENDPOINT"
 
         private const val TAG = "MainActivity"
     }
@@ -229,6 +236,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private var firstRunEditorShown = false
     private var isDefaultHome by mutableStateOf(false)
     private var micGranted by mutableStateOf(false)
+    private var callsGranted by mutableStateOf(false)
     private var fullScreenIntentAllowed by mutableStateOf(true)
     private var overlayAllowed by mutableStateOf(true)
     private var notificationsAllowed by mutableStateOf(true)
@@ -260,6 +268,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** The pending wake has loaded the start page (once per wake) and waits for it. */
     private var wakeLoadIssued = false
+
+    /**
+     * The instance the pending wake is for, when its phrase was heard while
+     * another was shown: the shell switches to it, and the wake waits until
+     * the switch has reached this window. Null: the instance shown.
+     */
+    private var pendingWakeEndpoint: String? = null
     private var settingsLoaded = false
     private var resumed by mutableStateOf(false)
 
@@ -318,6 +333,20 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
     }
 
+    // Direct calls: asked for when the user turns them on; without it calls open the dialer.
+    private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        callsGranted = granted
+        // Android no longer asks ("don't ask again"): only its page for Ara can allow calls now.
+        val notAsked = callSettingsIfNotAsked && !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callSettingsIfNotAsked = false
+        if (!granted && notAsked) {
+            startSystemPage(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
+    }
+
+    /** The settings page's own request for the call permission, made while Android may have stopped asking. */
+    private var callSettingsIfNotAsked = false
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -350,8 +379,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         refreshHomeRole()
     }
 
+    /**
+     * The instance a phrase model is being picked for: the one shown when the
+     * file picker opened (a wake may bring another to the front meanwhile).
+     * Kept in the saved state ([onSaveInstanceState]): Android may recreate
+     * this window behind the picker, and the file still arrives.
+     */
+    private var modelPickEndpoint: String? = null
+
     private val phraseModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) viewModel.importPhraseModel(uri)
+        val endpointId = modelPickEndpoint
+        modelPickEndpoint = null
+        if (uri != null) viewModel.importModel(uri, endpointId)
     }
 
     /** The settings page's certificate import under way (one at a time; see [importCertificateFor]). */
@@ -368,11 +407,14 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Before the picker's result, which comes after onStart.
+        modelPickEndpoint = savedInstanceState?.getString(STATE_MODEL_PICK_ENDPOINT)
 
         pageContainer = FrameLayout(this)
         page.open(this)
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
 
         onBackPressedDispatcher.addCallback(this, backCallback)
 
@@ -721,9 +763,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun SettingsPageOverlay() {
         val stored by viewModel.settings.collectAsStateWithLifecycle()
         val models by viewModel.models.collectAsStateWithLifecycle()
+        val library by viewModel.library.collectAsStateWithLifecycle()
         val modelBusy by viewModel.modelBusy.collectAsStateWithLifecycle()
+        val modelBusyId by viewModel.modelBusyId.collectAsStateWithLifecycle()
         val modelMessage by viewModel.modelMessage.collectAsStateWithLifecycle()
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
+        val wakeListening by WakeRuntime.listening.collectAsStateWithLifecycle()
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
         val health by HealthSyncRuntime.status.collectAsStateWithLifecycle()
         val usageAccess by viewModel.usageAccess.collectAsStateWithLifecycle()
@@ -733,6 +778,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             page = page.state,
             health = health,
             isDefaultHome = isDefaultHome,
+            callsGranted = callsGranted,
+            telephony = hasTelephony(),
             wake = WakeConditions(
                 status = wakeStatus,
                 micGranted = micGranted,
@@ -740,8 +787,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 fullScreenAllowed = fullScreenIntentAllowed,
                 overlayAllowed = overlayAllowed,
                 models = models,
+                library = library,
                 modelBusy = modelBusy,
+                modelBusyId = modelBusyId,
                 modelMessage = modelMessage,
+                listening = wakeListening,
             ),
             update = update,
             installAllowed = installAllowed,
@@ -791,14 +841,20 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             SettingsAction.HomeRequest -> requestHome()
             is SettingsAction.SplitLaunch -> viewModel.setSplitLaunch(action.on)
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
+            is SettingsAction.DirectCalls -> setDirectCalls(action.on)
+            SettingsAction.CallsPermission -> requestCallPermission()
             SettingsAction.LauncherEdit -> showLauncherEditor = true
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
             // The slider's range.
-            is SettingsAction.WakeThreshold -> viewModel.setWakeThreshold(action.value.coerceIn(0.1f, 0.9f))
+            is SettingsAction.WakeThreshold -> settings.current?.let { viewModel.setWakeThreshold(it.id, action.value.coerceIn(0.1f, 0.9f)) }
             SettingsAction.WakeFeatures -> viewModel.downloadFeatureModels()
-            is SettingsAction.WakePhrase -> viewModel.downloadPhraseModel(action.url)
+            // A new model is for the instance shown now, whichever is shown once it is there.
+            is SettingsAction.WakePhrase -> viewModel.addModelFromUrl(action.url, settings.current?.id)
             SettingsAction.WakePick -> pickPhraseModel()
+            is SettingsAction.WakeModelDownload -> viewModel.downloadModel(action.id)
+            is SettingsAction.WakeModelUse -> settings.current?.let { viewModel.useModel(it.id, action.id) }
+            is SettingsAction.WakeModelRemove -> viewModel.removeModel(action.id)
             SettingsAction.WakeFullScreen -> WakeAlert.fullScreenIntentSettings(this)?.let(::startSystemPage)
             SettingsAction.WakeOverlay -> startSystemPage(WakeAlert.overlaySettings(this))
             SettingsAction.WakeNotifications -> startSystemPage(WakeAlert.notificationSettings(this))
@@ -856,13 +912,38 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         } else if (wantsNotifications) {
             requestNotificationsIfNeeded()
         }
-        viewModel.setWakeMode(mode)
+        // The wake card is the shown instance's: its phrase, on this phone.
+        settings.current?.let { viewModel.setWakeMode(it.id, mode) }
+    }
+
+    /**
+     * The current endpoint's call switch, and Android's permission for it when
+     * it goes on (without it calls open the dialer).
+     */
+    private fun setDirectCalls(on: Boolean) {
+        val endpoint = settings.current ?: return
+        viewModel.setDirectCalls(endpoint.id, on)
+        if (on && !hasCallPermission()) callPermission.launch(Manifest.permission.CALL_PHONE)
+    }
+
+    /**
+     * The settings page's button for a missing permission. Android stops
+     * asking after two refusals and answers no by itself: then (no rationale
+     * to show before or after the request) its page for Ara opens instead.
+     */
+    private fun requestCallPermission() {
+        callsGranted = hasCallPermission()
+        if (callsGranted) return
+        callSettingsIfNotAsked = !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callPermission.launch(Manifest.permission.CALL_PHONE)
     }
 
     private fun pickPhraseModel() {
+        modelPickEndpoint = settings.current?.id
         try {
             phraseModelPicker.launch(arrayOf("application/octet-stream", "*/*"))
         } catch (_: ActivityNotFoundException) {
+            modelPickEndpoint = null
             Toast.makeText(this, R.string.no_app_for_link, Toast.LENGTH_SHORT).show()
         }
     }
@@ -902,6 +983,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     // --- Lifecycle -----------------------------------------------------------
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        // super saves which picker a result belongs to; this, whom its file is for.
+        super.onSaveInstanceState(outState)
+        modelPickEndpoint?.let { outState.putString(STATE_MODEL_PICK_ENDPOINT, it) }
+    }
+
     override fun onStart() {
         super.onStart()
         page.windowStarted(this)
@@ -913,6 +1000,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         super.onResume()
         refreshHomeRole()
         micGranted = hasMic()
+        callsGranted = hasCallPermission()
         fullScreenIntentAllowed = WakeAlert.canUseFullScreenIntent(this)
         overlayAllowed = WakeAlert.canDrawOverlays(this)
         notificationsAllowed = WakeAlert.notificationsAllowed(this)
@@ -997,16 +1085,19 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val fromHistory = intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
         // The activity is exported: a wake counts only with the detector's fresh
         // one-time token, and never when an old intent is replayed.
-        val isWake = wakeAction &&
-            !ShellDecisions.isReplayedIntent(restored, fromHistory) &&
-            WakeRuntime.consumePendingWake(intent?.getStringExtra(WakeRuntime.EXTRA_WAKE_TOKEN))
+        val taken = if (wakeAction && !ShellDecisions.isReplayedIntent(restored, fromHistory)) {
+            WakeRuntime.takePendingWake(intent?.getStringExtra(WakeRuntime.EXTRA_WAKE_TOKEN))
+        } else {
+            null
+        }
+        val isWake = taken != null
         if (wakeAction && intent != null) {
             // A recreated activity must not see this wake again.
             setIntent(Intent(intent).setAction(Intent.ACTION_MAIN).apply { removeExtra(WakeRuntime.EXTRA_WAKE_TOKEN) })
         }
         val isHome = intent?.hasCategory(Intent.CATEGORY_HOME) == true
         when (ShellDecisions.onNewIntent(isWake, isHome, alreadyInFront && !initial)) {
-            ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true)
+            ShellDecisions.IntentAction.Wake -> acceptWake(fromIntent = true, endpointId = taken?.endpointId)
             ShellDecisions.IntentAction.HomeEvent -> {
                 closeOverlays()
                 bridge.dispatchEvent("home") { onUnhandledEvent(isWake = false) }
@@ -1088,6 +1179,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val deviceChanged = s.deviceWebSettings != settings.deviceWebSettings
         page.settings = s
         settingsLoaded = true
+        // A wake accepted before the settings were read, or whose instance was removed since.
+        if (pendingWakeAt != 0L && wakeEndpointGone(pendingWakeEndpoint)) endWake()
         page.router = UrlRouter(s.baseUrl)
         val base = s.base
         if (aliasChanged) WebView.clearClientCertPreferences(null)
@@ -1137,11 +1230,19 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * screen on and get past the keyguard first. It reaches the page once the
      * page can open the mic ([tryDeliverWake]).
      */
-    private fun acceptWake(fromIntent: Boolean) {
+    private fun acceptWake(fromIntent: Boolean, endpointId: String?) {
+        // A wake for an instance that was removed meanwhile is dropped: it must
+        // not open the page of the instance shown instead. A window the wake
+        // itself brought up has not read the settings yet: [applySettings] checks then.
+        if (wakeEndpointGone(endpointId)) return
         // The page answers in this window.
         page.take(this)
         closeOverlays()
         pendingWakeAt = SystemClock.elapsedRealtime()
+        // A phrase of an instance working in the background brings that one to
+        // the front; the wake goes to its page once that has loaded.
+        pendingWakeEndpoint = endpointId
+        if (endpointId != null && endpointId != settings.current?.id) viewModel.selectEndpoint(endpointId)
         WakeRuntime.wakeAccepted()
         // A wake still waiting when its window ends is dropped then, not on the next event.
         window.decorView.removeCallbacks(wakeExpiry)
@@ -1155,8 +1256,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         tryDeliverWake()
     }
 
-    /** A wake heard while this window is visible (see [ShellPage]). */
-    internal fun onDirectWake() = acceptWake(fromIntent = false)
+    private fun wakeEndpointGone(endpointId: String?): Boolean =
+        ShellDecisions.wakeEndpointGone(endpointId, settingsLoaded, settings.endpoints.map { it.id })
+
+    /** A wake for the instance [endpointId], heard while this window is visible (see [ShellPage]). */
+    internal fun onDirectWake(endpointId: String) = acceptWake(fromIntent = false, endpointId = endpointId)
 
     private fun pendingWakeDecision(): ShellDecisions.PendingWake? {
         val since = pendingWakeAt
@@ -1164,7 +1268,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         return ShellDecisions.pendingWake(
             ageMs = SystemClock.elapsedRealtime() - since,
-            settingsLoaded = settingsLoaded,
+            // A wake for another instance waits until the switch to it has arrived.
+            settingsLoaded = settingsLoaded && ShellDecisions.wakeEndpointShown(pendingWakeEndpoint, settings.current?.id),
             resumed = resumed,
             windowFocused = hasWindowFocus(),
             keyguardLocked = keyguardLocked,
@@ -1192,6 +1297,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun endWake() {
         pendingWakeAt = 0L
         wakeLoadIssued = false
+        pendingWakeEndpoint = null
         setShowWhenLocked(false)
         setTurnScreenOn(false)
     }
@@ -1647,7 +1753,63 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
+            is WebMessage.PlaceCall -> placeCall(message.number)
         }
+    }
+
+    /**
+     * The page's `placeCall`: [CallLogic] decides, this starts the call or the
+     * dialer and tells the page what came of it (a `call` event). The switch
+     * that counts is the one of the endpoint the page belongs to, as
+     * [ShellPage] holds it for both windows: the settings the page and its
+     * bridge were set up with, not the store's, which may be a step ahead.
+     * The bridge passes on only what that endpoint's origin sends, so once
+     * the shell has moved to another server, the page left behind no longer
+     * gets here.
+     */
+    private fun placeCall(raw: String) {
+        val number = CallLogic.normalize(raw)
+        val outcome = CallLogic.decide(
+            number = number,
+            voiceEngaged = WakeRuntime.voiceActive.value,
+            enabled = CallLogic.directCalls(settings.endpointSet, page.loadedEndpointId),
+            permissionGranted = hasCallPermission(),
+            isEmergency = number != null && isEmergencyNumber(number),
+            hasTelephony = hasTelephony(),
+        )
+        val action = when (outcome) {
+            is CallOutcome.Call -> Intent.ACTION_CALL to outcome.number
+            is CallOutcome.Dial -> Intent.ACTION_DIAL to outcome.number
+            is CallOutcome.Refused -> null
+        }
+        var failed = false
+        if (action != null) {
+            try {
+                startActivity(
+                    Intent(action.first, Uri.fromParts("tel", action.second, null)).apply {
+                        // The user asked by voice and may not be holding the phone: the call starts on
+                        // speaker. Telecom reads the extra from ACTION_CALL; the dialer ignores it.
+                        if (action.first == Intent.ACTION_CALL) {
+                            putExtra(TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE, true)
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                // No dialer, a SecurityException for a permission revoked meanwhile …: never crash the shell.
+                Log.w(TAG, "could not start ${action.first}", e)
+                failed = true
+            }
+        }
+        bridge.run(ShellMessages.callEvent(outcome, failed))
+    }
+
+    private fun isEmergencyNumber(number: String): Boolean = try {
+        // No telephony service counts as a failed check, like one that throws.
+        getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number) ?: true
+    } catch (e: Exception) {
+        // It refused to answer: the number counts as one, so it is only dialled.
+        Log.w(TAG, "emergency number check failed", e)
+        true
     }
 
     /**
@@ -1766,6 +1928,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             webView?.loadUrl(url)
         }
     }
+
+    private fun hasTelephony() = packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+
+    private fun hasCallPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
 
     private fun hasMic() =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

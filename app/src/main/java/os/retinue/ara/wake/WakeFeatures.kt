@@ -38,6 +38,9 @@ class WakeFeatures(
         const val MEL_MAX = 970
         const val EMBEDDING_MAX = 120
 
+        /** Values per embedding (the embedding model's output): what a phrase model reads per frame. */
+        const val EMBEDDING_SIZE = 96
+
         /** openWakeWord's default melspectrogram transform. */
         fun transform(x: Float): Float = x / 10f + 2f
     }

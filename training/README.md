@@ -43,7 +43,13 @@ The notebook prints two numbers measured on held-out data:
 
 ## Loading it into the shell
 
-**Shell settings** (the gear next to the app drawer's search field) → **Wake phrase** →
-**Models**: **Download feature models** if they are missing, then **Choose
-file…** and pick the `.onnx`. Adjust **Sensitivity threshold**: lower wakes
-more easily and more often by mistake; 0.5 is openWakeWord's default.
+**Settings** (the gear next to the app drawer's search field) → **This app
+with** the endpoint shown → **Wake phrase** → **Phrase model**: **Upload a
+model file…** and pick the `.onnx`. It is added to the phone's list of models
+under its file name and is in use at once for the endpoint shown (its row is
+marked *Active*, and the line above the list reads *In use:* with the file
+name); another endpoint picks it with **Use this model** on its own card. The
+feature models are downloaded with it; if the card says they are missing (an
+upload while offline), open *Advanced* and tap **Download feature models
+again**. Adjust **Sensitivity threshold**: lower wakes more easily and more
+often by mistake; 0.5 is openWakeWord's default.

@@ -21,7 +21,6 @@ import os.retinue.ara.launcher.AppRecency
 import os.retinue.ara.launcher.LauncherCodec
 import os.retinue.ara.launcher.LauncherConfig
 import os.retinue.ara.update.UpdateChannel
-import os.retinue.ara.wake.WakeMode
 
 // The same store file the voice client used, so the base URL and the
 // certificate alias carry over an update; its other keys are simply ignored.
@@ -46,9 +45,6 @@ class AraStore(context: Context) {
         ShellSettings(
             endpoints = endpoints.endpoints,
             currentEndpointId = endpoints.currentId,
-            wakeMode = WakeMode.fromKey(p[K.wakeMode]),
-            wakeThreshold = p[K.wakeThreshold] ?: ShellSettings.DEFAULT_WAKE_THRESHOLD,
-            wakeModelUrl = p[K.wakeModelUrl] ?: ShellSettings.DEFAULT_WAKE_MODEL_URL,
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
             splitLaunch = p[K.splitLaunch] ?: false,
@@ -110,14 +106,57 @@ class AraStore(context: Context) {
 
     private fun endpointsOf(p: Preferences): EndpointSet {
         val list = EndpointCodec.decode(p[K.endpoints]) ?: EndpointCodec.legacy(p[K.baseUrl], p[K.certAlias])
-        return EndpointSet(list, p[K.currentEndpoint])
+        return EndpointSet(EndpointCodec.withLegacyWake(list, legacyWake(p)), p[K.currentEndpoint])
     }
 
-    suspend fun setWakeMode(mode: WakeMode) = edit { it[K.wakeMode] = mode.key }
+    /**
+     * The one device-wide wake setting of builds before per-instance wake
+     * phrases: what an endpoint without its own starts with. Mode and
+     * threshold, and from the builds that had the model library and one
+     * choice for the phone, the phrase model chosen. The keys stay, so an
+     * older build still finds its setting.
+     */
+    private fun legacyWake(p: Preferences): EndpointWake =
+        EndpointCodec.legacyWake(p[K.wakeMode], p[K.wakeThreshold], p[K.wakeModel])
 
-    suspend fun setWakeThreshold(value: Float) = edit { it[K.wakeThreshold] = value.coerceIn(0.05f, 0.99f) }
+    /**
+     * The wake phrase of the endpoint [id] on this phone: [change] applied to
+     * what it has. Returns the endpoints after it (without [id] in them when
+     * it was removed meanwhile: nothing is changed then).
+     */
+    suspend fun updateEndpointWake(id: String, change: (EndpointWake) -> EndpointWake): EndpointSet =
+        updateEndpoints { set -> set.update(id) { e -> e.copy(wake = change(e.wake ?: EndpointWake.OFF)) } }
 
-    suspend fun setWakeModelUrl(url: String) = edit { it[K.wakeModelUrl] = url.trim() }
+    /**
+     * The one phrase file of earlier builds has joined the model library as
+     * [id] (WakeModelFiles.migrateLegacy): whoever listened with it goes on
+     * doing so. In one edit, so that the earlier file can go once this
+     * returns: the device-wide choice, also over one stored already (which
+     * is older than the file), for the endpoints without a wake of their own
+     * ([legacyWake]); and the endpoints that have one, and no model yet (see
+     * [EndpointCodec.adoptingLegacyWakeModel], which decides both). Repeating
+     * it changes nothing.
+     */
+    suspend fun adoptLegacyWakeModel(id: String) = edit { p ->
+        val (choice, list) = EndpointCodec.adoptingLegacyWakeModel(EndpointCodec.decode(p[K.endpoints]), id)
+        p[K.wakeModel] = choice
+        if (list != null) p[K.endpoints] = EndpointCodec.encode(list)
+    }
+
+    /**
+     * The phrase model [modelId] is about to be deleted: the endpoint shown
+     * lets go of it, unless another endpoint uses it too. Then nothing
+     * changes and those endpoints' names are returned: the model must stay.
+     * Checked and stored in one edit ([EndpointSet.releasingWakeModel]).
+     */
+    suspend fun releaseWakeModel(modelId: String): List<String> {
+        var users = emptyList<String>()
+        updateEndpoints { set ->
+            users = set.otherUsersOfWakeModel(modelId).map { EndpointLabels.label(it, set.endpoints) }
+            set.releasingWakeModel(modelId) ?: set
+        }
+        return users
+    }
 
     suspend fun setAutoUpdate(on: Boolean) = edit { it[K.autoUpdate] = on }
 
@@ -176,6 +215,7 @@ class AraStore(context: Context) {
             it[K.healthFailures] = s.failures
             it[K.healthBackoffUntil] = s.backoffUntil
             it.putOrRemove(K.healthBackoffOrigin, s.backoffOrigin)
+            if (s.peers.isEmpty()) it.remove(K.healthPeers) else it[K.healthPeers] = HealthSyncLogic.encodePeers(s.peers)
         }
         return after
     }
@@ -194,6 +234,7 @@ class AraStore(context: Context) {
         failures = p[K.healthFailures] ?: 0,
         backoffUntil = p[K.healthBackoffUntil] ?: 0L,
         backoffOrigin = p[K.healthBackoffOrigin],
+        peers = HealthSyncLogic.decodePeers(p[K.healthPeers]),
     )
 
     private fun MutablePreferences.putOrRemove(key: Preferences.Key<String>, value: String?) {
@@ -212,7 +253,13 @@ class AraStore(context: Context) {
         val currentEndpoint = stringPreferencesKey("current_endpoint")
         val wakeMode = stringPreferencesKey("wake_mode")
         val wakeThreshold = floatPreferencesKey("wake_threshold")
-        val wakeModelUrl = stringPreferencesKey("wake_model_url")
+        /**
+         * The one phrase model chosen for the whole phone, by its id: written by the
+         * builds that had the model library before each endpoint had its own choice
+         * (Endpoint.wake), and by [adoptLegacyWakeModel]. Read only for endpoints
+         * without a wake of their own ([legacyWake]).
+         */
+        val wakeModel = stringPreferencesKey("wake_model")
         val launcher = stringPreferencesKey("launcher_json")
         val launches = stringPreferencesKey("app_launches_json")
         val autoUpdate = booleanPreferencesKey("auto_update")
@@ -239,6 +286,9 @@ class AraStore(context: Context) {
         val healthFailures = intPreferencesKey("health_failures")
         val healthBackoffUntil = longPreferencesKey("health_backoff_until")
         val healthBackoffOrigin = stringPreferencesKey("health_backoff_origin")
+
+        /** The background servers' sync state (JSON, origin → PeerSync). */
+        val healthPeers = stringPreferencesKey("health_background_json")
 
         /** The dashboard's per-device preferences (JSON, see [DeviceWebSettings]). */
         val deviceWebSettings = stringPreferencesKey("device_web_settings_json")

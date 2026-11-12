@@ -2,10 +2,10 @@
 // be saved as and what closing the editor does with it, what a certificate
 // import says, the values the page shows for the dashboard's per-device
 // preferences (with the same bounds and defaults the dashboard applies), the
-// health line, and the wake phrase's notes. Kept free of DOM work, so
-// app/src/test/js/settings-page.test.mjs runs it under Node. The page itself
-// is page.mjs; the app's side is os.retinue.ara.settings (SettingsBridge,
-// SettingsMessages, SettingsState).
+// health line, the notes of the phone calls, and the wake phrase's notes and
+// model rows. Kept free of DOM work, so app/src/test/js/settings-page.test.mjs
+// runs it under Node. The page itself is page.mjs; the app's side is
+// os.retinue.ara.settings (SettingsBridge, SettingsMessages, SettingsState).
 
 // ── The dashboard's per-device preferences ──────────────────────────────────
 // Held by the app for every endpoint (DeviceWebSettings), under the
@@ -78,6 +78,7 @@ function fields(d) {
     certificateAlias: d.certificateAlias || null,
     username: String(d.username || '').trim(),
     healthUpload: !!d.healthUpload,
+    background: !!d.background,
   };
 }
 
@@ -85,7 +86,7 @@ function fields(d) {
 export function newDraft(id) {
   const d = {
     id, isNew: true, baseUrl: '', certificateAlias: null, username: '', password: '',
-    hasStoredPassword: false, forgetPassword: false, healthUpload: false, name: null,
+    hasStoredPassword: false, forgetPassword: false, healthUpload: false, background: false, name: null,
   };
   d.opened = fields(d);
   return d;
@@ -103,6 +104,7 @@ export function draftOf(row) {
     hasStoredPassword: !!row.hasPassword,
     forgetPassword: false,
     healthUpload: !!row.healthUpload,
+    background: !!row.background,
     name: row.name || null,
   };
   d.opened = fields(d);
@@ -129,7 +131,8 @@ export function draftChanged(d) {
   const now = fields(d);
   const o = d.opened || {};
   return now.baseUrl !== o.baseUrl || now.certificateAlias !== o.certificateAlias
-    || now.username !== o.username || now.healthUpload !== o.healthUpload;
+    || now.username !== o.username || now.healthUpload !== o.healthUpload
+    || now.background !== o.background;
 }
 
 // What closing the editor does: an untouched draft just closes; changes are
@@ -158,6 +161,7 @@ export function draftMessage(d) {
     password: d.password || '',
     forgetPassword: !!d.forgetPassword,
     healthUpload: !!d.healthUpload,
+    background: !!d.background,
   };
 }
 
@@ -166,6 +170,25 @@ export function endpointSummary(row) {
   const cert = row.certificateAlias || 'none';
   const user = row.username || 'none';
   return `Certificate: ${cert} · Sign-in: ${user} · Health data: ${row.healthUpload ? 'on' : 'off'}`;
+}
+
+// ── Instance states ─────────────────────────────────────────────────────────
+// What an endpoint is to the phone (the app's InstanceState): the one shown
+// (foreground), one that keeps syncing health data and listening for its wake
+// phrase while another is shown (background), or one that rests (disabled).
+export const STATE_TEXT = {
+  foreground: 'Active',
+  background: 'Background',
+  disabled: 'Disabled',
+};
+
+// The state of a row, as the list shows it; the shown one is 'foreground'
+// even from an app that does not send a state.
+export function instanceState(row) {
+  if (!row) return 'disabled';
+  if (row.current) return 'foreground';
+  if (row.state === 'background' || row.state === 'disabled') return row.state;
+  return row.background ? 'background' : 'disabled';
 }
 
 // ── Importing a client certificate ──────────────────────────────────────────
@@ -239,6 +262,20 @@ export function describeHealthSyncEvent(d) {
   return '';
 }
 
+// ── Phone calls ─────────────────────────────────────────────────────────────
+// The card is the current endpoint's: `direct` is that endpoint's own switch
+// (not part of an endpoint draft: saving one leaves it alone), the permission
+// is the phone's. What stands between the switch and a call placed without a
+// tap, with the action that fixes it: the app asks again, or opens Android's
+// page for Ara once Android no longer asks.
+export function callNotes(c) {
+  if (!c || !c.direct || c.permissionGranted) return [];
+  return [{
+    text: 'Android has not allowed Ara to make calls, so calls open the dialer.',
+    action: 'calls.permission', label: 'Allow phone calls',
+  }];
+}
+
 // ── Wake phrase ─────────────────────────────────────────────────────────────
 // What stands between the chosen mode and a working wake phrase, each with the
 // action that fixes it where the app has one.
@@ -247,7 +284,15 @@ export function wakeNotes(w) {
   const notes = [];
   const on = w.mode && w.mode !== 'off';
   if (on && !w.micGranted) notes.push({ text: 'Microphone permission is needed. Ara asks for it when you choose a mode.' });
-  if (on && !w.modelsReady) notes.push({ text: 'Download the feature models and a phrase model first, under Advanced.' });
+  if (on && !w.modelsReady) {
+    // A model in use with a feature model missing (an upload while offline): the list would contradict the other note.
+    const chosen = Array.isArray(w.models) && w.models.some((m) => m.active);
+    notes.push({
+      text: chosen
+        ? 'The feature models are missing: download them under Advanced.'
+        : 'No phrase model is in use for this endpoint yet: choose one of the list (download it first where needed), or upload your own.',
+    });
+  }
   if (w.mode === 'always') {
     if (!w.notificationsAllowed) {
       notes.push({
@@ -284,10 +329,70 @@ export function usageAccessNote(launcher) {
     };
 }
 
+// The other instances listened for now, which wake (and come to the front)
+// with their own phrase.
+export function alsoListeningLine(w) {
+  const names = (w && Array.isArray(w.alsoListening)) ? w.alsoListening.filter((n) => typeof n === 'string' && n) : [];
+  if (!names.length) return '';
+  const them = names.length === 1 ? 'its' : 'each one’s';
+  return `Also listening in the background for ${names.join(', ')}: ${them} own phrase brings it to the front.`;
+}
+
 export function wakeModelsLine(w) {
   if (!w) return '';
   const yes = (b) => (b ? 'present' : 'missing');
-  return `Melspectrogram: ${yes(w.melspectrogram)} · Embedding: ${yes(w.embedding)} · Phrase: ${yes(w.phrase)}`;
+  return `Feature models: melspectrogram ${yes(w.melspectrogram)} · embedding ${yes(w.embedding)}. They are downloaded with the first phrase model.`;
+}
+
+// One row of the phrase model list: what it is, whether it is the one the
+// endpoint shown uses, and the buttons it offers. The list is the phone's, the
+// same under every endpoint; using a model is the shown endpoint's choice. A
+// model must be downloaded before it can be used; the user's own stay on the
+// list after another is chosen, to go back to. A model that another endpoint
+// uses says so, and is not deleted or removed from here: that endpoint would
+// be left without its phrase (the app refuses it too).
+const SOURCE_TEXT = { builtin: 'openWakeWord', file: 'Your file', url: 'From a URL' };
+
+export function wakeModelRow(m, w) {
+  const busy = !!(w && w.busy);
+  const working = busy && w.busyId === m.id;
+  const parts = [SOURCE_TEXT[m.source] || ''];
+  if (working) parts.push(m.downloaded ? 'working…' : 'downloading…');
+  else if (!m.downloaded) parts.push('not downloaded');
+  const others = Array.isArray(m.usedBy) ? m.usedBy.filter((n) => typeof n === 'string' && n) : [];
+  const actions = [];
+  if (!m.downloaded) {
+    if (m.url) actions.push({ label: 'Download', msg: { type: 'wake.model.download', id: m.id }, primary: true });
+  } else if (m.active) {
+    actions.push({ label: 'Stop using', msg: { type: 'wake.model.none' } });
+  } else {
+    actions.push({ label: 'Use this model', msg: { type: 'wake.model.use', id: m.id }, primary: true });
+  }
+  // A model of other endpoints stays on the phone for them.
+  if (!others.length) {
+    if (m.removable) actions.push({ label: 'Remove', msg: { type: 'wake.model.remove', id: m.id }, danger: true, confirm: true });
+    else if (m.downloaded && !m.active) actions.push({ label: 'Delete download', msg: { type: 'wake.model.remove', id: m.id } });
+  }
+  // Choosing a model is instant; downloads and removals wait for the job under
+  // way. The model that job works on is not chosen meanwhile: it may be going.
+  for (const a of actions) {
+    const choosing = a.msg.type === 'wake.model.use' || a.msg.type === 'wake.model.none';
+    a.disabled = busy && (working || !choosing);
+  }
+  return {
+    name: m.name,
+    detail: parts.filter(Boolean).join(' · '),
+    usedBy: others.length ? `Also used by ${others.join(', ')}` : '',
+    active: !!m.active,
+    actions,
+  };
+}
+
+// The line over the list: which model the endpoint shown listens for.
+export function wakeActiveLine(w) {
+  const models = (w && Array.isArray(w.models)) ? w.models : [];
+  const active = models.find((m) => m.active);
+  return active ? `In use: ${active.name}` : 'No phrase model in use.';
 }
 
 // ── The instance's own section ──────────────────────────────────────────────
