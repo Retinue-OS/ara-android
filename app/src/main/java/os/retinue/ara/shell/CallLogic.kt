@@ -1,5 +1,8 @@
 package os.retinue.ara.shell
 
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointSet
+
 /** What the shell does with a `placeCall` from the page. */
 sealed class CallOutcome {
     /** `ACTION_CALL`: the call starts without a tap. */
@@ -70,6 +73,19 @@ object CallLogic {
     fun isServiceCode(number: String): Boolean = number.any { it == '*' || it == '#' }
 
     /**
+     * Whether direct calls are on for the page that asks. Each endpoint has
+     * its own switch ([Endpoint.directCalls]), so what counts is the one of
+     * the endpoint the page was loaded for ([pageEndpointId]), and only while
+     * the shell still shows that endpoint: one server's switch never answers
+     * for another's page. No endpoint, no page of one loaded, an endpoint
+     * removed or left meanwhile: off, and the dialer opens.
+     */
+    fun directCalls(endpoints: EndpointSet, pageEndpointId: String?): Boolean {
+        val shown = endpoints.current ?: return false
+        return shown.id == pageEndpointId && shown.directCalls
+    }
+
+    /**
      * What a `placeCall` comes to. In this order: no valid number, or no phone
      * to call with, starts nothing; neither does a call outside a spoken
      * conversation ([voiceEngaged]: the page reports one with
@@ -79,8 +95,8 @@ object CallLogic {
      * configured origin.) An emergency number always opens the dialer (Android
      * lets no third-party app call one directly); so does a service code
      * ([isServiceCode]), whatever the setting, and a call with direct calls
-     * switched off ([enabled]) or without the `CALL_PHONE` permission.
-     * Otherwise the call is placed.
+     * switched off for the page's endpoint ([enabled], see [directCalls]) or
+     * without the `CALL_PHONE` permission. Otherwise the call is placed.
      */
     fun decide(
         number: String?,

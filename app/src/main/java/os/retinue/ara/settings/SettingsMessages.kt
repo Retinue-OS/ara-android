@@ -62,7 +62,10 @@ sealed class SettingsAction {
     data class SplitLaunch(val on: Boolean) : SettingsAction()
     data class SplitRecents(val on: Boolean) : SettingsAction()
 
-    /** Calls asked for by voice are placed without a tap (the app asks for the permission when turned on). */
+    /**
+     * The current endpoint's call switch: calls its page asks for by voice are
+     * placed without a tap (the app asks for the permission when turned on).
+     */
     data class DirectCalls(val on: Boolean) : SettingsAction()
 
     /** Ask for Android's permission to place calls again, or show where it is given once Android no longer asks. */

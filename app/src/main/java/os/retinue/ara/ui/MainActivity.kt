@@ -883,9 +883,13 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         viewModel.setWakeMode(mode)
     }
 
-    /** The switch, and Android's permission for it when it goes on (without it calls open the dialer). */
+    /**
+     * The current endpoint's call switch, and Android's permission for it when
+     * it goes on (without it calls open the dialer).
+     */
     private fun setDirectCalls(on: Boolean) {
-        viewModel.setDirectCalls(on)
+        val endpoint = settings.current ?: return
+        viewModel.setDirectCalls(endpoint.id, on)
         if (on && !hasCallPermission()) callPermission.launch(Manifest.permission.CALL_PHONE)
     }
 
@@ -1696,14 +1700,20 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /**
      * The page's `placeCall`: [CallLogic] decides, this starts the call or the
-     * dialer and tells the page what came of it (a `call` event).
+     * dialer and tells the page what came of it (a `call` event). The switch
+     * that counts is the one of the endpoint the page belongs to, as
+     * [ShellPage] holds it for both windows: the settings the page and its
+     * bridge were set up with, not the store's, which may be a step ahead.
+     * The bridge passes on only what that endpoint's origin sends, so once
+     * the shell has moved to another server, the page left behind no longer
+     * gets here.
      */
     private fun placeCall(raw: String) {
         val number = CallLogic.normalize(raw)
         val outcome = CallLogic.decide(
             number = number,
             voiceEngaged = WakeRuntime.voiceActive.value,
-            enabled = settings.directCalls,
+            enabled = CallLogic.directCalls(settings.endpointSet, page.loadedEndpointId),
             permissionGranted = hasCallPermission(),
             isEmergency = number != null && isEmergencyNumber(number),
             hasTelephony = hasTelephony(),

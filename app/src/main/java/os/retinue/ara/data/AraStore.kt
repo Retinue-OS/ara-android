@@ -54,7 +54,6 @@ class AraStore(context: Context) {
             splitLaunch = p[K.splitLaunch] ?: false,
             keepSplitInRecents = p[K.keepSplitInRecents] ?: false,
             deviceWebSettings = DeviceWebSettings.decode(p[K.deviceWebSettings]),
-            directCalls = p[K.directCalls] ?: false,
         )
     }
 
@@ -127,8 +126,6 @@ class AraStore(context: Context) {
     suspend fun setSplitLaunch(on: Boolean) = edit { it[K.splitLaunch] = on }
 
     suspend fun setKeepSplitInRecents(on: Boolean) = edit { it[K.keepSplitInRecents] = on }
-
-    suspend fun setDirectCalls(on: Boolean) = edit { it[K.directCalls] = on }
 
     suspend fun setUpdateCheckedAt(epochMs: Long, build: String) = edit {
         it[K.updateCheckedAt] = epochMs
@@ -224,7 +221,6 @@ class AraStore(context: Context) {
         val updateCheckedBy = stringPreferencesKey("update_checked_by")
         val splitLaunch = booleanPreferencesKey("split_launch")
         val keepSplitInRecents = booleanPreferencesKey("keep_split_in_recents")
-        val directCalls = booleanPreferencesKey("direct_calls")
         val healthInterval = intPreferencesKey("health_interval_minutes")
         val healthAuto = booleanPreferencesKey("health_auto_on_resume")
         val healthLastSyncAt = longPreferencesKey("health_last_sync_at")

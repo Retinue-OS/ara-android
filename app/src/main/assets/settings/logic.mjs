@@ -240,9 +240,11 @@ export function describeHealthSyncEvent(d) {
 }
 
 // ── Phone calls ─────────────────────────────────────────────────────────────
-// What stands between the switch and a call placed without a tap, with the
-// action that fixes it: the app asks again, or opens Android's page for Ara
-// once Android no longer asks.
+// The card is the current endpoint's: `direct` is that endpoint's own switch
+// (not part of an endpoint draft: saving one leaves it alone), the permission
+// is the phone's. What stands between the switch and a call placed without a
+// tap, with the action that fixes it: the app asks again, or opens Android's
+// page for Ara once Android no longer asks.
 export function callNotes(c) {
   if (!c || !c.direct || c.permissionGranted) return [];
   return [{

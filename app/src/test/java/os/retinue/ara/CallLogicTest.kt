@@ -1,9 +1,12 @@
 package os.retinue.ara
 
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.Test
+import os.retinue.ara.data.Endpoint
+import os.retinue.ara.data.EndpointSet
 import os.retinue.ara.shell.CallLogic
 import os.retinue.ara.shell.CallOutcome
 import os.retinue.ara.shell.ShellMessages
@@ -94,6 +97,30 @@ class CallLogicTest {
         // Still only inside a spoken conversation, and an emergency number is named as one.
         assertEquals(CallOutcome.Refused(CallLogic.NOT_IN_VOICE), decide(number = "*123#", voice = false))
         assertEquals(CallOutcome.Dial("112#", CallLogic.EMERGENCY), decide(number = "112#", emergency = true))
+    }
+
+    @Test
+    fun theSwitchIsEachEndpointsOwn() {
+        val home = Endpoint("home", "https://agents.example.com", directCalls = true)
+        val admin = Endpoint("admin", "https://admin.example.com")
+        fun shown(current: String?) = EndpointSet(listOf(home, admin), current)
+        // On for home only: home's page calls at once, admin's page gets the dialer.
+        assertTrue(CallLogic.directCalls(shown("home"), pageEndpointId = "home"))
+        assertFalse(CallLogic.directCalls(shown("admin"), pageEndpointId = "admin"))
+        assertEquals(CallOutcome.Call("+41791234567"), decide(enabled = CallLogic.directCalls(shown("home"), "home")))
+        assertEquals(
+            CallOutcome.Dial("+41791234567", CallLogic.DISABLED),
+            decide(enabled = CallLogic.directCalls(shown("admin"), "admin")),
+        )
+        // The page is not the shown endpoint's (a switch between them under way): off, either way round.
+        assertFalse(CallLogic.directCalls(shown("home"), pageEndpointId = "admin"))
+        assertFalse(CallLogic.directCalls(shown("admin"), pageEndpointId = "home"))
+        // No page loaded yet; no endpoint at all (or the settings not read yet); home removed meanwhile.
+        assertFalse(CallLogic.directCalls(shown("home"), pageEndpointId = null))
+        assertFalse(CallLogic.directCalls(EndpointSet.EMPTY, pageEndpointId = null))
+        assertFalse(CallLogic.directCalls(shown("home").remove("home"), pageEndpointId = "home"))
+        // Switched off again, it is off for home's own page too.
+        assertFalse(CallLogic.directCalls(shown("home").update("home") { it.copy(directCalls = false) }, pageEndpointId = "home"))
     }
 
     @Test

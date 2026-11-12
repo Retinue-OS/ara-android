@@ -6,7 +6,6 @@ import os.retinue.ara.BuildConfig
 import os.retinue.ara.R
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.health.HealthSyncStatus
-import os.retinue.ara.settings.CallsInfo
 import os.retinue.ara.settings.FailureInfo
 import os.retinue.ara.settings.SettingsPageState
 import os.retinue.ara.settings.UpdatesInfo
@@ -64,7 +63,7 @@ internal fun settingsPageState(
     isDefaultHome = isDefaultHome,
     splitLaunch = settings.splitLaunch,
     keepSplitInRecents = settings.keepSplitInRecents,
-    calls = CallsInfo(direct = settings.directCalls, permissionGranted = callsGranted, telephony = telephony),
+    calls = SettingsPageState.callsInfo(settings, permissionGranted = callsGranted, telephony = telephony),
     wake = WakeInfo(
         mode = settings.wakeMode.key,
         threshold = settings.wakeThreshold,

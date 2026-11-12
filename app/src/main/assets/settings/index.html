@@ -8,9 +8,9 @@
   <!-- The Ara app's settings page: one page for everything settable on this
        phone, in three sections. This app (its endpoints, the dashboard's
        per-device preferences it holds for all of them, home screen, split
-       screen, phone calls, wake phrase, launcher bar, updates), this app with
-       the endpoint on screen (health data), and this instance, embedded from the
-       endpoint's own settings-instance.html. Served by the app from its
+       screen, wake phrase, launcher bar, updates), this app with the endpoint
+       on screen (health data, phone calls), and this instance, embedded from
+       the endpoint's own settings-instance.html. Served by the app from its
        assets at a reserved address (os.retinue.ara.settings.AppPage), so it
        opens with or without a server; it talks to the app through
        AraSettingsNative (SettingsBridge). No inline scripts or styles: its
@@ -95,21 +95,6 @@
           <input type="checkbox" role="switch" data-split-recents></label>
         <p class="hint">When the split-screen Ara is not among the recent apps,
           the home screen puts it back there, ready to pair with an app.</p>
-      </section>
-
-      <section class="card">
-        <h3>Phone calls</h3>
-        <p data-calls-unavailable hidden>This device cannot make phone calls.</p>
-        <div data-calls-available>
-          <label class="switch-row"><span>Call directly by voice</span>
-            <input type="checkbox" role="switch" data-calls-direct></label>
-          <p class="hint">A call you ask Ara for in a voice conversation is placed
-            at once, without a tap. Off, the dialer opens with the number.
-            Emergency numbers always open the dialer: Android lets no app call
-            them directly; without your hands, use "Hey Google" or Emergency
-            SOS for those.</p>
-          <div data-calls-notes></div>
-        </div>
       </section>
 
       <section class="card">
@@ -211,6 +196,21 @@
               <input type="number" min="1" max="1440" step="1" inputmode="numeric" data-health-interval>
             </label>
           </div>
+        </div>
+      </section>
+      <section class="card" data-calls hidden>
+        <h3>Phone calls</h3>
+        <p data-calls-unavailable hidden>This device cannot make phone calls.</p>
+        <div data-calls-available>
+          <label class="switch-row"><span>Call directly by voice</span>
+            <input type="checkbox" role="switch" data-calls-direct></label>
+          <p class="hint">A call you ask Ara for in a voice conversation with
+            this endpoint is placed at once, without a tap. Off, the dialer
+            opens with the number. Each endpoint has its own switch.
+            Emergency numbers always open the dialer: Android lets no app call
+            them directly; without your hands, use "Hey Google" or Emergency
+            SOS for those.</p>
+          <div data-calls-notes></div>
         </div>
       </section>
       <section class="card" data-notifications hidden>

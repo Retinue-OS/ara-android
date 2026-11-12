@@ -72,7 +72,8 @@ object ShellPage {
     /**
      * The endpoint the start page was loaded for: two endpoints may share an
      * address (and certificate) and differ in their sign-in, so a switch
-     * between them loads the start page afresh too.
+     * between them loads the start page afresh too. It is the endpoint whose
+     * call switch answers the page's `placeCall` (CallLogic.directCalls).
      */
     var loadedEndpointId: String? = null
 

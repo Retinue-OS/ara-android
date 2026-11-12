@@ -110,7 +110,6 @@ function render() {
   renderDevice();
   renderHome();
   renderSplit();
-  renderCalls();
   renderWake();
   renderLauncher();
   renderUpdates();
@@ -188,14 +187,6 @@ function renderSplit() {
   $('[data-split-recents]').checked = !!s.recents;
 }
 
-function renderCalls() {
-  const c = state.calls || {};
-  $('[data-calls-unavailable]').hidden = !!c.telephony;
-  $('[data-calls-available]').hidden = !c.telephony;
-  $('[data-calls-direct]').checked = !!c.direct;
-  $('[data-calls-notes]').replaceChildren(...L.callNotes(c).map(noteBox));
-}
-
 function renderWake() {
   const w = state.wake || {};
   for (const r of document.querySelectorAll('input[name="wake-mode"]')) r.checked = r.value === w.mode;
@@ -238,7 +229,7 @@ function renderUpdates() {
 
 function renderEndpointSection() {
   const cur = state.current;
-  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-notifications]']) $(sel).hidden = !cur;
+  for (const sel of ['[data-endpoint-group]', '[data-health]', '[data-calls]', '[data-notifications]']) $(sel).hidden = !cur;
   if (!cur) return;
   $('[data-endpoint-name]').textContent = cur.label;
   $('[data-health-name]').textContent = cur.label;
@@ -252,6 +243,12 @@ function renderEndpointSection() {
   $('[data-health-line]').textContent = ev || L.describeHealthSync(st);
   $('[data-health-auto]').checked = !!st.auto_on_resume;
   setValue($('[data-health-interval]'), String(st.min_interval_minutes || 5));
+  // The switch is the current endpoint's own; the permission and telephony are the phone's.
+  const c = state.calls || {};
+  $('[data-calls-unavailable]').hidden = !!c.telephony;
+  $('[data-calls-available]').hidden = !c.telephony;
+  $('[data-calls-direct]').checked = !!c.direct;
+  $('[data-calls-notes]').replaceChildren(...L.callNotes(c).map(noteBox));
 }
 
 // The instance's own section: its settings-instance.html in a frame, shown once
@@ -522,7 +519,6 @@ $('[data-shelf-size]').addEventListener('change', (e) => {
 $('[data-home-request]').addEventListener('click', () => send({ type: 'home.request' }));
 $('[data-split-launch]').addEventListener('change', (e) => send({ type: 'split.launch', on: e.target.checked }));
 $('[data-split-recents]').addEventListener('change', (e) => send({ type: 'split.recents', on: e.target.checked }));
-$('[data-calls-direct]').addEventListener('change', (e) => send({ type: 'calls.direct', on: e.target.checked }));
 
 for (const r of document.querySelectorAll('input[name="wake-mode"]')) {
   r.addEventListener('change', () => { if (r.checked) send({ type: 'wake.mode', mode: r.value }); });
@@ -577,6 +573,8 @@ function onHealthEvent(d) {
   }
   $('[data-health-line]').textContent = text;
 }
+
+$('[data-calls-direct]').addEventListener('change', (e) => send({ type: 'calls.direct', on: e.target.checked }));
 
 // ── Start ────────────────────────────────────────────────────────────────────
 

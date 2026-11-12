@@ -36,11 +36,6 @@ data class ShellSettings(
      * hand the app its own older values instead.
      */
     val deviceWebSettings: Map<String, String> = emptyMap(),
-    /**
-     * A call the page asks for in a spoken conversation (`RetinueShell.placeCall`)
-     * is placed at once, without a tap. Off: the dialer opens with the number.
-     */
-    val directCalls: Boolean = false,
 ) {
     val endpointSet: EndpointSet get() = EndpointSet(endpoints, currentEndpointId)
 

@@ -45,9 +45,13 @@ data class CurrentEndpoint(
 /** Why the dashboard did not load, for the banner at the top. */
 data class FailureInfo(val reason: String, val url: String?, val consoleErrors: List<String>)
 
-/** Direct calls by voice (`RetinueShell.placeCall`, see shell/CallLogic). */
+/**
+ * Direct calls by voice (`RetinueShell.placeCall`, see shell/CallLogic): the
+ * current endpoint's switch, and what the phone allows whichever endpoint
+ * is shown.
+ */
 data class CallsInfo(
-    /** The switch: a call asked for in a voice conversation is placed without a tap. */
+    /** The current endpoint's switch: a call its page asks for in a voice conversation is placed without a tap. */
     val direct: Boolean,
     /** Android lets Ara place calls (`CALL_PHONE`); without it calls open the dialer. */
     val permissionGranted: Boolean,
@@ -105,6 +109,7 @@ data class SettingsPageState(
     val isDefaultHome: Boolean,
     val splitLaunch: Boolean,
     val keepSplitInRecents: Boolean,
+    /** Direct calls for the current endpoint ([callsInfo]). */
     val calls: CallsInfo,
     val wake: WakeInfo,
     val updates: UpdatesInfo,
@@ -261,5 +266,15 @@ data class SettingsPageState(
          */
         fun frameKey(e: Endpoint): String =
             listOf(e.id, e.base, e.certificateAlias, e.username, e.secret).hashCode().toUInt().toString(16)
+
+        /**
+         * The phone calls card: the switch of the endpoint shown, its own and
+         * no other's (off with none set up), beside what holds for the phone.
+         */
+        fun callsInfo(settings: ShellSettings, permissionGranted: Boolean, telephony: Boolean) = CallsInfo(
+            direct = settings.current?.directCalls == true,
+            permissionGranted = permissionGranted,
+            telephony = telephony,
+        )
     }
 }

@@ -130,7 +130,9 @@ ok('health lines mirror the dashboard', () => {
   assert.equal(L.describeHealthSyncEvent({ state: 'other' }), '');
 });
 
-ok('direct calls say when Android has not allowed them', () => {
+ok('direct calls say when Android has not allowed them, for the endpoint shown', () => {
+  // `direct` is the current endpoint's own switch (SettingsPageState.callsInfo). Off for it,
+  // the missing permission stands in nobody's way, whatever another endpoint has switched on.
   for (const quiet of [undefined, null, {}, { direct: false, permissionGranted: false }, { direct: true, permissionGranted: true }]) {
     assert.deepEqual(L.callNotes(quiet), []);
   }
@@ -138,6 +140,20 @@ ok('direct calls say when Android has not allowed them', () => {
   assert.equal(notes.length, 1);
   assert.match(notes[0].text, /calls open the dialer/);
   assert.equal(notes[0].action, 'calls.permission');
+});
+
+ok("the call switch is its card's: an endpoint's draft neither carries nor changes it", () => {
+  // The list's rows have no call switch; one that slipped into a row would still not reach
+  // the editor, so a save sends none and the app keeps the endpoint's own (EndpointDraft.toEndpoint).
+  const row = { ...home, directCalls: true };
+  const d = L.draftOf(row);
+  assert.equal('directCalls' in d, false);
+  assert.equal('directCalls' in L.newDraft('n'), false);
+  d.healthUpload = false;
+  assert.deepEqual(L.onClose(d), { action: 'save' });
+  assert.deepEqual(Object.keys(L.draftMessage(d)).sort(), [
+    'baseUrl', 'certificateAlias', 'forgetPassword', 'healthUpload', 'id', 'isNew', 'password', 'username',
+  ]);
 });
 
 ok('the wake notes follow the mode, with the action that fixes each', () => {

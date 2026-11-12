@@ -72,7 +72,8 @@ load. It has three parts, from the phone outwards:
    endpoints themselves, voice timing and the shelf, home screen, split screen,
    the wake phrase, the launcher bar and updates.
 2. **This app with *endpoint*** — what this phone does with the endpoint shown
-   now: its health data (and, once the app receives them, its notifications).
+   now: its health data, and whether a call asked for by voice there is placed
+   directly (and, once the app receives them, its notifications).
 3. **This instance** — the endpoint's own settings (its name and colour, agent
    models, the system pages), embedded from the server's
    `/settings-instance.html`, which the server lets only itself and this page
@@ -93,6 +94,7 @@ On first start there is no endpoint yet, so the page opens at a new one.
 | **Launcher bar** | Opens the bar's editor, native as the bar is: add links, web-app pages and folders, reorder, edit, remove, reset to defaults. The card also offers usage access for the tray's order (see [The tray](#the-tray)). |
 | **Updates** | Install updates automatically (off by default) and the channel: nightly builds, or releases (none yet; see [Updates](#updates)). |
 | **Health data** (with the endpoint) | Whether Health Connect data goes to the endpoint shown (off for a new endpoint) and, while it does, the last update, *Update health data now*, updating when Ara comes to the front, and how often (see [Health Connect sync](#health-connect-sync)). |
+| **Phone calls** (with the endpoint) | **Call directly by voice**: whether a call you ask for in a voice conversation with the endpoint shown is placed without a tap, instead of opening the dialer. Each endpoint has its own switch, off for a new endpoint (see [Phone calls](#phone-calls)). |
 
 Nothing environment-specific is baked into the APK. The one base URL and
 certificate alias of earlier builds become the first endpoint on update, with
@@ -235,8 +237,8 @@ order:
    `*` or `#`, such as `*21*…#` (forward every call) or a USSD request like
    `*123#`. Placed directly the phone would carry them out unseen; in the
    dialer the user sees the code and starts it.
-5. Settings → Phone calls → **Call directly by voice** (off by default, one
-   switch for every endpoint) off: the dialer opens with the number
+5. **Call directly by voice** off for the endpoint whose page asks (each
+   endpoint has its own switch, see below): the dialer opens with the number
    (`disabled`). On without Android's `CALL_PHONE` permission, which turning
    it on asks for: the dialer (`no-permission`); the settings say so and
    offer to ask again, or open Android's page for Ara once it no longer asks.
@@ -244,6 +246,23 @@ order:
    (`TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE`) — the user asked by
    voice and may not be holding the phone. An intent that fails to start is
    reported as refused, `failed`.
+
+**The switch is each endpoint's own.** *Call directly by voice* is on the
+settings page under **This app with *endpoint*** → *Phone calls*, for the
+endpoint shown, and is stored with it (`Endpoint.directCalls`): off for a new
+endpoint, gone with the endpoint, and left as it is when the endpoint is
+edited (the editor has no such switch; like the certificate and the password,
+it stays the endpoint's at a new address too). On for one server, it gives
+the others nothing: the bridge takes messages from the current endpoint's
+origin only, and the shell answers with the switch of the endpoint the page
+was loaded for, as long as that is still the endpoint shown
+(`CallLogic.directCalls`). With no endpoint, no page of one loaded, or one
+removed or left meanwhile, it counts as off. Two endpoints at the same origin
+are one server to the bridge: a page there is answered with the switch of
+whichever of them is shown. Only the app's own settings page sets the switch,
+so no dashboard page can give itself the right. Android's `CALL_PHONE`
+permission, and whether the phone can make calls at all, are the phone's: the
+same for every endpoint.
 
 The web app gives the user 5 s before it sends `placeCall`, with the mic open:
 speech cancels the call (unless Ara marked a second attempt `no-voice-cancel`,
@@ -275,7 +294,7 @@ nothing. The page sends `hello` once loaded and one message per action
 `state` whenever anything in it changes (`settings/SettingsState.kt`), plus
 the answers to an endpoint save, to the certificate chooser and to a
 certificate import, and health sync events. Unlike a dashboard page, it may change the endpoints, their
-certificates and passwords and the health switch; the app still checks every
+certificates and passwords, the health switch and the call switch; the app still checks every
 endpoint it saves, and what is stored already (a password) never goes to the
 page. Its Content-Security-Policy (`settings/AppPage.kt`) allows its own files,
 a frame of the current endpoint's origin (the page loads afresh when that
@@ -688,9 +707,9 @@ never asked for.
 The shell keeps a list of Retinue servers (`data/Endpoint.kt`, stored as JSON in
 the preferences) and shows one, the **current** endpoint; everything that is
 "the configured origin" above — the bridge, the microphone, the certificate,
-the password, the letterbox — is the current endpoint's. Switching (*Use* on
-the settings page, a link for another endpoint, or
-`RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
+the password, the letterbox, the switch for direct calls — is the current
+endpoint's. Switching (*Use* on the settings page, a link for another endpoint,
+or `RetinueShell.selectEndpoint(id)`) reinstalls the bridge for the new origin
 and loads its start page; the settings page stays open and shows the new
 endpoint's parts. Health Connect sync follows the current endpoint
 only: a sync still running for the old one stops, and its round, if any,
