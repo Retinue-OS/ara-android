@@ -84,12 +84,12 @@ class KeyboardLogicTest {
     }
 
     @Test
-    fun aSecretDialogAskedForCountsAsOpenForAWhile() {
-        assertFalse(KeyboardLogic.secretDialogOpening(askedAt = 0, now = 10))
-        assertTrue(KeyboardLogic.secretDialogOpening(askedAt = 1000, now = 1000))
-        assertTrue(KeyboardLogic.secretDialogOpening(askedAt = 1000, now = 1000 + KeyboardLogic.SECRET_OPENING_MS - 1))
+    fun aWindowAskedForCountsAsOpenForAWhile() {
+        assertFalse(KeyboardLogic.windowOpening(askedAt = 0, now = 10))
+        assertTrue(KeyboardLogic.windowOpening(askedAt = 1000, now = 1000))
+        assertTrue(KeyboardLogic.windowOpening(askedAt = 1000, now = 1000 + KeyboardLogic.WINDOW_OPENING_MS - 1))
         // One that never came up does not shut the page out for good.
-        assertFalse(KeyboardLogic.secretDialogOpening(askedAt = 1000, now = 1000 + KeyboardLogic.SECRET_OPENING_MS))
+        assertFalse(KeyboardLogic.windowOpening(askedAt = 1000, now = 1000 + KeyboardLogic.WINDOW_OPENING_MS))
     }
 
     @Test

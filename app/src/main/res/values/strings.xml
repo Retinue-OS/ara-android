@@ -243,6 +243,15 @@
     <string name="keyboard_status_held">Disconnected. Ara connects to no device until you tap Connect.</string>
     <string name="keyboard_stop">Stop typing</string>
     <string name="keyboard_live_reset">Live typing stopped (no device, or you stopped it). The field was cleared; what reached the device stays there.</string>
+    <string name="keyboard_confirm_for">Before the dashboard types on %1$s</string>
+    <string name="keyboard_confirm_always">Ask every time</string>
+    <string name="keyboard_confirm_one_line">One-line text by itself</string>
+    <string name="keyboard_confirm_never">Never ask</string>
+    <string name="keyboard_confirm_hint">One-line text by itself: plain text on one line, without Enter, is typed at once (so typing by voice stays hands-free); Enter, a line break, a tab, blanks at either end and every key are asked about on the phone first.</string>
+    <string name="keyboard_confirm_never_title">Never ask before typing on %1$s?</string>
+    <string name="keyboard_confirm_never_text">The dashboard could then press Enter, keys and anything else there without you seeing it first, and so could a script that got into the page.</string>
+    <string name="keyboard_confirm_never_yes">Never ask</string>
+    <string name="keyboard_confirm_never_no">Keep asking</string>
     <string name="key_enter">Enter</string>
     <string name="key_tab">Tab</string>
     <string name="key_backspace">⌫</string>

@@ -23,6 +23,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import java.nio.CharBuffer
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -126,40 +127,36 @@ object KeyboardRuntime {
     @Volatile
     private var secretTyping = false
 
-    /** Closes the open secret dialog, while there is one (SecretTypeActivity). */
-    @Volatile
-    private var secretDialogCloser: (() -> Unit)? = null
-
-    /** When a secret dialog was asked for and is not up yet (elapsedRealtime), or 0. */
-    @Volatile
-    private var secretDialogAskedAt = 0L
-
     /**
-     * A secret dialog is open — or asked for and about to be: one at a time,
-     * and the page types nothing meanwhile.
+     * The one window of the keyboard's own — the confirmation or the
+     * password dialog — open or on its way: the page types nothing
+     * meanwhile, and a request is `busy`. Main thread, as everything the
+     * page's requests touch here.
      */
-    val secretDialogOpen: Boolean
-        get() = secretDialogCloser != null ||
-            KeyboardLogic.secretDialogOpening(secretDialogAskedAt, SystemClock.elapsedRealtime())
+    private val windows = KeyboardWindows { SystemClock.elapsedRealtime() }
 
-    /**
-     * The dialog is being started: it counts as open from now, not only once
-     * its activity is up — or a second request, or a text, sent in the same
-     * moment would still get through.
-     */
-    fun secretDialogAsked() {
-        secretDialogAskedAt = SystemClock.elapsedRealtime()
-    }
+    /** Confirmations not approved in a row, and the pause they bring. */
+    private val streak = ConfirmStreak { SystemClock.elapsedRealtime() }
 
-    /** SecretTypeActivity registers itself while it is open ([closer] cancels it). */
-    fun secretDialogOpened(closer: () -> Unit) {
-        secretDialogAskedAt = 0L
-        secretDialogCloser = closer
-    }
+    /** Characters typed for a page without a confirmation, per device, since the last approval. */
+    private val unconfirmed = UnconfirmedCounts()
 
-    fun secretDialogClosed(closer: () -> Unit) {
-        if (secretDialogCloser === closer) secretDialogCloser = null
-    }
+    /** The strip's Stop was pressed: the next page request asks first, whatever the device's mode. */
+    private var stopPending = false
+
+    /** The request waiting for the user's approval, while there is one. */
+    private var pending: PendingConfirmation? = null
+
+    /** The window that registered ([windowOpened]) is the pending confirmation's. */
+    private var pendingShown = false
+
+    /** ConfirmTypeActivity and SecretTypeActivity register while open ([closer] cancels it). */
+    fun windowOpened(closer: () -> Unit) = windows.opened(closer)
+
+    fun windowClosed(closer: () -> Unit) = windows.closed(closer)
+
+    /** The window reserved for a request could not be started: free it again. */
+    fun windowFailed() = windows.abandon()
 
     private val _status = MutableStateFlow(KeyboardStatus())
     val status: StateFlow<KeyboardStatus> = _status.asStateFlow()
@@ -170,6 +167,17 @@ object KeyboardRuntime {
      */
     private val _liveResets = MutableStateFlow(0)
     val liveResets: StateFlow<Int> = _liveResets.asStateFlow()
+
+    /**
+     * A page typing on a device, for the strip over the dashboard
+     * (MainActivity): which device, whether it is typing now, and when the
+     * last key the page caused went out — a single key is over in 24 ms and
+     * must still show. Null until a page first types.
+     */
+    data class PageTyping(val device: String, val typing: Boolean, val at: Long)
+
+    private val _pageTyping = MutableStateFlow<PageTyping?>(null)
+    val pageTyping: StateFlow<PageTyping?> = _pageTyping.asStateFlow()
 
     /** The page showing (see ShellPage); events with nobody to take them are dropped. */
     @Volatile
@@ -246,6 +254,7 @@ object KeyboardRuntime {
 
     private fun stop() {
         cancelTyping()
+        unconfirmed.clear()
         hid?.let { h ->
             try {
                 connected?.let { h.disconnect(it) }
@@ -333,6 +342,7 @@ object KeyboardRuntime {
             if (!registered && connected != null) {
                 // No keyboard, no connection — whether or not the stack still
                 // says so: a device left standing would keep reconnect() off.
+                connected?.let { unconfirmed.reset(it.address) }
                 connected = null
                 leds = 0
                 abortTyping()
@@ -370,6 +380,8 @@ object KeyboardRuntime {
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    // A disconnect ends what the page typed there unasked: the count starts over.
+                    unconfirmed.reset(device.address)
                     if (connected?.address == device.address) {
                         connected = null
                         leds = 0
@@ -491,6 +503,12 @@ object KeyboardRuntime {
         emit(KeyboardEvent.status)
     }
 
+    /** What the phone asks before a page types on [address] (the keyboard screen). */
+    fun setConfirmMode(address: String, mode: ConfirmMode) {
+        prefs.setConfirmMode(address, mode)
+        publish()
+    }
+
     private fun bonded(): List<BluetoothDevice> = try {
         if (permitted()) adapter?.bondedDevices?.toList().orEmpty() else emptyList()
     } catch (e: SecurityException) {
@@ -507,6 +525,7 @@ object KeyboardRuntime {
                     if (s == BluetoothAdapter.STATE_ON && prefs.enabled) start()
                     if (s == BluetoothAdapter.STATE_OFF) {
                         abortTyping()
+                        unconfirmed.clear()
                         dropProxy()
                         registered = false
                         connected = null
@@ -556,24 +575,145 @@ object KeyboardRuntime {
         receiverRegistered = true
     }
 
+    // ── A page's requests ───────────────────────────────────────────────────
+
+    /**
+     * Every keyboard request of a page comes here, and only here
+     * (MainActivity gathers [facts]): [KeyboardLogic.decide] says what
+     * becomes of it, and this carries it out — types at once, reserves the
+     * window for a confirmation or the password dialog, or answers why not.
+     * What the window showing the page still has to do (start an activity)
+     * is the [PageOutcome]. Main thread.
+     */
+    fun fromPage(request: PageRequest, facts: PageFacts): PageOutcome {
+        val status = _status.value
+        val decision = KeyboardLogic.decide(
+            request = request,
+            serverAllows = facts.serverAllows,
+            status = status,
+            inFront = facts.inFront,
+            windowOpen = windows.open,
+            mode = status.confirmMode,
+            stopPending = stopPending,
+            confirmPaused = streak.paused,
+        )
+        return when (decision) {
+            is PageDecision.Refuse -> {
+                emit(KeyboardEvent.error(request.id, decision.error))
+                PageOutcome.Done
+            }
+            PageDecision.Cancel -> {
+                cancelFromPage()
+                PageOutcome.Done
+            }
+            PageDecision.OpenScreen -> PageOutcome.OpenScreen
+            PageDecision.TypeNow -> {
+                typeForPage(request, expectedHost = null)
+                PageOutcome.Done
+            }
+            PageDecision.OpenSecret -> {
+                windows.ask()
+                // The dialog asks: that is the one question a Stop called for.
+                stopPending = false
+                PageOutcome.OpenSecret(status.host?.address, facts.serverHost, unconfirmed.of(status.host?.address))
+            }
+            PageDecision.Confirm -> confirm(request, status, facts)
+        }
+    }
+
+    /** Hold [request] for the user's approval; the window is reserved now, and answers once whatever happens. */
+    private fun confirm(request: PageRequest, status: KeyboardStatus, facts: PageFacts): PageOutcome {
+        val host = status.host ?: return PageOutcome.Done.also { emit(KeyboardEvent.error(request.id, KeyboardError.NotConnected)) }
+        windows.ask()
+        stopPending = false
+        val token = UUID.randomUUID().toString()
+        pending = PendingConfirmation(
+            token = token,
+            request = request,
+            hostAddress = host.address,
+            hostName = KeyboardLogic.cleanLabel(host.name),
+            serverHost = facts.serverHost,
+            unconfirmed = unconfirmed.of(host.address),
+        )
+        pendingShown = false
+        // Its window never came up, or never ended: the page still hears an end.
+        main.postDelayed({ if (pending?.token == token && !pendingShown) settle(token, approved = false) }, KeyboardLogic.WINDOW_OPENING_MS)
+        main.postDelayed({ settle(token, approved = false) }, KeyboardLogic.confirmTimeoutMs(request) + CONFIRM_GRACE_MS)
+        return PageOutcome.Confirm(token)
+    }
+
+    /** The confirmation [token] while it waits for an answer; null once answered (or after a restart). */
+    fun confirmation(token: String?): PendingConfirmation? = pending?.takeIf { it.token == token }
+
+    /** ConfirmTypeActivity is up for [token] ([closer] closes it, as Don't type would). */
+    fun confirmationShown(token: String, closer: () -> Unit): Boolean {
+        if (confirmation(token) == null) return false
+        pendingShown = true
+        windows.opened(closer)
+        return true
+    }
+
+    /** The user approved [token]: exactly that request, once, and only into the device it named. */
+    fun confirmApproved(token: String) = settle(token, approved = true)
+
+    /** Declined, left, timed out or closed: the page hears `cancelled`. Nothing is typed. */
+    fun confirmDeclined(token: String) = settle(token, approved = false)
+
+    private fun settle(token: String, approved: Boolean) {
+        val p = confirmation(token) ?: return
+        pending = null
+        if (!pendingShown) windows.abandon()
+        if (approved) {
+            streak.approved()
+            unconfirmed.reset(p.hostAddress)
+            typeForPage(p.request, expectedHost = p.hostAddress)
+        } else {
+            streak.notApproved()
+            emit(KeyboardEvent.error(p.request.id, KeyboardError.Cancelled))
+        }
+    }
+
+    /** The strip's Stop: what is being typed stops, and the next request of the page asks first. */
+    fun stopFromStrip() {
+        stopPending = true
+        cancelTyping()
+    }
+
     // ── Typing ──────────────────────────────────────────────────────────────
 
-    /** Type [text] into the connected device; the outcome comes as a `keyboard` event with [id]. */
-    fun type(text: String, enter: Boolean, id: String?) {
-        scope.launch {
-            val error = typeNow(text, enter)
-            emit(if (error == null) KeyboardEvent.typed(id, KeyboardLogic.charCount(text)) else KeyboardEvent.error(id, error))
+    /**
+     * Type a page's text or key into the connected device; the outcome comes
+     * as a `keyboard` event with its id. Approved ([expectedHost], the device
+     * the confirmation named): only into that device. Otherwise unasked, and
+     * counted for the next confirmation ([UnconfirmedCounts]).
+     */
+    private fun typeForPage(request: PageRequest, expectedHost: String?) {
+        val unasked = if (expectedHost == null) KeyboardLogic.unconfirmedChars(request) else 0
+        when (request) {
+            is PageRequest.Type -> scope.launch {
+                val error = typeNow(request.text, request.enter, expectedHost, unasked)
+                emit(
+                    if (error == null) KeyboardEvent.typed(request.id, KeyboardLogic.charCount(request.text))
+                    else KeyboardEvent.error(request.id, error),
+                )
+            }
+            is PageRequest.Key -> {
+                val code = HidKeys.NAMED[request.name] ?: return
+                scope.launch {
+                    val error = if (expectedHost != null && connected?.address != expectedHost) KeyboardError.NotConnected
+                    else send(listOf(Stroke(HidKeys.MOD_NONE, code)), 0, PageSend(unasked))
+                    emit(if (error == null) KeyboardEvent.typed(request.id, 1) else KeyboardEvent.error(request.id, error))
+                }
+            }
+            else -> Unit
         }
     }
 
-    /** Press one named key (HidKeys.NAMED); the outcome comes as a `keyboard` event with [id]. */
-    fun key(name: String, id: String? = null) {
-        val code = HidKeys.NAMED[name] ?: return
-        scope.launch {
-            val error = send(listOf(Stroke(HidKeys.MOD_NONE, code)), 0)
-            emit(if (error == null) KeyboardEvent.typed(id, 1) else KeyboardEvent.error(id, error))
-        }
-    }
+    /** Sent for a page: shown on the strip; [unasked] characters go to the device's count once handed over. */
+    private class PageSend(val unasked: Int)
+
+    /** How much longer than its own window's timeout the runtime waits before it answers a confirmation itself. */
+    private const val CONFIRM_GRACE_MS = 2000L
 
     /**
      * The phone's own Stop (the keyboard screen): whatever is being typed —
@@ -589,7 +729,8 @@ object KeyboardRuntime {
      * leave part of the password on the device.
      */
     fun cancelFromPage() {
-        secretDialogCloser?.invoke()
+        windows.close()
+        pending?.let { settle(it.token, approved = false) }
         if (!secretTyping) requestCancel(byUser = true)
     }
 
@@ -616,6 +757,8 @@ object KeyboardRuntime {
      * user sees on the phone why it failed.
      */
     fun typeSecret(secret: CharArray, enter: Boolean, id: String?, expectedHost: String?) {
+        // Typed with the user's own say: what the page typed there unasked is behind them.
+        expectedHost?.let(unconfirmed::reset)
         scope.launch {
             val error = try {
                 typeSecretNow(secret, enter, expectedHost)
@@ -649,7 +792,7 @@ object KeyboardRuntime {
             }
             if (enter) strokes += Stroke(HidKeys.MOD_NONE, HidKeys.KEY_ENTER)
             return try {
-                transmit(strokes)
+                transmit(strokes, PageSend(0))
             } finally {
                 strokes.clear()
             }
@@ -712,23 +855,24 @@ object KeyboardRuntime {
         }
     }
 
-    private suspend fun typeNow(text: CharSequence, enter: Boolean): KeyboardError? {
+    private suspend fun typeNow(text: CharSequence, enter: Boolean, expectedHost: String?, unasked: Int): KeyboardError? {
         KeyboardLogic.precheck(_status.value, text.length)?.let { return it }
+        if (expectedHost != null && connected?.address != expectedHost) return KeyboardError.NotConnected
         val layout = KeyLayouts.byId(_status.value.layout) ?: return KeyboardError.Failed
         val strokes = when (val mapped = KeyLayouts.map(text, layout)) {
             is Mapped.Unsupported -> return KeyboardError.UnsupportedChar
             is Mapped.Ok -> mapped.strokes
         }
         val all = if (enter) strokes + Stroke(HidKeys.MOD_NONE, HidKeys.KEY_ENTER) else strokes
-        return send(all, text.length)
+        return send(all, text.length, PageSend(unasked))
     }
 
     /** Send [strokes] with the typing lock held; refuses at once when typing is going on. */
-    private suspend fun send(strokes: List<Stroke>, length: Int): KeyboardError? {
+    private suspend fun send(strokes: List<Stroke>, length: Int, page: PageSend?): KeyboardError? {
         KeyboardLogic.precheck(_status.value, length)?.let { return it }
         if (!typing.tryLock()) return KeyboardError.Busy
         try {
-            return transmit(strokes)
+            return transmit(strokes, page)
         } finally {
             typing.unlock()
         }
@@ -737,17 +881,25 @@ object KeyboardRuntime {
     /**
      * Send [strokes] to the connected device; the caller holds [typing]. The
      * phone is kept awake meanwhile: a press whose release came only after
-     * the phone slept would repeat on the other device.
+     * the phone slept would repeat on the other device. For a [page], the
+     * strip shows it, and its unasked characters are counted as handed over
+     * (a text stopped halfway counts whole).
      */
-    private suspend fun transmit(strokes: List<Stroke>): KeyboardError? {
+    private suspend fun transmit(strokes: List<Stroke>, page: PageSend? = null): KeyboardError? {
         cancelRequested = false
         cancelByUser = false
         val lock = typingWakeLock()
+        var shown: PageTyping? = null
         try {
             lock?.acquire(WAKE_LOCK_MAX_MS)
             setBusy(true)
             val h = hid ?: return KeyboardError.NotConnected
             val device = connected ?: return KeyboardError.NotConnected
+            if (page != null) {
+                unconfirmed.add(device.address, page.unasked)
+                shown = PageTyping(KeyboardLogic.cleanLabel(name(device)) ?: device.address, typing = true, at = SystemClock.elapsedRealtime())
+                _pageTyping.value = shown
+            }
             val capsOn = HidKeys.capsLockOn(leds)
             val all = HidKeys.aroundCapsLock(strokes, capsOn)
             val report: (ByteArray) -> Boolean = { r ->
@@ -773,6 +925,7 @@ object KeyboardRuntime {
             }
         } finally {
             setBusy(false)
+            shown?.let { _pageTyping.value = it.copy(typing = false, at = SystemClock.elapsedRealtime()) }
             if (lock?.isHeld == true) lock.release()
         }
     }
@@ -817,6 +970,7 @@ object KeyboardRuntime {
             bluetoothOn = a?.isEnabled == true,
             refused = refused,
             held = prefs.holdConnections,
+            confirmMode = prefs.confirmModeFor(host?.address),
         )
     }
 

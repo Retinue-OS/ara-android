@@ -75,7 +75,7 @@ class SecretTypeActivity : Activity() {
         val hostName = KeyboardRuntime.status.value.host?.takeIf { it.address == host }?.name
             ?.let(KeyboardLogic::cleanLabel)
             ?: getString(R.string.keyboard_secret_unknown_host)
-        KeyboardRuntime.secretDialogOpened(closer)
+        KeyboardRuntime.windowOpened(closer)
         // Nobody answers: it closes itself, so the page hears an end.
         timer.postDelayed({ cancelAndFinish() }, TIMEOUT_MS)
         val label = KeyboardLogic.cleanLabel(intent.getStringExtra(EXTRA_LABEL))
@@ -165,7 +165,7 @@ class SecretTypeActivity : Activity() {
         // Covered alone it stays: a password manager's unlock screen returns to it.
         if (!settled && !isChangingConfigurations) cancelAndFinish()
         timer.removeCallbacksAndMessages(null)
-        KeyboardRuntime.secretDialogClosed(closer)
+        KeyboardRuntime.windowClosed(closer)
         field?.text?.clear()
         dialog?.dismiss()
         dialog = null

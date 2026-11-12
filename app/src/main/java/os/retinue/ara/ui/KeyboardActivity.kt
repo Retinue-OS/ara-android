@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,7 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import os.retinue.ara.R
+import os.retinue.ara.keyboard.ConfirmMode
 import os.retinue.ara.keyboard.KeyLayouts
 import os.retinue.ara.keyboard.KeyboardLogic
 import os.retinue.ara.keyboard.KeyboardRuntime
@@ -51,8 +53,9 @@ import os.retinue.ara.keyboard.KeyboardStatus
 /**
  * The keyboard screen (`RetinueShell.keyboardOpen()`, the settings card's
  * "Open keyboard", the keyboard notification): switch the keyboard on, pair
- * and connect a device, pick its layout, and type live — every change in the
- * field goes to the device at once, as key presses.
+ * and connect a device, pick its layout and what the phone asks before the
+ * dashboard types there, and type live — every change in the field goes to
+ * the device at once, as key presses (the user's own typing: never asked about).
  */
 class KeyboardActivity : ComponentActivity() {
 
@@ -151,6 +154,7 @@ class KeyboardActivity : ComponentActivity() {
                             )
                         }
                     }
+                    ConfirmModeChoice(host.address, host.name, status.confirmMode)
                 }
 
                 if (status.busy) {
@@ -173,6 +177,50 @@ class KeyboardActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * What the phone asks before the dashboard types on this device. "Never
+     * ask" is asked about once more here: a page can open this screen, and a
+     * tap aimed at it must not end up there.
+     */
+    @OptIn(ExperimentalLayoutApi::class)
+    @Composable
+    private fun ConfirmModeChoice(address: String, name: String, mode: ConfirmMode) {
+        var askNever by remember { mutableStateOf(false) }
+        Text(stringResource(R.string.keyboard_confirm_for, name), style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                ConfirmMode.Always to R.string.keyboard_confirm_always,
+                ConfirmMode.OneLine to R.string.keyboard_confirm_one_line,
+                ConfirmMode.Never to R.string.keyboard_confirm_never,
+            ).forEach { (m, label) ->
+                FilterChip(
+                    selected = mode == m,
+                    onClick = {
+                        if (m == ConfirmMode.Never && mode != m) askNever = true else KeyboardRuntime.setConfirmMode(address, m)
+                    },
+                    label = { Text(stringResource(label)) },
+                )
+            }
+        }
+        Text(stringResource(R.string.keyboard_confirm_hint), style = MaterialTheme.typography.bodySmall)
+        if (askNever) {
+            AlertDialog(
+                onDismissRequest = { askNever = false },
+                title = { Text(stringResource(R.string.keyboard_confirm_never_title, name)) },
+                text = { Text(stringResource(R.string.keyboard_confirm_never_text)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        askNever = false
+                        KeyboardRuntime.setConfirmMode(address, ConfirmMode.Never)
+                    }) { Text(stringResource(R.string.keyboard_confirm_never_yes)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { askNever = false }) { Text(stringResource(R.string.keyboard_confirm_never_no)) }
+                },
+            )
         }
     }
 

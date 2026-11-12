@@ -38,6 +38,8 @@ data class KeyboardStatus(
     val refused: Boolean = false,
     /** The user disconnected: Ara connects to no device until they connect one again. */
     val held: Boolean = false,
+    /** What the phone asks before a page types on [host] (KeyboardPrefs); never the page's business. */
+    val confirmMode: ConfirmMode = ConfirmMode.DEFAULT,
 ) {
     /**
      * The page's JSON (the contract: available, enabled, connected, host,
@@ -182,21 +184,134 @@ object KeyboardLogic {
         return buckets * bucketMs - elapsedMs
     }
 
-    /** How long a secret dialog asked for counts as open before its activity is up. */
-    const val SECRET_OPENING_MS = 5000L
+    /** How long a window of the keyboard's own (confirmation, password dialog) asked for counts as open before its activity is up. */
+    const val WINDOW_OPENING_MS = 5000L
 
     /**
-     * Whether a secret dialog asked for at [askedAt] (0: none) is still on
-     * its way at [now] — bounded, so a dialog that never came up does not
-     * shut the page out for good.
+     * Whether a window asked for at [askedAt] (0: none) is still on its way
+     * at [now] — bounded, so a window that never came up does not shut the
+     * page out for good ([KeyboardWindows]).
      */
-    fun secretDialogOpening(askedAt: Long, now: Long): Boolean =
-        askedAt != 0L && now - askedAt < SECRET_OPENING_MS
+    fun windowOpening(askedAt: Long, now: Long): Boolean =
+        askedAt != 0L && now - askedAt < WINDOW_OPENING_MS
 
     /** What the page hears of a secret that failed: never why it lies in the secret itself. */
     fun secretErrorForPage(error: KeyboardError): KeyboardError = when (error) {
         KeyboardError.UnsupportedChar, KeyboardError.TooLong -> KeyboardError.Failed
         else -> error
+    }
+
+    // ── What a page may type by itself ─────────────────────────────────────
+
+    /**
+     * What Python's `str.isspace()` holds for, so what `str.strip()` strips:
+     * the web app's twin of [onlyWrites] decides with exactly these (see there).
+     */
+    private const val PY_WHITESPACE = "\t\n\u000B\u000C\r\u001C\u001D\u001E\u001F \u0085\u00A0\u1680" +
+        "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u2028\u2029\u202F\u205F\u3000"
+
+    /** A blank in the twin's sense (Python's `str.isspace()`), not Kotlin's or Java's. */
+    fun isBlank(c: Char): Boolean = c in PY_WHITESPACE
+
+    /**
+     * Whether a page's text only writes: Enter not asked for, the text not
+     * empty, no blank at either end and no carriage return, line feed or tab
+     * in it. Everything else acts — a text with Enter, a line break (typed as
+     * Shift+Enter, which submits in a terminal or a one-line field), a tab
+     * (to the next field or a button), a blank at an end (a space presses a
+     * focused button), and every single key.
+     *
+     * The twin is the web app's own rule for what runs by itself:
+     * `runs_by_itself` in the retinue repository's scripts/shell_actions.py
+     * (and needsTap in webapp/components/shell-keyboard.js), less its
+     * `sensitive`, which the app cannot see. This one must never be stricter:
+     * what the dashboard types by itself must never meet a confirmation on a
+     * phone set to "one-line text by itself". Its blanks are Python's
+     * ([isBlank]), and KeyboardRuleTest pins the twin's table of cases.
+     */
+    fun onlyWrites(text: String, enter: Boolean): Boolean =
+        !enter && text.isNotEmpty() && !isBlank(text.first()) && !isBlank(text.last()) &&
+            text.none { it == '\r' || it == '\n' || it == '\t' }
+
+    /** [onlyWrites] for a request: only a text can; a key always acts. */
+    fun onlyWrites(request: PageRequest): Boolean = request is PageRequest.Type && onlyWrites(request.text, request.enter)
+
+    /**
+     * Whether a page's request needs the user's approval on the phone first:
+     * by the device's [mode] (every time; when it acts; never), and in every
+     * mode once after the strip's Stop ([stopPending]).
+     */
+    fun needsConfirmation(mode: ConfirmMode, onlyWrites: Boolean, stopPending: Boolean): Boolean = stopPending || when (mode) {
+        ConfirmMode.Always -> true
+        ConfirmMode.OneLine -> !onlyWrites
+        ConfirmMode.Never -> false
+    }
+
+    /**
+     * What a request typed without a confirmation adds to the device's count
+     * ([UnconfirmedCounts]): its characters, Enter after them as one more; a
+     * key as one.
+     */
+    fun unconfirmedChars(request: PageRequest): Int = when (request) {
+        is PageRequest.Type -> charCount(request.text) + if (request.enter) 1 else 0
+        is PageRequest.Key -> 1
+        else -> 0
+    }
+
+    /** How long a confirmation waits for the user: shorter than the page waits (30 s and 0.1 s a character for a text). */
+    const val CONFIRM_TEXT_MS = 25_000L
+
+    /** Likewise for a key (the page waits 15 s). */
+    const val CONFIRM_KEY_MS = 12_000L
+
+    fun confirmTimeoutMs(request: PageRequest): Long = if (request is PageRequest.Key) CONFIRM_KEY_MS else CONFIRM_TEXT_MS
+
+    /**
+     * The gate every keyboard request of a page goes through (MainActivity
+     * gathers the facts, KeyboardRuntime.fromPage carries the answer out). In
+     * this order: the server's own switch ([serverAllows]); then the checks
+     * that stood before — the keyboard on, a device connected, the page in
+     * front and the phone unlocked ([inFront], ShellDecisions.mayType), no
+     * window of the keyboard's own open ([windowOpen]), nothing being typed,
+     * the text not too long; then the rule and the device's [mode], which
+     * either type at once or ask first — or, while not-approved confirmations
+     * pause them ([confirmPaused], [ConfirmStreak]), refuse as `cancelled`
+     * without a window. A Stop from the page needs only its server's switch;
+     * the keyboard screen needs the page in front too (it is where the
+     * keyboard is switched on). The password dialog is the user's say itself.
+     */
+    fun decide(
+        request: PageRequest,
+        serverAllows: Boolean,
+        status: KeyboardStatus,
+        inFront: Boolean,
+        windowOpen: Boolean,
+        mode: ConfirmMode,
+        stopPending: Boolean,
+        confirmPaused: Boolean,
+    ): PageDecision {
+        if (!serverAllows) return PageDecision.Refuse(KeyboardError.NotEnabled)
+        when (request) {
+            PageRequest.Cancel -> return PageDecision.Cancel
+            PageRequest.Open -> return if (inFront) PageDecision.OpenScreen else PageDecision.Refuse(KeyboardError.NotInFront)
+            else -> Unit
+        }
+        val length = (request as? PageRequest.Type)?.text?.length ?: 0
+        val error = when {
+            !status.enabled || !status.available -> KeyboardError.NotEnabled
+            !status.connected -> KeyboardError.NotConnected
+            !inFront -> KeyboardError.NotInFront
+            windowOpen || status.busy -> KeyboardError.Busy
+            length > MAX_TEXT -> KeyboardError.TooLong
+            else -> null
+        }
+        if (error != null) return PageDecision.Refuse(error)
+        if (request is PageRequest.Secret) return PageDecision.OpenSecret
+        return when {
+            !needsConfirmation(mode, onlyWrites(request), stopPending) -> PageDecision.TypeNow
+            confirmPaused -> PageDecision.Refuse(KeyboardError.Cancelled)
+            else -> PageDecision.Confirm
+        }
     }
 
     /**

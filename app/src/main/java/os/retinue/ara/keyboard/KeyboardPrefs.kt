@@ -6,9 +6,9 @@ import java.util.Locale
 
 /**
  * What the keyboard keeps on the phone: whether it is on, the device it types
- * into, whether the user holds it off that device, and the layout for each
- * device (by Bluetooth address). Nothing typed is ever kept — neither text
- * nor secrets.
+ * into, whether the user holds it off that device, and the layout and what
+ * the phone asks before a page types ([ConfirmMode]) for each device (by
+ * Bluetooth address). Nothing typed is ever kept — neither text nor secrets.
  */
 class KeyboardPrefs(context: Context) {
 
@@ -51,10 +51,19 @@ class KeyboardPrefs(context: Context) {
         prefs.edit().putString(K_LAYOUT + address, layout).apply()
     }
 
+    /** What the phone asks before a page types on [address]: as chosen, or [ConfirmMode.DEFAULT]. */
+    fun confirmModeFor(address: String?): ConfirmMode =
+        ConfirmMode.fromKey(address?.let { prefs.getString(K_CONFIRM + it, null) })
+
+    fun setConfirmMode(address: String, mode: ConfirmMode) {
+        prefs.edit().putString(K_CONFIRM + address, mode.key).apply()
+    }
+
     private companion object {
         const val K_ENABLED = "enabled"
         const val K_LAST_HOST = "last_host"
         const val K_HOLD = "hold_connections"
         const val K_LAYOUT = "layout."
+        const val K_CONFIRM = "confirm."
     }
 }

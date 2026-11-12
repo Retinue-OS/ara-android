@@ -100,10 +100,11 @@ import os.retinue.ara.health.HealthSyncEvent
 import os.retinue.ara.health.HealthSyncLogic
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.health.HealthTrigger
-import os.retinue.ara.keyboard.KeyboardError
 import os.retinue.ara.keyboard.KeyboardEvent
-import os.retinue.ara.keyboard.KeyboardLogic
 import os.retinue.ara.keyboard.KeyboardRuntime
+import os.retinue.ara.keyboard.PageFacts
+import os.retinue.ara.keyboard.PageOutcome
+import os.retinue.ara.keyboard.PageRequest
 import os.retinue.ara.launcher.AppInfo
 import os.retinue.ara.launcher.AppUsage
 import os.retinue.ara.launcher.LauncherCodec
@@ -1767,40 +1768,51 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is WebMessage.HealthSyncInterval -> HealthSyncRuntime.setInterval(message.minutes)
             is WebMessage.HealthAutoSync -> HealthSyncRuntime.setAutoSync(message.on)
             is WebMessage.DeviceSet -> viewModel.setDeviceWebSetting(message.key, message.value)
-            is WebMessage.KeyboardType ->
-                if (onScreenFor(message.id)) KeyboardRuntime.type(message.text, message.enter, message.id)
-            is WebMessage.KeyboardKey ->
-                if (onScreenFor(message.id)) KeyboardRuntime.key(message.name, message.id)
-            is WebMessage.KeyboardSecret -> if (onScreenFor(message.id)) openSecretDialog(message)
-            WebMessage.KeyboardOpen -> if (onScreenFor(null)) openKeyboard()
-            WebMessage.KeyboardCancel -> if (page.keyboardAllowed()) KeyboardRuntime.cancelFromPage()
+            is WebMessage.KeyboardType -> keyboardFromPage(PageRequest.Type(message.text, message.enter, message.id))
+            is WebMessage.KeyboardKey -> keyboardFromPage(PageRequest.Key(message.name, message.id))
+            is WebMessage.KeyboardSecret -> keyboardFromPage(PageRequest.Secret(message.label, message.enter, message.id))
+            WebMessage.KeyboardOpen -> keyboardFromPage(PageRequest.Open)
+            WebMessage.KeyboardCancel -> keyboardFromPage(PageRequest.Cancel)
             is WebMessage.PlaceCall -> placeCall(message.number)
         }
     }
 
     /**
-     * The page may make Ara type only where its server may (its endpoint's
-     * own switch, [ShellPage.keyboardAllowed]; otherwise `not-enabled`), and
-     * only while the user is looking at it
-     * ([ShellDecisions.mayType]: resumed, focused, unlocked): a script running
-     * in a page nobody is looking at — the screen off, another app or the
-     * other half of a split screen in use, the notification shade down —
-     * makes nothing happen on the other device; that is `not-in-front`. While
-     * a secret dialog is open nothing else is taken (`busy`): the page could
-     * otherwise move the other device's focus before the password arrives.
-     * Typing that started passes this once, and runs to its end.
+     * The one way a page's keyboard request goes (type, key, secret, open,
+     * cancel): this gathers what the window knows, KeyboardRuntime.fromPage
+     * decides by KeyboardLogic.decide — in this order, the page's server may
+     * type ([ShellPage.keyboardAllowed], otherwise `not-enabled`); the
+     * keyboard on and a device connected; the user looking at the dashboard
+     * ([ShellDecisions.mayType]: resumed, focused, unlocked, not covered by
+     * the app's settings page, launcher editor or folder editor — a script in
+     * a page nobody is looking at makes nothing happen on the other device,
+     * `not-in-front`); no confirmation or password dialog open (`busy`);
+     * then the rule and the device's mode, which type at once or ask first.
+     * What is left here is starting the window that asks. Typing that
+     * started passes this once, and runs to its end (or Stop).
      */
-    private fun onScreenFor(id: String?): Boolean {
+    private fun keyboardFromPage(request: PageRequest) {
         val keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
-        val error = when {
-            !page.keyboardAllowed() -> KeyboardError.NotEnabled
-            KeyboardRuntime.secretDialogOpen -> KeyboardError.Busy
-            !ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, secretDialogOpen = false) ->
-                KeyboardError.NotInFront
-            else -> return true
+        val facts = PageFacts(
+            serverAllows = page.keyboardAllowed(),
+            inFront = ShellDecisions.mayType(resumed, hasWindowFocus(), keyguardLocked, covered = dashboardCovered),
+            serverHost = settings.endpointSet.pageEndpoint(page.loadedEndpointId)?.hostLabel,
+        )
+        when (val outcome = KeyboardRuntime.fromPage(request, facts)) {
+            PageOutcome.Done -> Unit
+            PageOutcome.OpenScreen -> openKeyboard()
+            is PageOutcome.Confirm -> startConfirmation(outcome.token)
+            is PageOutcome.OpenSecret -> (request as? PageRequest.Secret)?.let { openSecretDialog(it, outcome) }
         }
-        KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(id, error))
-        return false
+    }
+
+    /** The app's own pages over the dashboard, under which the page cannot be seen. */
+    private val dashboardCovered: Boolean
+        get() = showSettings || showLauncherEditor || folderEditor != null
+
+    /** The confirmation for [token] (reserved by the runtime); not yet a window of its own: nothing that asks is typed. */
+    private fun startConfirmation(token: String) {
+        KeyboardRuntime.confirmDeclined(token)
     }
 
     /** The keyboard screen (pairing, layout, live typing). */
@@ -1809,19 +1821,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     /**
-     * The page asks for a secret to be typed: the native dialog, only when a
-     * device is connected (otherwise the page hears why at once, and no
-     * dialog asks for a password that could not be typed).
+     * The page asks for a secret to be typed and the gate let it: the native
+     * dialog (the gate made sure a device is connected, so no dialog asks
+     * for a password that could not be typed).
      */
-    private fun openSecretDialog(message: WebMessage.KeyboardSecret) {
-        val error = KeyboardLogic.precheck(KeyboardRuntime.status.value, 0)
-        if (error != null) {
-            KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent.error(message.id, error))
-            return
+    private fun openSecretDialog(request: PageRequest.Secret, outcome: PageOutcome.OpenSecret) {
+        try {
+            startActivity(SecretTypeActivity.intent(this, request.id, request.label, request.enter, outcome.host))
+        } catch (e: Exception) {
+            Log.w(TAG, "secret dialog did not start", e)
+            KeyboardRuntime.windowFailed()
+            KeyboardRuntime.listener?.onKeyboardEvent(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, request.id))
         }
-        val host = KeyboardRuntime.status.value.host?.address
-        KeyboardRuntime.secretDialogAsked()
-        startActivity(SecretTypeActivity.intent(this, message.id, message.label, message.enter, host))
     }
 
     /**
