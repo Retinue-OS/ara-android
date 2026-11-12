@@ -339,8 +339,9 @@ class KeyboardActivity : ComponentActivity() {
     private fun LiveField() {
         var last by remember { mutableStateOf("") }
         var view by remember { mutableStateOf<EditText?>(null) }
-        // Live typing failed or was stopped: the device no longer has what
-        // the field shows, so the field starts over (sending nothing).
+        // Live typing failed or was stopped, or the layout changed: the device
+        // no longer has what the field shows, or an edit would retype it with
+        // a layout that lacks some of it, so the field starts over (sending nothing).
         val resets by KeyboardRuntime.liveResets.collectAsStateWithLifecycle()
         var seenResets by remember { mutableStateOf(resets) }
         var wasReset by remember { mutableStateOf(false) }

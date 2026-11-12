@@ -165,8 +165,9 @@ object KeyboardRuntime {
     val status: StateFlow<KeyboardStatus> = _status.asStateFlow()
 
     /**
-     * Bumped when live typing failed or was stopped: the keyboard screen's
-     * field no longer matches what the device has, and starts over.
+     * Bumped when live typing failed or was stopped, or the device's layout
+     * changed: the keyboard screen's field no longer matches what the device
+     * has (or would retype it wrong), and starts over.
      */
     private val _liveResets = MutableStateFlow(0)
     val liveResets: StateFlow<Int> = _liveResets.asStateFlow()
@@ -501,7 +502,11 @@ object KeyboardRuntime {
             .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
 
     fun setLayout(address: String, layout: String) {
+        val resetsLive = KeyboardLogic.layoutChangeResetsLive(_status.value.host?.address, address, prefs.layoutFor(address), layout)
         prefs.setLayout(address, layout)
+        // The live field took only what the old layout types: it starts over, as after a Stop, and
+        // edits still queued (mapped when sent, with the new layout) go with it.
+        if (resetsLive) resetLive()
         publish()
         emit(KeyboardEvent.status)
     }
@@ -760,6 +765,12 @@ object KeyboardRuntime {
         if (dropped) _liveResets.value = _liveResets.value + 1
     }
 
+    /** The live field starts over: queued edits are dropped, and the field clears itself ([liveResets]). */
+    private fun resetLive() {
+        while (liveEdits.tryReceive().isSuccess) { /* dropped: the field starts over */ }
+        _liveResets.value = _liveResets.value + 1
+    }
+
     /**
      * Type a secret from the native dialog into the device [expectedHost] —
      * the one the dialog named; if another is connected by now, nothing is
@@ -862,10 +873,7 @@ object KeyboardRuntime {
         val error = typing.withLock {
             KeyboardLogic.precheck(_status.value.copy(busy = false), 0) ?: transmit(strokes)
         }
-        if (error != null && edit is LiveEdit.Diff) {
-            while (liveEdits.tryReceive().isSuccess) { /* dropped: the field starts over */ }
-            _liveResets.value = _liveResets.value + 1
-        }
+        if (error != null && edit is LiveEdit.Diff) resetLive()
     }
 
     private suspend fun typeNow(text: CharSequence, enter: Boolean, expectedHost: String?, unasked: Int): KeyboardError? {

@@ -407,4 +407,15 @@ object KeyboardLogic {
         while (p < n && old[p] == new[p]) p++
         return (old.length - p) to new.substring(p)
     }
+
+    /**
+     * Whether choosing [chosen] for the device [address] starts the live
+     * field afresh: only an actual change of the layout ([current], the one
+     * in use for it) of the device the field types into ([fieldHost], the
+     * status's host). The field holds what the old layout could type; an edit
+     * away from its end would retype the rest with the new one, which may
+     * lack some of it, and the field would no longer match the device.
+     */
+    fun layoutChangeResetsLive(fieldHost: String?, address: String, current: String, chosen: String): Boolean =
+        fieldHost == address && chosen != current && KeyLayouts.byId(chosen) != null
 }

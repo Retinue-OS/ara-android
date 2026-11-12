@@ -1220,9 +1220,10 @@ queued and sent in order — none is dropped while an earlier one is still
 being typed, the buttons below (Enter, Tab, Backspace, Esc, the arrows) in
 the same queue — and the field takes only characters the device's layout can
 type, up to 4000 (a pasted `\r\n` becomes one line break); a line break goes
-as Shift+Enter. If an edit cannot be sent (no device, stopped), or waiting
-edits are dropped by a Stop, the field is cleared, with a note: what reached
-the device stays there. The field takes no suggestions and no
+as Shift+Enter. If an edit cannot be sent (no device, stopped), waiting
+edits are dropped by a Stop, or the device's layout is changed (the field
+holds what the old one could type, and an edit retypes with the new one),
+the field is cleared, with a note: what reached the device stays there. The field takes no suggestions and no
 personalised learning, and takes part in no autofill.
 
 **Limits.** The other device treats the input as it would from any keyboard:

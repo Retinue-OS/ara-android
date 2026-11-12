@@ -34,6 +34,16 @@ class KeyboardLogicTest {
     }
 
     @Test
+    fun onlyAnActualLayoutChangeOfTheFieldsDeviceStartsTheLiveFieldAfresh() {
+        // de-CH "aüb" in the field, then US: an edit would retype "üb" without the "ü".
+        assertTrue(KeyboardLogic.layoutChangeResetsLive("AA", "AA", KeyLayouts.DE_CH, KeyLayouts.US))
+        assertFalse(KeyboardLogic.layoutChangeResetsLive("AA", "AA", KeyLayouts.US, KeyLayouts.US), "the same layout chosen again")
+        assertFalse(KeyboardLogic.layoutChangeResetsLive("AA", "BB", KeyLayouts.DE_CH, KeyLayouts.US), "another device's layout")
+        assertFalse(KeyboardLogic.layoutChangeResetsLive(null, "AA", KeyLayouts.DE_CH, KeyLayouts.US), "no field without a device")
+        assertFalse(KeyboardLogic.layoutChangeResetsLive("AA", "AA", KeyLayouts.US, "xx"), "an unknown layout is not stored")
+    }
+
+    @Test
     fun idsAndLabels() {
         assertEquals("msg-1", KeyboardLogic.cleanId("msg-1"))
         assertNull(KeyboardLogic.cleanId("bad id"))
