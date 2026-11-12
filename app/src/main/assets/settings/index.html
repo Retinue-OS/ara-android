@@ -115,18 +115,23 @@
         </label>
         <p class="hint">Lower wakes more easily, and more often by mistake. 0.5
           is the default.</p>
+        <h4 class="sub">Phrase model</h4>
+        <p class="hint" data-wake-active></p>
+        <ul class="plain endpoints" data-wake-models aria-label="Phrase models"></ul>
+        <div class="actions">
+          <button type="button" class="btn" data-wake-pick>Upload a model file…</button>
+        </div>
+        <p class="hint" data-wake-message aria-live="polite"></p>
         <details class="advanced">
-          <summary>Advanced: the wake models</summary>
-          <p class="hint" data-wake-models></p>
-          <div class="actions"><button type="button" class="btn" data-wake-features>Download feature models</button></div>
+          <summary>Advanced: a model from a URL, the feature models</summary>
           <label class="field">Phrase model URL (.onnx)
-            <input type="url" inputmode="url" spellcheck="false" autocomplete="off" data-wake-url>
+            <input type="url" inputmode="url" spellcheck="false" autocomplete="off" data-wake-url placeholder="https://…/hey_retinue.onnx">
           </label>
           <div class="actions">
-            <button type="button" class="btn" data-wake-phrase>Download phrase model</button>
-            <button type="button" class="btn" data-wake-pick>Choose file…</button>
+            <button type="button" class="btn" data-wake-phrase>Add from URL</button>
           </div>
-          <p class="hint" data-wake-message aria-live="polite"></p>
+          <p class="hint" data-wake-models-line></p>
+          <div class="actions"><button type="button" class="btn" data-wake-features>Download feature models again</button></div>
         </details>
       </section>
 

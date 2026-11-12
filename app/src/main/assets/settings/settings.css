@@ -139,6 +139,11 @@ details.advanced[open] summary { margin-bottom: 6px; }
 .endpoint .active::before { content: "\2713\00a0"; }
 .endpoint .btn { min-height: 36px; padding: 0 12px; }
 
+.card h4.sub { font-size: .9rem; font-weight: 600; margin: 14px 0 4px; }
+.endpoint.model { flex-wrap: wrap; }
+.endpoint.model .actions { flex-basis: 100%; margin: 0; gap: 8px; }
+.endpoint.model.current { outline: 1px solid var(--accent); }
+
 .notes p { margin: 8px 0 4px; font-size: .9rem; }
 
 iframe.instance { width: 100%; border: 0; display: block; background: transparent; }

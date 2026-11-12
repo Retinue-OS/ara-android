@@ -370,7 +370,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     private val phraseModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) viewModel.importPhraseModel(uri)
+        if (uri != null) viewModel.importModel(uri)
     }
 
     /** The settings page's certificate import under way (one at a time; see [importCertificateFor]). */
@@ -741,7 +741,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun SettingsPageOverlay() {
         val stored by viewModel.settings.collectAsStateWithLifecycle()
         val models by viewModel.models.collectAsStateWithLifecycle()
+        val library by viewModel.library.collectAsStateWithLifecycle()
         val modelBusy by viewModel.modelBusy.collectAsStateWithLifecycle()
+        val modelBusyId by viewModel.modelBusyId.collectAsStateWithLifecycle()
         val modelMessage by viewModel.modelMessage.collectAsStateWithLifecycle()
         val wakeStatus by viewModel.wakeStatus.collectAsStateWithLifecycle()
         val update by UpdateRuntime.state.collectAsStateWithLifecycle()
@@ -762,7 +764,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 fullScreenAllowed = fullScreenIntentAllowed,
                 overlayAllowed = overlayAllowed,
                 models = models,
+                library = library,
                 modelBusy = modelBusy,
+                modelBusyId = modelBusyId,
                 modelMessage = modelMessage,
             ),
             update = update,
@@ -821,8 +825,11 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             // The slider's range.
             is SettingsAction.WakeThreshold -> viewModel.setWakeThreshold(action.value.coerceIn(0.1f, 0.9f))
             SettingsAction.WakeFeatures -> viewModel.downloadFeatureModels()
-            is SettingsAction.WakePhrase -> viewModel.downloadPhraseModel(action.url)
+            is SettingsAction.WakePhrase -> viewModel.addModelFromUrl(action.url)
             SettingsAction.WakePick -> pickPhraseModel()
+            is SettingsAction.WakeModelDownload -> viewModel.downloadModel(action.id)
+            is SettingsAction.WakeModelUse -> viewModel.useModel(action.id)
+            is SettingsAction.WakeModelRemove -> viewModel.removeModel(action.id)
             SettingsAction.WakeFullScreen -> WakeAlert.fullScreenIntentSettings(this)?.let(::startSystemPage)
             SettingsAction.WakeOverlay -> startSystemPage(WakeAlert.overlaySettings(this))
             SettingsAction.WakeNotifications -> startSystemPage(WakeAlert.notificationSettings(this))

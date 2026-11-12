@@ -53,6 +53,7 @@ object WakeRuntime {
 
     private var mode = WakeMode.Off
     private var threshold = 0.5f
+    private var modelId: String? = null
     private var shellVisible = false
     private var shellResumed = false
     private var serviceRunning = false
@@ -137,10 +138,12 @@ object WakeRuntime {
         evaluate()
     }
 
-    fun configure(mode: WakeMode, threshold: Float) = onMain {
-        val changed = mode != this.mode || threshold != this.threshold
+    /** The settings: when to listen, how sure to be, and for which phrase model (null: none chosen). */
+    fun configure(mode: WakeMode, threshold: Float, modelId: String?) = onMain {
+        val changed = mode != this.mode || threshold != this.threshold || modelId != this.modelId
         this.mode = mode
         this.threshold = threshold
+        this.modelId = modelId
         if (mode == WakeMode.Off) lastError = null
         if (changed) restartListener() else evaluate()
     }
@@ -238,7 +241,7 @@ object WakeRuntime {
         val now = SystemClock.elapsedRealtime()
 
         val mic = micGranted()
-        val models = WakeModelFiles.status(app).ready
+        val models = WakeModelFiles.status(app, modelId).ready
 
         // A mic error is retried with a backoff, without a settings change.
         if (lastError != null && micBackoff.ready(now)) lastError = null
@@ -300,10 +303,13 @@ object WakeRuntime {
     private fun startListener() {
         if (listener != null && listenerThreshold == threshold) return
         stopListener()
+        // Only called when the models are ready, so a model is chosen.
+        val model = modelId ?: return
         listenerThreshold = threshold
         val gen = ++listenerGen
         listener = WakeListener(
             app,
+            model,
             threshold,
             previous = retired,
             onDetected = { main.post { if (gen == listenerGen) detected() } },
