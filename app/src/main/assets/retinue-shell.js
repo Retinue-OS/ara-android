@@ -178,8 +178,8 @@
     },
     // A call the user asked for in a spoken conversation: placed at once when
     // direct calls are on, else the dialer opens (always for emergency
-    // numbers); refused outside a voice conversation. Returns at once, the
-    // outcome comes as a `call` event.
+    // numbers and service codes with * or #); refused outside a voice
+    // conversation. Returns at once, the outcome comes as a `call` event.
     placeCall: function (number) {
       if (number === undefined || number === null) return;
       post({ type: 'call.place', number: String(number) });

@@ -240,11 +240,14 @@ export function describeHealthSyncEvent(d) {
 }
 
 // ── Phone calls ─────────────────────────────────────────────────────────────
-// What stands between the switch and a call placed without a tap.
+// What stands between the switch and a call placed without a tap, with the
+// action that fixes it: the app asks again, or opens Android's page for Ara
+// once Android no longer asks.
 export function callNotes(c) {
   if (!c || !c.direct || c.permissionGranted) return [];
   return [{
-    text: 'Android has not allowed Ara to make calls, so calls open the dialer. Turn the switch off and on to be asked again, or allow "Phone" in Ara’s app settings.',
+    text: 'Android has not allowed Ara to make calls, so calls open the dialer.',
+    action: 'calls.permission', label: 'Allow phone calls',
   }];
 }
 

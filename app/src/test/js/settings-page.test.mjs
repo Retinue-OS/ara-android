@@ -137,6 +137,7 @@ ok('direct calls say when Android has not allowed them', () => {
   const notes = L.callNotes({ direct: true, permissionGranted: false, telephony: true });
   assert.equal(notes.length, 1);
   assert.match(notes[0].text, /calls open the dialer/);
+  assert.equal(notes[0].action, 'calls.permission');
 });
 
 ok('the wake notes follow the mode, with the action that fixes each', () => {

@@ -19,6 +19,14 @@ class CallLogicTest {
         assertEquals("0791234567", CallLogic.normalize("079/123 45 67"))
         assertEquals("*123#", CallLogic.normalize("*123#"))
         assertEquals("112", CallLogic.normalize("112"))
+        assertEquals("+41791234567", CallLogic.normalize("TEL:+41791234567"))
+        // No-break and narrow no-break spaces, as formatted numbers come.
+        assertEquals("+41791234567", CallLogic.normalize("+41\u00A079\u202F123\u00A045\u00A067"))
+        // The trunk zero beside a country code is not dialled; without one the parentheses just go.
+        assertEquals("+442079460958", CallLogic.normalize("+44 (0)20 7946 0958"))
+        assertEquals("+442079460958", CallLogic.normalize("tel: +44 ( 0 ) 20 7946 0958"))
+        assertEquals("0041791234567", CallLogic.normalize("(0041) 79 123 45 67"))
+        assertEquals("0791234567", CallLogic.normalize("(0)79 123 45 67"))
     }
 
     @Test
@@ -34,6 +42,13 @@ class CallLogicTest {
         assertNull(CallLogic.normalize("0441234567,123"))
         assertNull(CallLogic.normalize("0441234567;ext=1"))
         assertNull(CallLogic.normalize("sms:0441234567"))
+        // Only ASCII digits, and nothing endless around them.
+        assertNull(CallLogic.normalize("\u0660\u0661\u0662\u0663"))
+        assertNull(CallLogic.normalize("\uFF0B41791234567"))
+        assertNull(CallLogic.normalize("*".repeat(30) + "123"))
+        assertNull(CallLogic.normalize("123" + " ".repeat(100)))
+        assertNull(CallLogic.normalize("+"))
+        assertNull(CallLogic.normalize("*#06#"))
     }
 
     private fun decide(
@@ -69,6 +84,19 @@ class CallLogicTest {
     }
 
     @Test
+    fun serviceCodesAreNeverPlacedDirectly() {
+        // Call forwarding, a USSD request: placed directly the phone would carry them out unseen.
+        for (code in listOf("*21*0791234567#", "**21*0791234567#", "##002#", "*123#", "#31#0791234567", "0791234567#")) {
+            assertEquals(code, CallLogic.normalize(code))
+            assertEquals(CallOutcome.Dial(code, CallLogic.SERVICE_CODE), decide(number = code), code)
+        }
+        assertEquals(CallOutcome.Dial("*123#", CallLogic.SERVICE_CODE), decide(number = "*123#", enabled = false))
+        // Still only inside a spoken conversation, and an emergency number is named as one.
+        assertEquals(CallOutcome.Refused(CallLogic.NOT_IN_VOICE), decide(number = "*123#", voice = false))
+        assertEquals(CallOutcome.Dial("112#", CallLogic.EMERGENCY), decide(number = "112#", emergency = true))
+    }
+
+    @Test
     fun bridgeMessageAndEvent() {
         assertEquals(WebMessage.PlaceCall("+41 79 123 45 67"), ShellMessages.parse("""{"type":"call.place","number":"+41 79 123 45 67"}"""))
         assertNull(ShellMessages.parse("""{"type":"call.place","number":"  "}"""))
@@ -81,6 +109,8 @@ class CallLogicTest {
         assertTrue(dialer.contains("""{"type":"call","state":"dialer","reason":"emergency","number":"112"}"""), dialer)
         val refused = ShellMessages.callEvent(CallOutcome.Refused(CallLogic.NOT_IN_VOICE))
         assertTrue(refused.contains("""{"type":"call","state":"refused","reason":"not-in-voice"}"""), refused)
+        val code = ShellMessages.callEvent(CallOutcome.Dial("*21*0791234567#", CallLogic.SERVICE_CODE))
+        assertTrue(code.contains("""{"type":"call","state":"dialer","reason":"service-code","number":"*21*0791234567#"}"""), code)
         val failed = ShellMessages.callEvent(CallOutcome.Call("+41791234567"), failed = true)
         assertTrue(failed.contains("""{"type":"call","state":"refused","reason":"failed","number":"+41791234567"}"""), failed)
     }

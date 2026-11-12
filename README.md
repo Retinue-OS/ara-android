@@ -190,9 +190,9 @@ The web app detects the shell and talks to it through:
   per-device preferences `type` `device-settings` with the `keys` that
   changed. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
-  `number`), `dialer` (`reason`: `emergency`, `disabled`, `no-permission`;
-  with `number`) or `refused` (`reason`: `invalid-number`, `not-in-voice`,
-  `no-telephony`, `failed`).
+  `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
+  `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,
+  `not-in-voice`, `no-telephony`, or `failed` with `number`).
 - A `speechSynthesis` / `SpeechSynthesisUtterance` stand-in backed by Android
   TextToSpeech, installed when the WebView has no Web Speech synthesis (or one
   without any voices). It covers what the web Reader uses: `speak`, `cancel`,
@@ -215,23 +215,32 @@ as the `call` event above. The shell decides (`shell/CallLogic.kt`), in this
 order:
 
 1. The number is normalized — spaces, dashes, dots, parentheses, slashes and a
-   leading `tel:` dropped — and must then be an optional `+` followed by
-   digits, `*` and `#` with 3 to 20 digits (no `,` pauses or `;` extensions).
-   Otherwise: refused, `invalid-number`. A phone without telephony: refused,
-   `no-telephony`.
+   leading `tel:` dropped, and the `(0)` of `+44 (0)20 …` — and must then be
+   an optional `+` followed by digits, `*` and `#` with 3 to 20 digits and at
+   most 32 characters (no `,` pauses or `;` extensions). Otherwise: refused,
+   `invalid-number`. A phone without telephony: refused, `no-telephony`.
 2. **Only inside a spoken conversation**: the page must hold
    `setVoiceActive(true)`, as the web app does for a whole continuous
-   conversation. Otherwise nothing starts, not even the dialer: refused,
-   `not-in-voice`.
+   conversation (a microphone grant to the page counts for its 10 s too).
+   Otherwise nothing starts, not even the dialer: refused, `not-in-voice`.
+   The page reports this itself, so it keeps a number in a typed chat or on
+   a page just loading from dialling; it is no barrier against the page,
+   which the bridge trusts as the configured origin's main frame. A new
+   document starts outside a conversation.
 3. **Emergency numbers always open the dialer** (`reason` `emergency`;
    `TelephonyManager.isEmergencyNumber`, a failed check counts as one).
    Android lets no third-party app call them directly. Hands-free, use
    "Hey Google" or the phone's Emergency SOS for those.
-4. Settings → Phone calls → **Call directly by voice** (off by default) off:
-   the dialer opens with the number (`disabled`). On without Android's
-   `CALL_PHONE` permission, which turning it on asks for: the dialer
-   (`no-permission`), and the settings say so.
-5. Otherwise `ACTION_CALL`: the call starts, **on speakerphone**
+4. **Service codes always open the dialer** (`service-code`): anything with
+   `*` or `#`, such as `*21*…#` (forward every call) or a USSD request like
+   `*123#`. Placed directly the phone would carry them out unseen; in the
+   dialer the user sees the code and starts it.
+5. Settings → Phone calls → **Call directly by voice** (off by default, one
+   switch for every endpoint) off: the dialer opens with the number
+   (`disabled`). On without Android's `CALL_PHONE` permission, which turning
+   it on asks for: the dialer (`no-permission`); the settings say so and
+   offer to ask again, or open Android's page for Ara once it no longer asks.
+6. Otherwise `ACTION_CALL`: the call starts, **on speakerphone**
    (`TelecomManager.EXTRA_START_CALL_WITH_SPEAKERPHONE`) — the user asked by
    voice and may not be holding the phone. An intent that fails to start is
    reported as refused, `failed`.

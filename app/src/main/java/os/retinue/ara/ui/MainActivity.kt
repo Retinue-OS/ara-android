@@ -326,7 +326,16 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     // Direct calls: asked for when the user turns them on; without it calls open the dialer.
     private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         callsGranted = granted
+        // Android no longer asks ("don't ask again"): only its page for Ara can allow calls now.
+        val notAsked = callSettingsIfNotAsked && !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callSettingsIfNotAsked = false
+        if (!granted && notAsked) {
+            startSystemPage(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+        }
     }
+
+    /** The settings page's own request for the call permission, made while Android may have stopped asking. */
+    private var callSettingsIfNotAsked = false
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -805,6 +814,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             is SettingsAction.SplitLaunch -> viewModel.setSplitLaunch(action.on)
             is SettingsAction.SplitRecents -> viewModel.setKeepSplitInRecents(action.on)
             is SettingsAction.DirectCalls -> setDirectCalls(action.on)
+            SettingsAction.CallsPermission -> requestCallPermission()
             SettingsAction.LauncherEdit -> showLauncherEditor = true
             SettingsAction.LauncherUsageAccess -> AppUsage.openAccessSettings(this)
             is SettingsAction.WakeModeSet -> setWakeMode(action.mode)
@@ -877,6 +887,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun setDirectCalls(on: Boolean) {
         viewModel.setDirectCalls(on)
         if (on && !hasCallPermission()) callPermission.launch(Manifest.permission.CALL_PHONE)
+    }
+
+    /**
+     * The settings page's button for a missing permission. Android stops
+     * asking after two refusals and answers no by itself: then (no rationale
+     * to show before or after the request) its page for Ara opens instead.
+     */
+    private fun requestCallPermission() {
+        callsGranted = hasCallPermission()
+        if (callsGranted) return
+        callSettingsIfNotAsked = !shouldShowRequestPermissionRationale(Manifest.permission.CALL_PHONE)
+        callPermission.launch(Manifest.permission.CALL_PHONE)
     }
 
     private fun pickPhraseModel() {
@@ -1713,9 +1735,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     }
 
     private fun isEmergencyNumber(number: String): Boolean = try {
-        getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number) == true
+        // No telephony service counts as a failed check, like one that throws.
+        getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(number) ?: true
     } catch (e: Exception) {
-        // No telephony service, or it refused to answer: the number counts as one, so it is only dialled.
+        // It refused to answer: the number counts as one, so it is only dialled.
         Log.w(TAG, "emergency number check failed", e)
         true
     }

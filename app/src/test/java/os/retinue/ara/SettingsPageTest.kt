@@ -85,6 +85,7 @@ class SettingsPageTest {
         assertEquals(SettingsAction.UpdateChannelSet(UpdateChannel.Release), p("""{"type":"update.channel","channel":"release"}"""))
         assertEquals(SettingsAction.DeviceSet("retinue.shelf.size", "9"), p("""{"type":"device.set","key":"retinue.shelf.size","value":"9"}"""))
         assertEquals(SettingsAction.DirectCalls(true), p("""{"type":"calls.direct","on":true}"""))
+        assertEquals(SettingsAction.CallsPermission, p("""{"type":"calls.permission"}"""))
         assertEquals(SettingsAction.LauncherEdit, p("""{"type":"launcher.edit"}"""))
         assertEquals(SettingsAction.LauncherUsageAccess, p("""{"type":"launcher.usageAccess"}"""))
         assertEquals(SettingsAction.ChooseCertificate("r3", "https://agents.example.com", null), p("""{"type":"endpoint.certificate","request":"r3","baseUrl":"https://agents.example.com","current":null}"""))
