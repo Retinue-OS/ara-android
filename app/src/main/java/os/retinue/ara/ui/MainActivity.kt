@@ -1612,6 +1612,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             return
         }
         val host = KeyboardRuntime.status.value.host?.address
+        KeyboardRuntime.secretDialogAsked()
         startActivity(SecretTypeActivity.intent(this, message.id, message.label, message.enter, host))
     }
 

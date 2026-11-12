@@ -61,6 +61,14 @@ class SecretTypeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        if (savedInstanceState != null && lastNonConfigurationInstance == null) {
+            // Brought back by Android (the process, or the activity, was
+            // destroyed in the background): its request was answered as
+            // cancelled then, or its page is gone. Nothing asks for it now.
+            settled = true
+            finish()
+            return
+        }
         requestId = KeyboardLogic.cleanId(intent.getStringExtra(EXTRA_ID))
         host = intent.getStringExtra(EXTRA_HOST)
         // The name the other device gave itself: shown cleaned, like the label.
@@ -147,6 +155,10 @@ class SecretTypeActivity : Activity() {
             // No autofill on this phone.
         }
     }
+
+    /** Marks a recreation for a configuration change, whose request is still open (see onCreate). */
+    @Deprecated("Deprecated in Java")
+    override fun onRetainNonConfigurationInstance(): Any = true
 
     override fun onDestroy() {
         // Left by any other way (the task removed): nothing typed, and the page hears so.

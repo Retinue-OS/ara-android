@@ -88,7 +88,18 @@ class KeyboardService : Service() {
     // Not sticky: a restart by the system would happen in the background,
     // where a connectedDevice service may not start; the app's next start
     // (KeyboardRuntime.init) brings it back.
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A start while it already runs (KeyboardRuntime.start, every time Ara
+        // comes to the front) arrives here alone, with no onCreate: the start
+        // is over now, or every later stop would wait for it forever.
+        starting = false
+        if (stopRequested) {
+            stopRequested = false
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        return START_NOT_STICKY
+    }
 
     private fun notification(): android.app.Notification {
         val manager = NotificationManagerCompat.from(this)
@@ -120,7 +131,7 @@ class KeyboardService : Service() {
         private const val CHANNEL = "keyboard"
         private const val NOTIFICATION_ID = 7
 
-        /** Started, and onCreate not yet run: a stop then waits for it. */
+        /** Started, and neither onCreate nor onStartCommand run yet: a stop then waits for it. */
         @Volatile
         private var starting = false
 

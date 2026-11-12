@@ -163,6 +163,17 @@ object KeyboardLogic {
         return buckets * bucketMs - elapsedMs
     }
 
+    /** How long a secret dialog asked for counts as open before its activity is up. */
+    const val SECRET_OPENING_MS = 5000L
+
+    /**
+     * Whether a secret dialog asked for at [askedAt] (0: none) is still on
+     * its way at [now] — bounded, so a dialog that never came up does not
+     * shut the page out for good.
+     */
+    fun secretDialogOpening(askedAt: Long, now: Long): Boolean =
+        askedAt != 0L && now - askedAt < SECRET_OPENING_MS
+
     /** What the page hears of a secret that failed: never why it lies in the secret itself. */
     fun secretErrorForPage(error: KeyboardError): KeyboardError = when (error) {
         KeyboardError.UnsupportedChar, KeyboardError.TooLong -> KeyboardError.Failed

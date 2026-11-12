@@ -130,11 +130,30 @@ object KeyboardRuntime {
     @Volatile
     private var secretDialogCloser: (() -> Unit)? = null
 
-    /** A secret dialog is open: one at a time, and the page types nothing meanwhile. */
-    val secretDialogOpen: Boolean get() = secretDialogCloser != null
+    /** When a secret dialog was asked for and is not up yet (elapsedRealtime), or 0. */
+    @Volatile
+    private var secretDialogAskedAt = 0L
+
+    /**
+     * A secret dialog is open — or asked for and about to be: one at a time,
+     * and the page types nothing meanwhile.
+     */
+    val secretDialogOpen: Boolean
+        get() = secretDialogCloser != null ||
+            KeyboardLogic.secretDialogOpening(secretDialogAskedAt, SystemClock.elapsedRealtime())
+
+    /**
+     * The dialog is being started: it counts as open from now, not only once
+     * its activity is up — or a second request, or a text, sent in the same
+     * moment would still get through.
+     */
+    fun secretDialogAsked() {
+        secretDialogAskedAt = SystemClock.elapsedRealtime()
+    }
 
     /** SecretTypeActivity registers itself while it is open ([closer] cancels it). */
     fun secretDialogOpened(closer: () -> Unit) {
+        secretDialogAskedAt = 0L
         secretDialogCloser = closer
     }
 
@@ -311,6 +330,13 @@ object KeyboardRuntime {
     private val callback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             this@KeyboardRuntime.registered = registered
+            if (!registered && connected != null) {
+                // No keyboard, no connection — whether or not the stack still
+                // says so: a device left standing would keep reconnect() off.
+                connected = null
+                leds = 0
+                abortTyping()
+            }
             // Unregistered while on, with the proxy still there: someone else has the role.
             refused = !registered && prefs.enabled && hid != null
             if (registered) reconnect()
