@@ -114,10 +114,24 @@ class ConfirmTypeActivity : Activity() {
                 this.text = text
                 setPadding(0, (4 * density).toInt(), 0, (4 * density).toInt())
             }.also(box::addView)
+        fun unconfirmed() {
+            if (p.unconfirmed > 0) {
+                line(
+                    resources.getQuantityString(R.plurals.keyboard_confirm_unasked, p.unconfirmed, p.unconfirmed, device),
+                    android.R.style.TextAppearance_Material_Body2,
+                )
+            }
+        }
 
         when (val r = p.request) {
             is PageRequest.Type -> {
                 line(getString(R.string.keyboard_confirm_asks_text, server, device))
+                // The facts go above the box, which takes what height is left: none of them can be clipped.
+                val chars = KeyboardLogic.charCount(r.text)
+                line(resources.getQuantityString(R.plurals.keyboard_confirm_chars, chars, chars), android.R.style.TextAppearance_Material_Body2)
+                if (r.enter) line(getString(R.string.keyboard_confirm_enter), android.R.style.TextAppearance_Material_Body2)
+                if (KeyboardLogic.hasLineBreak(r.text)) line(getString(R.string.keyboard_confirm_line_breaks), android.R.style.TextAppearance_Material_Body2)
+                unconfirmed()
                 val shown = TextView(this).apply {
                     setTextAppearance(android.R.style.TextAppearance_Material_Body1)
                     typeface = Typeface.MONOSPACE
@@ -126,7 +140,8 @@ class ConfirmTypeActivity : Activity() {
                     val inner = (8 * density).toInt()
                     setPadding(inner, inner, inner, inner)
                 }
-                val scroll = BoundedScrollView(this, (180 * density).toInt()).apply {
+                val maxBox = minOf((180 * density).toInt(), (resources.displayMetrics.heightPixels * 0.35).toInt())
+                val scroll = BoundedScrollView(this, maxBox).apply {
                     addView(shown)
                     setBackgroundColor(themeColor(android.R.attr.colorControlHighlight))
                     // Long enough to scroll: Type waits until its end was seen.
@@ -135,22 +150,13 @@ class ConfirmTypeActivity : Activity() {
                 }
                 seenEnd = false
                 box.addView(scroll)
-                val chars = KeyboardLogic.charCount(r.text)
-                line(resources.getQuantityString(R.plurals.keyboard_confirm_chars, chars, chars), android.R.style.TextAppearance_Material_Body2)
-                if (r.enter) line(getString(R.string.keyboard_confirm_enter), android.R.style.TextAppearance_Material_Body2)
-                if (KeyboardLogic.hasLineBreak(r.text)) line(getString(R.string.keyboard_confirm_line_breaks), android.R.style.TextAppearance_Material_Body2)
             }
             is PageRequest.Key -> {
                 line(getString(R.string.keyboard_confirm_asks_key, server, device))
                 line(getString(R.string.keyboard_confirm_press, keyName(r.name)), android.R.style.TextAppearance_Material_Headline)
+                unconfirmed()
             }
-            else -> Unit
-        }
-        if (p.unconfirmed > 0) {
-            line(
-                resources.getQuantityString(R.plurals.keyboard_confirm_unasked, p.unconfirmed, p.unconfirmed, device),
-                android.R.style.TextAppearance_Material_Body2,
-            )
+            else -> unconfirmed()
         }
 
         val dialog = GuardedDialog()
@@ -273,10 +279,17 @@ class ConfirmTypeActivity : Activity() {
         },
     )
 
-    /** A scroll view no taller than [maxHeight]: a long text scrolls inside the dialog. */
+    /**
+     * A scroll view no taller than [maxHeight], nor than the height it is
+     * offered: in landscape or at a large font it shrinks, and the text
+     * scrolls, rather than push the rest of the dialog out of it.
+     */
     private class BoundedScrollView(context: Context, private val maxHeight: Int) : ScrollView(context) {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
+            val offered = View.MeasureSpec.getSize(heightMeasureSpec)
+            val height = if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED) maxHeight
+            else minOf(maxHeight, offered)
+            super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST))
         }
     }
 

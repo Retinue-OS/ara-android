@@ -253,7 +253,7 @@
     <string name="keyboard_confirm_never_yes">Never ask</string>
     <string name="keyboard_confirm_never_no">Keep asking</string>
     <string name="keyboard_confirm_title">Type on %1$s?</string>
-    <string name="keyboard_confirm_asks_text">%1$s asks Ara to type this on %2$s:</string>
+    <string name="keyboard_confirm_asks_text">%1$s asks Ara to type the text below on %2$s.</string>
     <string name="keyboard_confirm_asks_key">%1$s asks Ara to press a key on %2$s:</string>
     <string name="keyboard_confirm_unknown_server">The dashboard</string>
     <string name="keyboard_confirm_press">Press %1$s</string>
@@ -261,7 +261,7 @@
         <item quantity="one">%1$d character.</item>
         <item quantity="other">%1$d characters.</item>
     </plurals>
-    <string name="keyboard_confirm_enter">Enter is pressed after it.</string>
+    <string name="keyboard_confirm_enter">Enter is pressed after the text.</string>
     <string name="keyboard_confirm_line_breaks">Its line breaks are typed as Shift+Enter, which sends or runs in some fields.</string>
     <plurals name="keyboard_confirm_unasked">
         <item quantity="one">Since you last confirmed, the dashboard has typed %1$d character on %2$s without asking.</item>

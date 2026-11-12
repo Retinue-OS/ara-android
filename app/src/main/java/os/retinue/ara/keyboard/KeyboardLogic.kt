@@ -169,14 +169,16 @@ object KeyboardLogic {
         if (serverAllows) status else KeyboardStatus(available = status.available)
 
     /**
-     * Whether [event] goes to the page: a `status` event only when its server
-     * may type ([serverAllows]) — otherwise it would tell the page when the
-     * keyboard is switched or a device comes and goes, which its
-     * keyboardStatus() keeps from it. The answers to its own requests (an id,
-     * `not-enabled`) always go.
+     * Whether [event] goes to the page: everything when its server may type
+     * ([serverAllows]); otherwise only `not-enabled`, the one answer its own
+     * requests get. A `status` would tell it when the keyboard is switched or
+     * a device comes and goes, which its keyboardStatus() keeps from it; and
+     * the end of an earlier page's request (typed, secret-typed, cancelled —
+     * still running when another endpoint's page was loaded) that a device is
+     * connected, and how much was typed.
      */
     fun eventForPage(event: KeyboardEvent, serverAllows: Boolean): Boolean =
-        serverAllows || event.state != KeyboardEvent.STATUS
+        serverAllows || (event.state == KeyboardEvent.ERROR && event.error == KeyboardError.NotEnabled)
 
     /** The `count` of a `typed` event: the text's characters, a CRLF line break as one. */
     fun charCount(text: CharSequence): Int {

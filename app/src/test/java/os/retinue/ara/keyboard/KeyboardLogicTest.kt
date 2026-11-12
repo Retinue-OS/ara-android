@@ -128,12 +128,22 @@ class KeyboardLogicTest {
         assertEquals(connected.toJson().keys, hidden.keys)
         assertFalse(hidden.toString().contains("Quest") || hidden.toString().contains("de-CH"))
 
-        // Nor does it hear when the keyboard or a device changes; the answers to its own requests it does.
-        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.status, serverAllows = true))
-        assertFalse(KeyboardLogic.eventForPage(KeyboardEvent.status, serverAllows = false))
+        // Nor does it hear when the keyboard or a device changes, nor how an earlier page's
+        // requests ended (a device is there, so many characters): only its own not-enabled.
+        val events = listOf(
+            KeyboardEvent.status,
+            KeyboardEvent.typed("t1", 3000),
+            KeyboardEvent(KeyboardEvent.SECRET_TYPED, "s1"),
+            KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, "s1"),
+            KeyboardEvent.error("t1", KeyboardError.Cancelled),
+            KeyboardEvent.error("t1", KeyboardError.NotConnected),
+        )
+        for (event in events) {
+            assertTrue(KeyboardLogic.eventForPage(event, serverAllows = true), event.toString())
+            assertFalse(KeyboardLogic.eventForPage(event, serverAllows = false), event.toString())
+        }
         assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = false))
-        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.typed("t1", 3), serverAllows = false))
-        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent(KeyboardEvent.SECRET_CANCELLED, "s1"), serverAllows = false))
+        assertTrue(KeyboardLogic.eventForPage(KeyboardEvent.error("t1", KeyboardError.NotEnabled), serverAllows = true))
     }
 
     @Test

@@ -68,8 +68,8 @@ import os.retinue.ara.keyboard.KeyboardStatus
  * the device at once, as key presses (the user's own typing: never asked about).
  *
  * A page can open this screen just before a tap it provoked: the controls
- * that act — the key buttons, Connect and Disconnect, the choice of what is
- * asked — take no tap for [ConfirmTypeActivity.ARM_MS] after the screen
+ * that act — the key buttons, Connect and Disconnect, the choice of layout,
+ * the choice of what is asked — take no tap for [ConfirmTypeActivity.ARM_MS] after the screen
  * appears and after every touch on it that is not on one of them, nor one
  * that came through another window laid over it; as [ConfirmTypeActivity]'s Type.
  */
@@ -221,10 +221,14 @@ class KeyboardActivity : ComponentActivity() {
                     Text(stringResource(R.string.keyboard_layout_for, host.name), style = MaterialTheme.typography.titleMedium)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         KeyLayouts.ALL.forEach { l ->
+                            // The layout decides which keys a page's text becomes (a wrong
+                            // one makes "@" an Alt shortcut): it acts, as the keys do.
                             FilterChip(
                                 selected = status.layout == l.id,
-                                onClick = { KeyboardRuntime.setLayout(host.address, l.id) },
+                                onClick = acts { KeyboardRuntime.setLayout(host.address, l.id) },
                                 label = { Text(l.label) },
+                                enabled = armed,
+                                modifier = actsHere(),
                             )
                         }
                     }

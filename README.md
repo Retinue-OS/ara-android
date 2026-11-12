@@ -225,9 +225,9 @@ The web app detects the shell and talks to it through:
   `not-enabled`, `not-connected`, `not-in-front`, `too-long`,
   `unsupported-char`, `busy`, `cancelled`, `failed`),
   `secret-typed`, `secret-cancelled` or `status` (re-read `keyboardStatus()`;
-  it is current before any `keyboard` event arrives; while the page's
-  endpoint may not type, only when that switch changes), each with the request's
-  `id` where it had one. Nobody has to take these.
+  it is current before any `keyboard` event arrives), each with the request's
+  `id` where it had one. While the page's endpoint may not type, it hears only
+  `not-enabled` errors, and `status` when that switch changes. Nobody has to take these.
   A `placeCall` is answered with `type` `call`: `state` `placed` (with
   `number`), `dialer` (`reason`: `emergency`, `service-code`, `disabled`,
   `no-permission`; with `number`) or `refused` (`reason`: `invalid-number`,
@@ -1134,8 +1134,8 @@ meets a confirmation. What the phone asks is set for each device, next to
 its layout on the keyboard screen: *Ask every time*; *One-line text by
 itself* (where every device starts: it asks when a request acts); or *Never
 ask*, which the screen asks about once more, since a page can open that
-screen (for the same reason its keys, Connect and Disconnect and this choice
-take no tap for 0.6 s after it appears and after any other touch on it).
+screen (for the same reason its keys, Connect and Disconnect, the choice of
+layout and this choice take no tap for 0.6 s after it appears and after any other touch on it).
 After *Stop* on the strip, the next request asks, whatever the mode, until
 the user approves one (a confirmation or the password dialog's *Type*). The confirmation is a small window of the app's own
 (`ConfirmTypeActivity`, `FLAG_SECURE`): it names the device and the host of
