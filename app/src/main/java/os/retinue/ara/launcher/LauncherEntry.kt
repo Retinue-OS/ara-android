@@ -178,3 +178,15 @@ object LauncherLinks {
         return scheme.all { it.isLetterOrDigit() || it == '+' || it == '-' || it == '.' }
     }
 }
+
+/**
+ * What an entry has Android start, whatever its id: an app's or web app's
+ * [LauncherEntry.Launchable.key], a link's URI; null for what opens inside Ara
+ * (a page of the web app, a folder). Per-entry preferences are stored by it.
+ */
+val LauncherEntry.launchKey: String?
+    get() = when (this) {
+        is LauncherEntry.Launchable -> key
+        is LauncherEntry.Link -> "uri:$uri"
+        else -> null
+    }
