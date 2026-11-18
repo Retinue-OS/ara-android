@@ -187,7 +187,7 @@ fun LauncherBar(
  * on, unless the entry is one the user chose to open full screen
  * ([fullScreen], by [launchKey]).
  */
-internal data class AlternateOpen(val splitLaunch: Boolean, val fullScreen: Set<String>) {
+data class AlternateOpen(val splitLaunch: Boolean, val fullScreen: Set<String>) {
     /** The item for the entry stored by [key]: [R.string.launcher_open_full] or [R.string.launcher_open_beside]. */
     fun item(key: String?): Int =
         if (ShellDecisions.opensBeside(splitLaunch, key != null && key in fullScreen)) {
