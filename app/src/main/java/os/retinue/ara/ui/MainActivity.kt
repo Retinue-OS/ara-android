@@ -1297,6 +1297,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             page.clearKeyboardRequests()
             bridge.install()
             page.pageReady = false
+            // What the endpoint shown before left in the history goes once this page is up.
+            page.clearHistoryOnReady = true
             // A pending wake waits for this load and goes out as the event (onPageFinished).
             if (pendingWakeAt != 0L) wakeLoadIssued = true
             // A link that brought the shell up loads instead of the start page.
@@ -1459,8 +1461,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             val overlay = showSettings || showLauncherEditor || showDrawer || editing != null || authPrompt != null ||
                 openFolderId != null || folderEditor != null || confirmRemove != null || linkSwitch != null || tray.isOpen
             // The split-screen window is a plain app: at the root, Back leaves it.
-            val webCanGoBack = showsPage && webView?.canGoBack() == true
-            when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow)) {
+            // Back stays on the shown endpoint's origin; from a page of another, it goes to the start page.
+            val view = webView?.takeIf { showsPage }
+            val webCanGoBack = view != null && ShellDecisions.webBackAllowed(previousUrl(view), router)
+            val pageOffOrigin = view != null && settings.base != null &&
+                ShellUrls.origin(view.url) != null && !router.isConfiguredOrigin(view.url)
+            when (ShellDecisions.onBack(overlay, webCanGoBack, isHome = isDefaultHome && !isSplitWindow, pageOffOrigin = pageOffOrigin)) {
                 ShellDecisions.BackAction.CloseOverlay -> when {
                     authPrompt != null -> authPrompt?.cancel()
                     linkSwitch != null -> linkSwitch = null
@@ -1475,6 +1481,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     else -> settingsPage?.bridge?.back { closeSettings() } ?: closeSettings()
                 }
                 ShellDecisions.BackAction.WebBack -> webView?.goBack()
+                ShellDecisions.BackAction.StartPage -> retryLoad()
                 ShellDecisions.BackAction.Ignore -> Unit
                 // Keep the WebView (and its page) alive rather than finishing.
                 ShellDecisions.BackAction.Leave -> moveTaskToBack(true)
@@ -1522,6 +1529,24 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
 
     /** A link for another configured endpoint: which, what it is called, and the link itself. */
     private class LinkSwitch(val endpointId: String, val label: String, val link: String)
+
+    /** The URL of the history entry before the page shown, or null when there is none. */
+    private fun previousUrl(view: WebView): String? {
+        val history = view.copyBackForwardList()
+        val index = history.currentIndex
+        return if (index > 0) history.getItemAtIndex(index - 1)?.url else null
+    }
+
+    /**
+     * The dashboard's Settings link (its gear) on a page that has no bridge,
+     * such as a page of another endpoint brought back from the history: the
+     * app's settings page, never the browser (see [ShellDecisions.opensAppSettings]).
+     */
+    override fun takesNavigation(url: String): Boolean {
+        if (!ShellDecisions.opensAppSettings(url, settings.endpoints.mapNotNull { it.base })) return false
+        openSettings()
+        return true
+    }
 
     /** The failure card's Retry: load the start page afresh. */
     private fun retryLoad() {
@@ -2025,6 +2050,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     override fun onPageFinished(url: String?) {
         page.pageReady = router.isConfiguredOrigin(url)
         page.pageLoading = false
+        if (page.pageReady && page.clearHistoryOnReady) {
+            page.clearHistoryOnReady = false
+            webView?.clearHistory()
+        }
         bridge.onPageFinished(url)
         updatePage { onPageFinished(url) }
         // The server is reachable: a name that is due is fetched now (rate-limited).

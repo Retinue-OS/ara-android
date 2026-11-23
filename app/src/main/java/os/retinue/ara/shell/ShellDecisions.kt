@@ -14,6 +14,13 @@ object ShellDecisions {
         /** Go back one step in the WebView's history. */
         WebBack,
 
+        /**
+         * Load the shown endpoint's start page: the page on screen is not one
+         * of its own (another instance's, left in the history), and Back must
+         * not leave the dashboard stuck on it.
+         */
+        StartPage,
+
         /** Swallow the press: the home screen has nowhere to go back to. */
         Ignore,
 
@@ -25,11 +32,37 @@ object ShellDecisions {
      * Back: an open overlay first, then the web page's history; at the root the
      * home screen stays put, a plain app leaves.
      */
-    fun onBack(overlayOpen: Boolean, webCanGoBack: Boolean, isHome: Boolean): BackAction = when {
+    fun onBack(overlayOpen: Boolean, webCanGoBack: Boolean, isHome: Boolean, pageOffOrigin: Boolean = false): BackAction = when {
         overlayOpen -> BackAction.CloseOverlay
+        pageOffOrigin -> BackAction.StartPage
         webCanGoBack -> BackAction.WebBack
         isHome -> BackAction.Ignore
         else -> BackAction.Leave
+    }
+
+    /**
+     * Whether Back may take the dashboard to [previousUrl], the history entry
+     * before the page shown: only to a page of the shown endpoint's origin.
+     * The WebView's history outlives a switch of endpoint, and a page of the
+     * instance shown before, brought back from the history (its service
+     * worker's copy, often), gets neither the bridge nor the client
+     * certificate here: it shows no data, may say it is offline, and its
+     * links, Settings among them, would go to the browser.
+     */
+    fun webBackAllowed(previousUrl: String?, router: UrlRouter): Boolean = router.isConfiguredOrigin(previousUrl)
+
+    /**
+     * Whether a main-frame navigation to [url], which the router sends to the
+     * browser, is the dashboard's own Settings page (`/settings.html`, its
+     * gear's link) of one of the configured endpoints ([endpointBases]): the
+     * gear of a page without the bridge. The app's settings page opens instead,
+     * so Settings always leads to the endpoints, their certificates and
+     * sign-ins, whatever state the page is in.
+     */
+    fun opensAppSettings(url: String, endpointBases: Collection<String>): Boolean {
+        if (!ShellUrls.isDashboardSettingsPage(url)) return false
+        val origin = ShellUrls.origin(url) ?: return false
+        return endpointBases.any { UrlRouter(it).origin == origin }
     }
 
     /** What a new intent asks the running activity to do. */

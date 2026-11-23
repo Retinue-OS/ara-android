@@ -125,6 +125,22 @@ object ShellUrls {
         return path == basePath || path == "$basePath/index.html"
     }
 
+    /**
+     * True when [url] is the web app's own Settings page: the link of the
+     * dashboard's gear (`/settings.html`; under a base path too), with any
+     * query or fragment. With the bridge, the gear opens the app's settings
+     * instead and never navigates there.
+     */
+    fun isDashboardSettingsPage(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val parsed = url.trim().toHttpUrlOrNull() ?: return false
+        if (parsed.scheme != "https" && parsed.scheme != "http") return false
+        return parsed.encodedPath.endsWith("/$DASHBOARD_SETTINGS_FILE")
+    }
+
+    /** The file of the web app's Settings page (the dashboard's `nav.js`, its gear). */
+    const val DASHBOARD_SETTINGS_FILE = "settings.html"
+
     /** The URL's encoded path without a trailing slash ("" for the root), or null when it does not parse. */
     private fun pathOf(url: String): String? =
         url.trim().toHttpUrlOrNull()?.encodedPath?.trimEnd('/')

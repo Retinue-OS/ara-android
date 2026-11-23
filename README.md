@@ -136,6 +136,16 @@ server.
   what is typed. The edge accepts either a client certificate or the password.
 - **Back** goes back in the page's history. As home app, Back at the start page
   does nothing; otherwise it sends Ara to the background (the page is kept).
+  The history never leads to another endpoint: once the page of a newly
+  shown endpoint is up, what came before is cleared, Back only goes to a page
+  of the shown endpoint's origin, and Back from a page of any other origin
+  loads the start page. A page of another instance would get neither the
+  bridge nor the certificate here, so it would show no data, could say it is
+  offline, and its links would go to the browser.
+- **The dashboard's Settings link** (`/settings.html`, the gear's link when a
+  page has no bridge) of any configured endpoint opens the app's settings
+  page, never the browser, so Settings always reaches the endpoints, their
+  certificates and sign-ins.
 - A crashed or reclaimed WebView renderer is replaced and the start page
   reloaded.
 - **The keyboard stays up under its own popups.** Chromium 155 to 157 hide the

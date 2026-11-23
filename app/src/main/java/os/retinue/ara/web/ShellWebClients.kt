@@ -54,6 +54,13 @@ interface ShellHost {
 
     /** An ERROR-level console message of the page, kept for the diagnostics in settings. */
     fun onConsoleError(message: String, source: String, line: Int)
+
+    /**
+     * A main-frame navigation to [url] that the router would send to the
+     * browser: true when the shell takes it itself instead (the dashboard's
+     * Settings link of a configured endpoint opens the app's settings page).
+     */
+    fun takesNavigation(url: String): Boolean = false
 }
 
 /**
@@ -140,7 +147,7 @@ class ShellWebViewClient(private val context: Context, private val host: ShellHo
             Route.Stay -> false
             Route.Block -> true
             is Route.Browser -> {
-                ShellIntents.openInBrowser(context, route.url)
+                if (!host.takesNavigation(route.url)) ShellIntents.openInBrowser(context, route.url)
                 true
             }
             is Route.External -> {
