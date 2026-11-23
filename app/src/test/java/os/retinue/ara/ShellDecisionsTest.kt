@@ -226,6 +226,33 @@ class SplitScreenDecisionsTest {
     }
 
     @Test
+    fun anEntryOpenedFullScreenByChoiceStaysFullScreen() {
+        fun home(alternate: Boolean, splitLaunch: Boolean = true) = ShellDecisions.launchTarget(
+            splitWindow = false,
+            splitLaunch = splitLaunch,
+            alternate = alternate,
+            prefersFullScreen = true,
+        )
+        // A tap opens it full screen although the setting says beside; the long-press is the way back.
+        assertEquals(LaunchTarget.Here, home(alternate = false))
+        assertEquals(LaunchTarget.ThroughSplitWindow, home(alternate = true))
+        // With the setting off it is full screen anyway.
+        assertEquals(LaunchTarget.Here, home(alternate = false, splitLaunch = false))
+        assertEquals(LaunchTarget.ThroughSplitWindow, home(alternate = true, splitLaunch = false))
+        // The split-screen window starts everything beside itself.
+        assertEquals(LaunchTarget.Beside, ShellDecisions.launchTarget(true, true, false, prefersFullScreen = true))
+    }
+
+    @Test
+    fun onlyTheLongPressChoiceChangesTheFullScreenPreference() {
+        assertEquals(true, ShellDecisions.fullScreenPreference(LaunchTarget.Here, alternate = true))
+        assertEquals(false, ShellDecisions.fullScreenPreference(LaunchTarget.ThroughSplitWindow, alternate = true))
+        assertEquals(null, ShellDecisions.fullScreenPreference(LaunchTarget.Here, alternate = false))
+        assertEquals(null, ShellDecisions.fullScreenPreference(LaunchTarget.ThroughSplitWindow, alternate = false))
+        assertEquals(null, ShellDecisions.fullScreenPreference(LaunchTarget.Beside, alternate = true))
+    }
+
+    @Test
     fun splitWindowRequests() {
         assertEquals(SplitRequest.Open, ShellDecisions.splitRequest(hasEntry = true, park = false, replayed = false))
         assertEquals(SplitRequest.Park, ShellDecisions.splitRequest(hasEntry = false, park = true, replayed = false))

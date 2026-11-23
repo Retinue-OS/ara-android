@@ -213,8 +213,8 @@ fun FolderIcon(folder: LauncherEntry.Folder, size: Dp = 34.dp) {
 fun FolderSheet(
     folder: LauncherEntry.Folder,
     onLaunch: (LauncherEntry.Launchable) -> Unit,
-    /** The long-press item for the other way of opening an app (see [AlternateOpenItem]); null for none. */
-    alternateOpen: Int?,
+    /** The long-press item for the other way of opening an app (see [AlternateOpen]); null for none. */
+    alternateOpen: AlternateOpen?,
     onLaunchAlternate: (LauncherEntry.Launchable) -> Unit,
     onMove: (LauncherEntry.Launchable, Int) -> Unit,
     onRemove: (LauncherEntry.Launchable) -> Unit,
@@ -265,7 +265,7 @@ fun FolderSheet(
                             )
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 if (alternateOpen != null) {
-                                    AlternateOpenItem(alternateOpen) {
+                                    AlternateOpenItem(alternateOpen.item(app.key)) {
                                         menu = false
                                         onLaunchAlternate(app)
                                     }

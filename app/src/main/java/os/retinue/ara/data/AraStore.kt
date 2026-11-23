@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -48,6 +49,7 @@ class AraStore(context: Context) {
             autoUpdate = p[K.autoUpdate] ?: false,
             updateChannel = UpdateChannel.fromKey(p[K.updateChannel]),
             splitLaunch = p[K.splitLaunch] ?: false,
+            fullScreenApps = p[K.fullScreenApps] ?: emptySet(),
             keepSplitInRecents = p[K.keepSplitInRecents] ?: false,
             deviceWebSettings = DeviceWebSettings.decode(p[K.deviceWebSettings]),
         )
@@ -164,6 +166,13 @@ class AraStore(context: Context) {
 
     suspend fun setSplitLaunch(on: Boolean) = edit { it[K.splitLaunch] = on }
 
+    /** Store ([on]) or forget that [key] (a [os.retinue.ara.launcher.launchKey]) opens full screen. */
+    suspend fun setOpensFullScreen(key: String, on: Boolean) = edit {
+        val current = it[K.fullScreenApps] ?: emptySet()
+        val updated = if (on) current + key else current - key
+        if (updated != current) it[K.fullScreenApps] = updated
+    }
+
     suspend fun setKeepSplitInRecents(on: Boolean) = edit { it[K.keepSplitInRecents] = on }
 
     suspend fun setUpdateCheckedAt(epochMs: Long, build: String) = edit {
@@ -267,6 +276,7 @@ class AraStore(context: Context) {
         val updateCheckedAt = longPreferencesKey("update_checked_at")
         val updateCheckedBy = stringPreferencesKey("update_checked_by")
         val splitLaunch = booleanPreferencesKey("split_launch")
+        val fullScreenApps = stringSetPreferencesKey("full_screen_apps")
         val keepSplitInRecents = booleanPreferencesKey("keep_split_in_recents")
         val healthInterval = intPreferencesKey("health_interval_minutes")
         val healthAuto = booleanPreferencesKey("health_auto_on_resume")
