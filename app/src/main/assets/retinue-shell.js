@@ -12,8 +12,10 @@
 //     setDeviceSetting(key, value), (RetinueShell/5) the keyboard for other
 //     devices: keyboardStatus(), keyboardType(text, opts),
 //     keyboardKey(name, opts), keyboardSecret(opts), keyboardOpen(),
-//     keyboardCancel(), and (RetinueShell/6) placeCall(number), whose outcome
-//     comes as a `call` event. Shell -> web events arrive as
+//     keyboardCancel(), (RetinueShell/6) placeCall(number), whose outcome
+//     comes as a `call` event, and (RetinueShell/7) for chamber apps:
+//     speak(text, lang, id), answered by a `speak` event, notify(title, body)
+//     and remindersChanged(). Shell -> web events arrive as
 //     `retinue-shell` CustomEvents dispatched on window; the shell checks
 //     whether a page listener ran for them (see below).
 //
@@ -248,7 +250,29 @@
       if (number === undefined || number === null) return;
       post({ type: 'call.place', number: String(number) });
     },
+    // ---- Chamber apps (RetinueShell/7; Retinue's webapp/apps/retinue.js) ----
+    // Speak `text` with the native text-to-speech, in `lang` where given; a
+    // `speak` event {id, state: "done" | "error"} follows. It shares the
+    // engine with the speechSynthesis stand-in: one utterance at a time, the
+    // latest wins.
+    speak: function (text, lang, id) {
+      var n = ++speakSeq;
+      speakIds[n] = typeof id === 'string' ? id.slice(0, 64) : String(n);
+      post({ type: 'tts.speak', id: n, text: String(text == null ? '' : text),
+             lang: typeof lang === 'string' ? lang : '' });
+    },
+    // An immediate notification while the page is open ("next set in 10 s").
+    // Not a reminder: reminders are armed from the server's plan.
+    notify: function (title, body) {
+      post({ type: 'app.notify', title: String(title == null ? '' : title).slice(0, 120),
+             body: String(body == null ? '' : body).slice(0, 500) });
+    },
+    // The page changed its reminders: the shell fetches the plan again.
+    remindersChanged: function () { post({ type: 'reminders.changed' }); },
   };
+  // The page-side ids of speak(); numbers far above the stand-in's own.
+  var speakSeq = 2000000000;
+  var speakIds = {};
   try {
     Object.defineProperty(window, 'RetinueShell', { value: shell, configurable: true, enumerable: true, writable: false });
   } catch (_) {
@@ -364,6 +388,20 @@
       try { handler.call(target, ev); } catch (e) { setTimeout(function () { throw e; }, 0); }
     }
   }
+
+  // speak()'s end, as a `speak` event for the page.
+  receivers.push(function (msg) {
+    if (!msg || (msg.type !== 'tts.end' && msg.type !== 'tts.error')) return;
+    var pageId = speakIds[msg.id];
+    if (pageId === undefined) return;
+    delete speakIds[msg.id];
+    try {
+      window.dispatchEvent(new CustomEvent('retinue-shell', {
+        detail: { type: 'speak', id: pageId, state: msg.type === 'tts.end' ? 'done' : 'error',
+                  error: msg.type === 'tts.error' ? String(msg.error || '') : undefined },
+      }));
+    } catch (_) { /* no CustomEvent: nothing to tell */ }
+  });
 
   function installSpeech() {
     var voices = [];

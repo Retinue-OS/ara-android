@@ -62,7 +62,7 @@ interface ShellHost {
  * has a settings page of its own and holds the dashboard's per-device
  * preferences; 3: the endpoint members of the bridge exist.
  */
-const val SHELL_UA_SUFFIX = " RetinueShell/6 (Android)"
+const val SHELL_UA_SUFFIX = " RetinueShell/7 (Android)"
 
 /** WebView configuration for the shell (plan §1). */
 @SuppressLint("SetJavaScriptEnabled")

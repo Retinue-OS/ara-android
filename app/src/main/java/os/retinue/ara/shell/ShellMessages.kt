@@ -91,6 +91,12 @@ sealed class WebMessage {
 
     /** `placeCall(number)`: call [number] — as it came from the page, see CallLogic. */
     data class PlaceCall(val number: String) : WebMessage()
+
+    /** `notify(title, body)` (RetinueShell/7): an immediate notification while a chamber app is open. */
+    data class AppNotify(val title: String, val body: String) : WebMessage()
+
+    /** `remindersChanged()` (RetinueShell/7): a chamber app changed its reminders; fetch the plan again. */
+    data object RemindersChanged : WebMessage()
 }
 
 /** A voice the stand-in exposes as a `SpeechSynthesisVoice`. */
@@ -180,6 +186,11 @@ object ShellMessages {
             "keyboard.cancel" -> WebMessage.KeyboardCancel
             // Any string goes on, an empty one too: CallLogic refuses what is no number, and the page hears why.
             "call.place" -> WebMessage.PlaceCall(obj.str("number") ?: return null)
+            "app.notify" -> WebMessage.AppNotify(
+                obj.str("title")?.trim()?.take(120)?.takeIf { it.isNotEmpty() } ?: return null,
+                obj.str("body")?.trim()?.take(500).orEmpty(),
+            )
+            "reminders.changed" -> WebMessage.RemindersChanged
             else -> null
         }
     }
