@@ -71,6 +71,20 @@ class ShellUrlsTest {
     }
 
     @Test
+    fun dashboardSettingsPage() {
+        assertTrue(ShellUrls.isDashboardSettingsPage("https://h.example/settings.html"))
+        assertTrue(ShellUrls.isDashboardSettingsPage("https://h.example/settings.html#instance"))
+        assertTrue(ShellUrls.isDashboardSettingsPage("https://h.example/settings.html?x=1"))
+        assertTrue(ShellUrls.isDashboardSettingsPage("https://h.example/retinue/settings.html"))
+        assertFalse(ShellUrls.isDashboardSettingsPage("https://h.example/"))
+        assertFalse(ShellUrls.isDashboardSettingsPage("https://h.example/settings-instance.html"))
+        assertFalse(ShellUrls.isDashboardSettingsPage("https://h.example/mysettings.html"))
+        assertFalse(ShellUrls.isDashboardSettingsPage("https://h.example/?next=/settings.html"))
+        assertFalse(ShellUrls.isDashboardSettingsPage(null))
+        assertFalse(ShellUrls.isDashboardSettingsPage("tel:settings.html"))
+    }
+
+    @Test
     fun startPage() {
         val base = "https://h.example"
         assertTrue(ShellUrls.isStartPage(base, "https://h.example/"))

@@ -16,6 +16,7 @@ import os.retinue.ara.shell.ShellDecisions.WakeDelivery
 import os.retinue.ara.shell.EndpointLabel
 import os.retinue.ara.shell.ShellMessages
 import os.retinue.ara.shell.ShellVoice
+import os.retinue.ara.shell.UrlRouter
 import os.retinue.ara.shell.WebMessage
 
 class ShellDecisionsTest {
@@ -25,6 +26,47 @@ class ShellDecisionsTest {
         assertEquals(BackAction.CloseOverlay, ShellDecisions.onBack(overlayOpen = true, webCanGoBack = true, isHome = true))
         assertEquals(BackAction.WebBack, ShellDecisions.onBack(overlayOpen = false, webCanGoBack = true, isHome = true))
         assertEquals(BackAction.WebBack, ShellDecisions.onBack(overlayOpen = false, webCanGoBack = true, isHome = false))
+    }
+
+    @Test
+    fun backFromAnotherInstancesPageGoesToTheStartPage() {
+        assertEquals(
+            BackAction.StartPage,
+            ShellDecisions.onBack(overlayOpen = false, webCanGoBack = true, isHome = true, pageOffOrigin = true),
+        )
+        assertEquals(
+            BackAction.StartPage,
+            ShellDecisions.onBack(overlayOpen = false, webCanGoBack = false, isHome = false, pageOffOrigin = true),
+        )
+        // An overlay still closes first.
+        assertEquals(
+            BackAction.CloseOverlay,
+            ShellDecisions.onBack(overlayOpen = true, webCanGoBack = false, isHome = true, pageOffOrigin = true),
+        )
+    }
+
+    @Test
+    fun backStaysOnTheShownEndpointsOrigin() {
+        val router = UrlRouter("https://second.example")
+        assertTrue(ShellDecisions.webBackAllowed("https://second.example/threads", router))
+        // The instance shown before the switch, still in the history.
+        assertFalse(ShellDecisions.webBackAllowed("https://first.example/", router))
+        assertFalse(ShellDecisions.webBackAllowed("about:blank", router))
+        assertFalse(ShellDecisions.webBackAllowed(null, router))
+        assertFalse(ShellDecisions.webBackAllowed("https://second.example/", UrlRouter(null)))
+    }
+
+    @Test
+    fun settingsLinkOfAConfiguredEndpointOpensTheAppsSettings() {
+        val bases = listOf("https://first.example", "https://second.example:8443/retinue")
+        assertTrue(ShellDecisions.opensAppSettings("https://first.example/settings.html", bases))
+        assertTrue(ShellDecisions.opensAppSettings("https://FIRST.example:443/settings.html#instance", bases))
+        assertTrue(ShellDecisions.opensAppSettings("https://second.example:8443/settings.html", bases))
+        // Not the settings page, or not a configured endpoint: the browser, as before.
+        assertFalse(ShellDecisions.opensAppSettings("https://first.example/threads", bases))
+        assertFalse(ShellDecisions.opensAppSettings("https://second.example/settings.html", bases))
+        assertFalse(ShellDecisions.opensAppSettings("https://evil.example/settings.html", bases))
+        assertFalse(ShellDecisions.opensAppSettings("https://first.example/settings.html", emptyList()))
     }
 
     @Test

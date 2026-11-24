@@ -129,6 +129,13 @@ object ShellPage {
     /** The main frame finished loading a page of the configured origin. */
     var pageReady = false
 
+    /**
+     * Another endpoint (or address, certificate) was loaded: once its page is
+     * up, the history before it is cleared, so neither Back nor the page's
+     * `history.back()` brings back a page of the one shown before.
+     */
+    var clearHistoryOnReady = false
+
     /** Between onPageStarted and onPageFinished of the main frame. */
     var pageLoading = false
 
@@ -258,6 +265,7 @@ object ShellPage {
             loadedEndpointId = null
             pushedEndpoints = null
             pageReady = false
+            clearHistoryOnReady = false
             pageLoading = false
             tracker = PageStatusTracker()
             state = tracker.state
