@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -103,11 +104,13 @@ fun LauncherBar(
     onAllApps: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The endpoint's chamber apps (a slot before "All apps", only while it has any); null: no slot. */
+    onChamberApps: (() -> Unit)? = null,
 ) {
     val folders = remember(entries) { entries.filterIsInstance<LauncherEntry.Folder>() }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // The entries plus "All apps".
-        val width = slotWidth(maxWidth, entries.size + 1)
+        // The entries plus "All apps" (and the chamber apps' slot, when shown).
+        val width = slotWidth(maxWidth, entries.size + 1 + (if (onChamberApps != null) 1 else 0))
         Row(
             modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
             verticalAlignment = Alignment.CenterVertically,
@@ -164,6 +167,16 @@ fun LauncherBar(
                 }
             }
             var allMenu by remember { mutableStateOf(false) }
+            if (onChamberApps != null) {
+                // The server's own apps (Retinue chamber apps), and the way back to the dashboard.
+                LauncherSlot(
+                    label = stringResource(R.string.chamber_apps),
+                    icon = { Icon(Icons.Filled.Widgets, contentDescription = null, modifier = Modifier.size(30.dp)) },
+                    onClick = onChamberApps,
+                    onLongClick = onChamberApps,
+                    width = width,
+                )
+            }
             Box {
                 LauncherSlot(
                     label = stringResource(R.string.launcher_all_apps),

@@ -98,6 +98,8 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import os.retinue.ara.R
+import os.retinue.ara.apps.ChamberApps
+import os.retinue.ara.apps.ReminderRuntime
 import os.retinue.ara.data.EndpointLabels
 import os.retinue.ara.data.ShellSettings
 import os.retinue.ara.data.credentials
@@ -211,6 +213,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     // --- Native overlays -----------------------------------------------------
     private var showSettings by mutableStateOf(false)
     private var showDrawer by mutableStateOf(false)
+    /** The Apps sheet: the shown endpoint's chamber apps and the dashboard (ChamberAppsSheet). */
+    private var showChamberApps by mutableStateOf(false)
     private var editing by mutableStateOf<Pair<LauncherEntry, Boolean>?>(null)
 
     /** The folder open over the bar (its id, so it follows edits). */
@@ -512,6 +516,23 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                             )
                         }
                     }
+                    if (showChamberApps && editor == null) {
+                        val appsState by ChamberApps.state.collectAsStateWithLifecycle()
+                        val current = settings.current
+                        ChamberAppsSheet(
+                            instanceName = current?.let { EndpointLabels.label(it, settings.endpoints) }.orEmpty(),
+                            state = appsState,
+                            onDashboard = {
+                                showChamberApps = false
+                                openChamberPage(settings.base?.let { ShellUrls.startUrl(it) })
+                            },
+                            onOpen = { app ->
+                                showChamberApps = false
+                                openChamberPage(app.url)
+                            },
+                            onDismiss = { showChamberApps = false },
+                        )
+                    }
                     // A fresh page in place of one whose renderer went away (onSettingsPageGone).
                     if (showSettings) key(settingsGeneration) { SettingsPageOverlay() }
                     if (showLauncherEditor) {
@@ -687,7 +708,17 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     // Between the system bars: the tray stops below the page's top menu.
                     modifier = Modifier.statusBarsPadding().navigationBarsPadding(),
                 ) {
+                    val chamberApps by ChamberApps.state.collectAsStateWithLifecycle()
                     LauncherBar(
+                        onChamberApps = if (chamberApps.apps.isNotEmpty() && chamberApps.endpointId == settings.current?.id) {
+                            {
+                                tray.collapse()
+                                ChamberApps.load(this@MainActivity, settings.current)
+                                showChamberApps = true
+                            }
+                        } else {
+                            null
+                        },
                         entries = launcher.entries,
                         onOpen = { openEntry(it) },
                         alternateOpen = alternateOpen,
@@ -1094,6 +1125,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         page.releaseKeyboardEvents()
         UpdateRuntime.onShellResumed()
         HealthSyncRuntime.onShellResumed()
+        ReminderRuntime.onShellResumed(this)
         tryDeliverWake()
         openPendingEntry()
         keepSplitWindowInRecents()
@@ -1292,6 +1324,9 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
         val endpointId = s.current?.id
         if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
+            // The Apps slot and sheet follow the endpoint shown; its reminders are armed whether shown or not.
+            ChamberApps.load(this, s.current)
+            ReminderRuntime.refreshSoon(this)
             page.loadedBase = base
             page.loadedEndpointId = endpointId
             page.clearKeyboardRequests()
@@ -1446,6 +1481,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun closeOverlays() {
         tray.collapse()
         showDrawer = false
+        showChamberApps = false
         editing = null
         openFolderId = null
         folderEditor = null
@@ -1544,6 +1580,18 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * [alternate] is the long-press choice, the other way of opening it;
      * choosing full screen there makes that the entry's way on a tap too.
      */
+    /**
+     * Load a page of the shown endpoint from the Apps sheet: the dashboard or
+     * a chamber app. Only a URL on the configured origin loads (the sheet's
+     * list is checked when parsed, and again here).
+     */
+    private fun openChamberPage(url: String?) {
+        if (url == null || !router.isConfiguredOrigin(url)) return
+        closeOverlays()
+        page.take(this)
+        webView?.loadUrl(url)
+    }
+
     private fun openEntry(entry: LauncherEntry, alternate: Boolean = false) {
         // Whatever opens, the tray goes down (an app may open beside Ara, which stays in view).
         tray.collapse()
@@ -1855,6 +1903,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             WebMessage.KeyboardOpen -> keyboardFromPage(PageRequest.Open)
             WebMessage.KeyboardCancel -> keyboardFromPage(PageRequest.Cancel)
             is WebMessage.PlaceCall -> placeCall(message.number)
+            is WebMessage.AppNotify -> ReminderRuntime.notifyNow(this, message.title, message.body)
+            WebMessage.RemindersChanged -> ReminderRuntime.refreshSoon(this, settings.current?.id)
         }
     }
 
