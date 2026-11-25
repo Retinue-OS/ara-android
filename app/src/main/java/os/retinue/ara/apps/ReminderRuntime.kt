@@ -215,8 +215,17 @@ object ReminderRuntime {
     /** *Skip today*: the server skips the rest of the day; the next fetch drops today's alarms. */
     suspend fun skip(context: Context, occ: ReminderOccurrence) {
         NotificationManagerCompat.from(context).cancel(AppsLogic.requestCode(occ.armKey))
+        // The rest of the day's alarms go now, without waiting for the server:
+        // a skip tapped offline must not be followed by today's later rings.
+        lock.withLock {
+            val day = AppsLogic.sameDayArmed(armed(context), occ, java.time.ZoneId.systemDefault())
+            day.forEach { cancel(context, it) }
+            setSnoozes(context, snoozes(context) - day)
+        }
         val endpoint = endpointOf(context, occ.endpointId) ?: return
-        if (send(context, endpoint, occ, "skip", "{}")) refresh(context, occ.endpointId)
+        // The occurrence names the day, so a skip flushed from the outbox
+        // tomorrow still skips today, not tomorrow.
+        if (send(context, endpoint, occ, "skip", AppsLogic.skipBody(occ.key))) refresh(context, occ.endpointId)
     }
 
     private suspend fun endpointOf(context: Context, id: String): Endpoint? =

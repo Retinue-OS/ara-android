@@ -570,7 +570,9 @@ shows them natively and runs them in its WebView:
   the server does not push it to the other devices. The notification carries
   **In 15 min** (the phone arms the snooze itself and sends the server the
   exact instant, `POST …/snooze {"at"}`) and **Skip today**
-  (`POST …/skip`); a tap opens the app's deep link in the shell through the
+  (the phone cancels that reminder's other alarms of the day at once, offline
+  too, and sends `POST …/skip {"occurrence"}`, so a skip sent late still
+  names its day); a tap opens the app's deep link in the shell through the
   same path as a `retinue-shell:` link ([Links into the app](#links-into-the-app)),
   so it loads only on a configured origin and asks before switching endpoint.
   A request that cannot be sent now waits on the phone and goes with the next

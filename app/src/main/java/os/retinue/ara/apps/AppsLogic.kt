@@ -248,6 +248,23 @@ object AppsLogic {
     /** The body of a `delivered` confirmation. */
     fun deliveredBody(key: String): String = buildJsonObject { put("occurrence", key) }.toString()
 
+    /** The body of a `skip`: the occurrence skipped, so a skip sent late still names its day. */
+    fun skipBody(key: String): String = buildJsonObject { put("occurrence", key) }.toString()
+
+    /**
+     * *Skip today* on [occ]: the arm keys of the same reminder's alarms on the
+     * same local day (in [zone], the phone's; the server skips by the job's
+     * zone, which is normally the same, and the next fetch corrects the rest),
+     * so they are cancelled at once — offline too.
+     */
+    fun sameDayArmed(armed: Map<String, ReminderOccurrence>, occ: ReminderOccurrence, zone: java.time.ZoneId): Set<String> {
+        val day = Instant.ofEpochMilli(occ.atMs).atZone(zone).toLocalDate()
+        return armed.filterValues {
+            it.endpointId == occ.endpointId && it.reminderId == occ.reminderId &&
+                Instant.ofEpochMilli(it.atMs).atZone(zone).toLocalDate() == day
+        }.keys
+    }
+
     /** The body of a `snooze`: the exact instant the phone armed, so both sides name it alike. */
     fun snoozeBody(atMs: Long): String = buildJsonObject { put("at", occurrenceKey(atMs)) }.toString()
 

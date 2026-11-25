@@ -124,6 +124,20 @@ class AppsLogicTest {
     }
 
     @Test
+    fun skipTodayCancelsThatDaysAlarmsOfThatReminderOnly() {
+        val zone = java.time.ZoneId.of("Europe/Zurich")
+        val tapped = occ("e1", "2026-11-24T09:30:00Z")
+        val later = occ("e1", "2026-11-24T16:00:00Z")
+        val tomorrow = occ("e1", "2026-11-25T09:30:00Z")
+        val otherEndpoint = occ("e2", "2026-11-24T16:00:00Z")
+        val otherReminder = later.copy(reminderId = "app:c:a:k")
+        val armed = listOf(later, tomorrow, otherEndpoint).associateBy { it.armKey } +
+            (otherReminder.armKey + "x" to otherReminder)
+        assertEquals(setOf(later.armKey), AppsLogic.sameDayArmed(armed, tapped, zone))
+        assertEquals("""{"occurrence":"2026-11-24T09:30:00Z"}""", AppsLogic.skipBody(tapped.key))
+    }
+
+    @Test
     fun aSnoozeIsArmedOnThePhoneAtTheInstantSentToTheServer() {
         val o = occ("e1", "2026-11-24T09:00:00Z").copy(ring = false)
         val s = AppsLogic.snoozed(o, now + 450, 15)
