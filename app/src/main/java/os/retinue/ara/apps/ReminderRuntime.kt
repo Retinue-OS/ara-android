@@ -290,14 +290,23 @@ object ReminderRuntime {
                 val endpointId = (o["endpoint"] as? JsonPrimitive)?.content ?: return@mapNotNull null
                 val path = (o["path"] as? JsonPrimitive)?.content ?: return@mapNotNull null
                 val body = (o["body"] as? JsonPrimitive)?.content ?: return@mapNotNull null
-                // An entry an earlier build wrote has no id: it gets one now.
-                val id = (o["id"] as? JsonPrimitive)?.content ?: java.util.UUID.randomUUID().toString()
+                val stored = (o["id"] as? JsonPrimitive)?.content
+                // A skip an earlier build queued carries no occurrence: the
+                // server would date it on arrival, perhaps the wrong day.
+                // Better not sent at all.
+                if (stored == null && path.endsWith("/skip") && body.trim() == "{}") return@mapNotNull null
+                // An entry without an id (an earlier build's) gets one derived
+                // from what it is, the same on every read, so it can be removed.
+                val id = stored ?: legacyId(endpointId, path, body)
                 Pending(id, endpointId, path, body)
             }
         } catch (_: Exception) {
             emptyList()
         }
     }
+
+    private fun legacyId(endpointId: String, path: String, body: String): String =
+        "legacy-" + java.util.UUID.nameUUIDFromBytes("$endpointId\n$path\n$body".toByteArray())
 
     private fun writeOutbox(context: Context, list: List<Pending>) {
         val raw = buildJsonArray {
