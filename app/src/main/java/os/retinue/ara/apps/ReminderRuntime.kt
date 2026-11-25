@@ -61,7 +61,10 @@ object ReminderRuntime {
     const val CHANNEL_APP = "chamber-app-notices"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Alarms and their stored plan; held only for local work, never across a request.
     private val lock = Mutex()
+    // The outbox; likewise.
+    private val outboxLock = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 
     /** At process start: the channels, the periodic refresh, and one fetch. */
@@ -90,29 +93,36 @@ object ReminderRuntime {
     }
 
     /** Fetch every eligible endpoint's reminders and bring the alarms in line. */
-    suspend fun refresh(context: Context, endpointId: String? = null) = lock.withLock {
+    suspend fun refresh(context: Context, endpointId: String? = null) {
         val settings = AraStore(context).settingsNow()
         val set = settings.endpointSet
         val eligible = set.endpoints.filter { set.stateOf(it) != InstanceState.Disabled }
         val eligibleIds = eligible.map { it.id }.toSet()
         // Alarms of endpoints that are gone or disabled: cancelled.
-        for ((key, occ) in armed(context)) {
-            if (occ.endpointId !in eligibleIds) cancel(context, key)
+        lock.withLock {
+            for ((key, occ) in armed(context)) {
+                if (occ.endpointId !in eligibleIds) cancel(context, key)
+            }
         }
         for (endpoint in eligible) {
             if (endpointId != null && endpoint.id != endpointId) continue
+            // The network stays outside the lock: a tap on Skip or Snooze
+            // must never wait behind a stalled fetch (the receiver has
+            // seconds, not minutes).
             flushOutbox(context, endpoint)
             val base = endpoint.base ?: continue
             val document = AppsClient.get(context, endpoint, AppsLogic.SCHEDULE_PATH) ?: continue
-            prefs(context).edit().putInt(snoozeKey(endpoint.id), AppsLogic.snoozeMinutes(document)).apply()
-            val now = System.currentTimeMillis()
-            val wanted = AppsLogic.parseSchedule(document, base, endpoint.id, now)
-            val plan = AppsLogic.plan(endpoint.id, armed(context), wanted, snoozes(context))
-            plan.cancel.forEach { cancel(context, it) }
-            plan.arm.forEach { arm(context, it) }
-            // A local snooze the server now lists is an ordinary occurrence.
-            val listed = wanted.map { it.armKey }.toSet()
-            setSnoozes(context, snoozes(context).filter { it !in listed && it in armed(context) }.toSet())
+            lock.withLock {
+                prefs(context).edit().putInt(snoozeKey(endpoint.id), AppsLogic.snoozeMinutes(document)).apply()
+                val now = System.currentTimeMillis()
+                val wanted = AppsLogic.parseSchedule(document, base, endpoint.id, now)
+                val plan = AppsLogic.plan(endpoint.id, armed(context), wanted, snoozes(context))
+                plan.cancel.forEach { cancel(context, it) }
+                plan.arm.forEach { arm(context, it) }
+                // A local snooze the server now lists is an ordinary occurrence.
+                val listed = wanted.map { it.armKey }.toSet()
+                setSnoozes(context, snoozes(context).filter { it !in listed && it in armed(context) }.toSet())
+            }
         }
     }
 
@@ -231,48 +241,72 @@ object ReminderRuntime {
     private suspend fun endpointOf(context: Context, id: String): Endpoint? =
         AraStore(context).settingsNow().endpoints.firstOrNull { it.id == id }
 
-    /** Post an action now, or keep it for the next fetch. True when it went. */
+    /**
+     * Post an action, kept in the outbox *first* and taken out once the
+     * server has it (or gave an answer a retry would not change). The
+     * receiver that calls this may be stopped after a few seconds, while a
+     * stalled request can take longer: whatever happens to this call, the
+     * action is not lost, and the next fetch sends it. Sending one twice is
+     * harmless: `delivered`, `snooze` (with its `at`) and `skip` (with its
+     * occurrence) name what they act on. True when it went now.
+     */
     private suspend fun send(context: Context, endpoint: Endpoint, occ: ReminderOccurrence, action: String, body: String): Boolean {
         val path = AppsLogic.actionPath(occ.chamber, occ.app, occ.job, action) ?: return true
-        if (AppsClient.post(context, endpoint, path, body)) return true
-        lock.withLock { enqueue(context, endpoint.id, path, body) }
-        return false
+        val id = outboxLock.withLock { enqueue(context, endpoint.id, path, body) }
+        if (!AppsClient.post(context, endpoint, path, body)) return false
+        outboxLock.withLock { removeFromOutbox(context, id) }
+        return true
     }
 
-    private fun enqueue(context: Context, endpointId: String, path: String, body: String) {
-        val list = outbox(context).toMutableList()
-        list += Triple(endpointId, path, body)
-        writeOutbox(context, list.takeLast(MAX_OUTBOX))
+    private data class Pending(val id: String, val endpointId: String, val path: String, val body: String)
+
+    private fun enqueue(context: Context, endpointId: String, path: String, body: String): String {
+        val id = java.util.UUID.randomUUID().toString()
+        writeOutbox(context, (outbox(context) + Pending(id, endpointId, path, body)).takeLast(MAX_OUTBOX))
+        return id
     }
 
-    private suspend fun flushOutbox(context: Context, endpoint: Endpoint) {
+    private fun removeFromOutbox(context: Context, id: String) {
         val all = outbox(context)
-        val left = all.filter { (id, path, body) -> id != endpoint.id || !AppsClient.post(context, endpoint, path, body) }
+        val left = all.filter { it.id != id }
         if (left.size != all.size) writeOutbox(context, left)
     }
 
-    private fun outbox(context: Context): List<Triple<String, String, String>> {
+    /** Send what waits for [endpoint]; each entry leaves the outbox once it went. */
+    private suspend fun flushOutbox(context: Context, endpoint: Endpoint) {
+        val waiting = outboxLock.withLock { outbox(context).filter { it.endpointId == endpoint.id } }
+        for (p in waiting) {
+            if (AppsClient.post(context, endpoint, p.path, p.body)) {
+                outboxLock.withLock { removeFromOutbox(context, p.id) }
+            }
+        }
+    }
+
+    private fun outbox(context: Context): List<Pending> {
         val raw = prefs(context).getString(K_OUTBOX, null) ?: return emptyList()
         return try {
             (json.parseToJsonElement(raw) as JsonArray).mapNotNull { el ->
                 val o = el as? JsonObject ?: return@mapNotNull null
-                val id = (o["endpoint"] as? JsonPrimitive)?.content ?: return@mapNotNull null
+                val endpointId = (o["endpoint"] as? JsonPrimitive)?.content ?: return@mapNotNull null
                 val path = (o["path"] as? JsonPrimitive)?.content ?: return@mapNotNull null
                 val body = (o["body"] as? JsonPrimitive)?.content ?: return@mapNotNull null
-                Triple(id, path, body)
+                // An entry an earlier build wrote has no id: it gets one now.
+                val id = (o["id"] as? JsonPrimitive)?.content ?: java.util.UUID.randomUUID().toString()
+                Pending(id, endpointId, path, body)
             }
         } catch (_: Exception) {
             emptyList()
         }
     }
 
-    private fun writeOutbox(context: Context, list: List<Triple<String, String, String>>) {
+    private fun writeOutbox(context: Context, list: List<Pending>) {
         val raw = buildJsonArray {
-            list.forEach { (id, path, body) ->
-                add(buildJsonObject { put("endpoint", id); put("path", path); put("body", body) })
+            list.forEach { p ->
+                add(buildJsonObject { put("id", p.id); put("endpoint", p.endpointId); put("path", p.path); put("body", p.body) })
             }
         }.toString()
-        prefs(context).edit().putString(K_OUTBOX, raw).apply()
+        // commit, not apply: the receiver's process may end right after.
+        prefs(context).edit().putString(K_OUTBOX, raw).commit()
     }
 
     private fun snoozes(context: Context): Set<String> =

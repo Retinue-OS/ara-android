@@ -575,8 +575,11 @@ shows them natively and runs them in its WebView:
   names its day); a tap opens the app's deep link in the shell through the
   same path as a `retinue-shell:` link ([Links into the app](#links-into-the-app)),
   so it loads only on a configured origin and asks before switching endpoint.
-  A request that cannot be sent now waits on the phone and goes with the next
-  fetch. The plan is fetched again when Ara comes to the front (at most every
+  Every action is written to an outbox on the phone before it is sent and
+  leaves it once the server has it, so neither a request that cannot be sent
+  now nor one cut short (a stalled connection outlasting the receiver's few
+  seconds) is lost: it goes with the next fetch. Requests never run under the
+  lock the alarms are changed under, so a tap is never held up by a fetch. The plan is fetched again when Ara comes to the front (at most every
   five minutes), when a page calls `remindersChanged()`, after each alarm,
   every four hours, and after a reboot or an update (which re-arm the stored
   plan first, offline too).
