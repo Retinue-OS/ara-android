@@ -52,7 +52,7 @@ object ReminderRuntime {
     private const val K_ARMED = "armed"          // arm key → encoded occurrence
     private const val K_SNOOZES = "snoozes"      // arm keys of snoozes the phone armed itself
     private const val K_OUTBOX = "outbox"        // [{endpoint, path, body}]
-    private const val K_SNOOZE_MIN = "snooze_minutes"
+    private const val K_SNOOZE_MIN = "snooze_minutes"  // per endpoint: "snooze_minutes:<id>"
     private const val MAX_OUTBOX = 100
     private const val REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000L
 
@@ -104,7 +104,7 @@ object ReminderRuntime {
             flushOutbox(context, endpoint)
             val base = endpoint.base ?: continue
             val document = AppsClient.get(context, endpoint, AppsLogic.SCHEDULE_PATH) ?: continue
-            prefs(context).edit().putInt(K_SNOOZE_MIN, AppsLogic.snoozeMinutes(document)).apply()
+            prefs(context).edit().putInt(snoozeKey(endpoint.id), AppsLogic.snoozeMinutes(document)).apply()
             val now = System.currentTimeMillis()
             val wanted = AppsLogic.parseSchedule(document, base, endpoint.id, now)
             val plan = AppsLogic.plan(endpoint.id, armed(context), wanted, snoozes(context))
@@ -193,15 +193,16 @@ object ReminderRuntime {
             setSnoozes(context, snoozes(context) - occ.armKey)
         }
         val endpoint = endpointOf(context, occ.endpointId) ?: return
-        show(context, occ)
-        send(context, endpoint, occ, "delivered", AppsLogic.deliveredBody(occ.key))
+        // Confirmed only when the user can see it: with notifications off (the
+        // app's, or the channel's) the server pushes it to the other devices.
+        if (show(context, occ)) send(context, endpoint, occ, "delivered", AppsLogic.deliveredBody(occ.key))
         refresh(context, occ.endpointId)
     }
 
     /** *In 15 min*: the phone arms the snooze itself (it works offline) and tells the server the instant. */
     suspend fun snooze(context: Context, occ: ReminderOccurrence) {
         NotificationManagerCompat.from(context).cancel(AppsLogic.requestCode(occ.armKey))
-        val minutes = prefs(context).getInt(K_SNOOZE_MIN, AppsLogic.DEFAULT_SNOOZE_MINUTES)
+        val minutes = snoozeMinutes(context, occ.endpointId)
         val next = AppsLogic.snoozed(occ, System.currentTimeMillis(), minutes)
         lock.withLock {
             arm(context, next)
@@ -272,6 +273,12 @@ object ReminderRuntime {
         prefs(context).edit().putStringSet(K_SNOOZES, keys).apply()
     }
 
+    /** Each server names its own snooze; one endpoint's never stands in for another's. */
+    private fun snoozeKey(endpointId: String) = "$K_SNOOZE_MIN:$endpointId"
+
+    private fun snoozeMinutes(context: Context, endpointId: String): Int =
+        prefs(context).getInt(snoozeKey(endpointId), AppsLogic.DEFAULT_SNOOZE_MINUTES)
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     // ---- notifications ---------------------------------------------------------------
@@ -303,14 +310,32 @@ object ReminderRuntime {
             .setData(Uri.parse("retinue-shell://open?url=" + Uri.encode(url)))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
-    private fun show(context: Context, occ: ReminderOccurrence) {
+    /**
+     * Whether a notification on [channel] reaches the user: notifications are
+     * allowed for the app (POST_NOTIFICATIONS on Android 13+) and the channel
+     * is not switched off.
+     */
+    private fun deliverable(context: Context, channel: String): Boolean {
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) return false
+        val importance = manager.getNotificationChannelCompat(channel)?.importance
+        return importance != NotificationManagerCompat.IMPORTANCE_NONE
+    }
+
+    /** Show [occ]'s notification; false when it cannot reach the user. */
+    private fun show(context: Context, occ: ReminderOccurrence): Boolean {
+        val channel = if (occ.ring) CHANNEL_RING else CHANNEL_QUIET
+        if (!deliverable(context, channel)) {
+            Log.w(TAG, "reminder ${occ.reminderId} not shown: notifications are off")
+            return false
+        }
         val id = AppsLogic.requestCode(occ.armKey)
         val content = PendingIntent.getActivity(
             context, id, openIntent(context, occ.url),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val minutes = prefs(context).getInt(K_SNOOZE_MIN, AppsLogic.DEFAULT_SNOOZE_MINUTES)
-        val notification = NotificationCompat.Builder(context, if (occ.ring) CHANNEL_RING else CHANNEL_QUIET)
+        val minutes = snoozeMinutes(context, occ.endpointId)
+        val notification = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_ara)
             .setContentTitle(occ.title)
             .setContentText(occ.body.ifEmpty { context.getString(R.string.reminder_default_body) })
@@ -322,10 +347,12 @@ object ReminderRuntime {
             .addAction(0, context.getString(R.string.reminder_snooze, minutes), actionIntent(context, occ, ReminderReceiver.ACTION_SNOOZE))
             .addAction(0, context.getString(R.string.reminder_skip), actionIntent(context, occ, ReminderReceiver.ACTION_SKIP))
             .build()
-        try {
+        return try {
             NotificationManagerCompat.from(context).notify(id, notification)
+            true
         } catch (e: SecurityException) {
             Log.w(TAG, "notification not allowed: ${e.message}")
+            false
         }
     }
 

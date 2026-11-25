@@ -146,12 +146,13 @@ object AppsLogic {
                 sphere = o.str("sphere")?.trim()?.ifEmpty { null },
                 url = url,
             )
-        }
+        }.distinctBy { it.chamber to it.id }  // one row per app, whatever the document repeats
     }
 
     /**
      * The occurrences of `GET /apps/api/schedule` still to come after [nowMs]
-     * (or at most [LATE_MS] late), soonest first, at most [MAX_ALARMS]. An
+     * (or at most [LATE_MS] late) and within [HORIZON_HOURS], soonest first,
+     * at most [MAX_ALARMS]. An
      * occurrence the server says this or another shell delivered is left out,
      * and so is one whose open item the server already holds for it.
      */
@@ -178,6 +179,8 @@ object AppsLogic {
                 val key = occurrenceKey(at)
                 if (key in delivered || key == open) continue
                 if (at < nowMs - LATE_MS) continue
+                // The plan asked for is the next HORIZON_HOURS: nothing further out is armed.
+                if (at > nowMs + HORIZON_HOURS * 3_600_000L + LATE_MS) continue
                 val ring = (occ["ring"] as? JsonPrimitive)?.booleanOrNull ?: true
                 out += ReminderOccurrence(endpointId, id, chamber, app, job, title, body, url, at, key, ring)
             }

@@ -291,10 +291,12 @@
 
         <!-- Chamber-app reminders: the alarms, the notification's In 15 min
              and Skip today, the periodic refresh, and re-arming after a
-             reboot or an update. Exported only for the two system broadcasts. -->
+             reboot or an update. Not exported: no other app can fire, snooze
+             or skip a reminder; the system's boot and package-replaced
+             broadcasts reach it all the same. -->
         <receiver
             android:name=".apps.ReminderReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

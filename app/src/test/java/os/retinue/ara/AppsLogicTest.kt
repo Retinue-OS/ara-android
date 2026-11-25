@@ -72,6 +72,21 @@ class AppsLogicTest {
     }
 
     @Test
+    fun nothingBeyondTheHorizonIsArmed() {
+        val doc = schedule("""[{"at": "2026-11-26T08:59:00Z"}, {"at": "2026-11-26T09:30:00Z"}, {"at": "2027-01-01T09:00:00Z"}]""")
+        // 48 hours from 2026-11-24T09:00Z (and the same slack as for a late one).
+        assertEquals(listOf("2026-11-26T08:59:00Z"), AppsLogic.parseSchedule(doc, base, "e1", now).map { it.key })
+    }
+
+    @Test
+    fun aRepeatedAppIsListedOnce() {
+        val doc = """{"apps": [
+            {"chamber": "c", "id": "a", "name": "First", "url": "/apps/c/a/"},
+            {"chamber": "c", "id": "a", "name": "Again", "url": "/apps/c/a/"}]}"""
+        assertEquals(listOf("First"), AppsLogic.parseIndex(doc, base).map { it.name })
+    }
+
+    @Test
     fun occurrenceKeysAreTheServersSpelling() {
         assertEquals("2026-11-24T09:30:00Z", AppsLogic.occurrenceKey(AppsLogic.parseKey("2026-11-24T09:30:00.750Z")!!))
         assertEquals(AppsLogic.parseKey("2026-11-24T10:30:00+01:00"), AppsLogic.parseKey("2026-11-24T09:30:00Z"))

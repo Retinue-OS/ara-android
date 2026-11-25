@@ -14,8 +14,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The alarms and notification actions of chamber-app reminders
  * ([ReminderRuntime]): an occurrence fires, *In 15 min*, *Skip today*, the
  * periodic refresh, and the reboot (alarms do not survive one: they are armed
- * again from the server's plan). Not exported: only the system's alarm and the
- * app's own PendingIntents reach it, besides the boot broadcast.
+ * again from the server's plan). Not exported: only the system (its alarms and
+ * the boot and package-replaced broadcasts) and the app's own PendingIntents
+ * reach it.
  */
 class ReminderReceiver : BroadcastReceiver() {
 

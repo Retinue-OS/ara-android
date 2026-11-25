@@ -715,6 +715,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                                 tray.collapse()
                                 ChamberApps.load(this@MainActivity, settings.current)
                                 showChamberApps = true
+                                // The apps' reminders need notifications (Android 13+ asks once).
+                                requestNotificationsIfNeeded()
                             }
                         } else {
                             null
@@ -1904,7 +1906,12 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             WebMessage.KeyboardCancel -> keyboardFromPage(PageRequest.Cancel)
             is WebMessage.PlaceCall -> placeCall(message.number)
             is WebMessage.AppNotify -> ReminderRuntime.notifyNow(this, message.title, message.body)
-            WebMessage.RemindersChanged -> ReminderRuntime.refreshSoon(this, settings.current?.id)
+            WebMessage.RemindersChanged -> {
+                // A reminder was just set: ask for notifications now, in context
+                // (Android 13+), or its alarm would fire with nothing shown.
+                requestNotificationsIfNeeded()
+                ReminderRuntime.refreshSoon(this, settings.current?.id)
+            }
         }
     }
 

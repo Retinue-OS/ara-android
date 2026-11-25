@@ -54,9 +54,16 @@ object AppsClient {
     }
 
     /**
+     * The answers that end an action for good: the request is malformed (400),
+     * the reminder or app is gone (404, 410), or too large (413). Anything else —
+     * a refused sign-in (401, 403), a conflict, a server or network error —
+     * keeps it in the outbox for the next fetch.
+     */
+    private val TERMINAL = setOf(400, 404, 410, 413, 422)
+
+    /**
      * POST [body] (JSON) to [path] on [endpoint]. True when the server took it,
-     * or answered that there is nothing to take (a 4xx: the reminder is gone,
-     * the occurrence malformed) — retrying would not change that answer.
+     * or gave an answer a retry would not change ([TERMINAL]).
      */
     suspend fun post(context: Context, endpoint: Endpoint, path: String, body: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -66,7 +73,7 @@ object AppsClient {
                     Request.Builder().url(url).post(body.toRequestBody(JSON)).build(),
                 ).execute().use { resp ->
                     if (!resp.isSuccessful) Log.w(TAG, "POST $path on ${endpoint.hostLabel}: HTTP ${resp.code}")
-                    resp.isSuccessful || resp.code in 400..499
+                    resp.isSuccessful || resp.code in TERMINAL
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "POST $path on ${endpoint.hostLabel}: ${e.message}")
