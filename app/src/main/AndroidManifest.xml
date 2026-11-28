@@ -51,6 +51,12 @@
          (see shell/CallLogic). Asked for at runtime when a switch is turned
          on; emergency numbers only ever open the dialer. -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- Chamber-app reminders (apps/ReminderRuntime): armed as local alarms so
+         they fire offline too, on time where the user allows exact alarms
+         (Android 12+, in the system settings; otherwise a few minutes late),
+         and armed again after a reboot. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Keyboard for other devices (keyboard/KeyboardRuntime): the phone as a
          Bluetooth HID keyboard. Connect to register and type, advertise to be
@@ -282,6 +288,20 @@
         <receiver
             android:name=".update.UpdateReceiver"
             android:exported="false" />
+
+        <!-- Chamber-app reminders: the alarms, the notification's In 15 min
+             and Skip today, the periodic refresh, and re-arming after a
+             reboot or an update. Not exported: no other app can fire, snooze
+             or skip a reminder; the system's boot and package-replaced
+             broadcasts reach it all the same. -->
+        <receiver
+            android:name=".apps.ReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Files the page asks to view that the WebView cannot show (a PDF):
              a private copy in the cache, handed to the viewer app with a

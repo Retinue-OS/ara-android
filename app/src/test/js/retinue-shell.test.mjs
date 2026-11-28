@@ -418,3 +418,45 @@ console.log('keyboard bridge tests passed');
   ]);
 }
 console.log('call bridge tests passed');
+
+// Chamber apps (RetinueShell/7): speak(text, lang, id) on the native engine,
+// answered by a `speak` event with the page's id; notify(title, body);
+// remindersChanged().
+{
+  const ctx = { setTimeout, clearTimeout, Event, EventTarget, CustomEvent, JSON, Object, Number, String, Math, Array, TypeError, console };
+  ctx.window = ctx;
+  const events = new EventTarget();
+  ctx.addEventListener = events.addEventListener.bind(events);
+  ctx.removeEventListener = events.removeEventListener.bind(events);
+  ctx.dispatchEvent = events.dispatchEvent.bind(events);
+  const posts = [];
+  ctx.RetinueShellNative = { postMessage: (s) => posts.push(JSON.parse(s)) };
+  ctx.speechSynthesis = { getVoices: () => [{ name: 'x', lang: 'en' }], addEventListener() {}, speak() {} };
+  ctx.SpeechSynthesisUtterance = function () {};
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  const shell = ctx.RetinueShell;
+  const heard = [];
+  ctx.addEventListener('retinue-shell', (e) => heard.push(e.detail));
+  shell.speak('Next set', 'en', 'speak-1');
+  shell.speak('Rest', '', 'speak-2');
+  const [a, b] = posts.filter((p) => p.type === 'tts.speak');
+  assert.equal(a.text, 'Next set');
+  assert.equal(a.lang, 'en');
+  assert.ok(a.id > 2000000000 && b.id === a.id + 1);
+  ctx.__retinueShellReceive({ type: 'tts.start', id: a.id });
+  ctx.__retinueShellReceive({ type: 'tts.end', id: a.id });
+  ctx.__retinueShellReceive({ type: 'tts.error', id: b.id, error: 'interrupted' });
+  ctx.__retinueShellReceive({ type: 'tts.end', id: a.id });   // once only
+  ctx.__retinueShellReceive({ type: 'tts.end', id: 7 });      // the stand-in's own: not a speak event
+  assert.deepEqual(heard.map((d) => `${d.type}:${d.id}:${d.state}`), ['speak:speak-1:done', 'speak:speak-2:error']);
+  shell.notify('Hand session', 'Next: rest');
+  shell.notify('x'.repeat(200), null);
+  shell.remindersChanged();
+  const rest = posts.filter((p) => p.type !== 'tts.speak' && p.type !== 'tts.voices');
+  assert.deepEqual(rest.map((p) => p.type), ['app.notify', 'app.notify', 'reminders.changed']);
+  assert.equal(rest[0].body, 'Next: rest');
+  assert.equal(rest[1].title.length, 120);
+  assert.equal(rest[1].body, '');
+}
+console.log('chamber app bridge tests passed');

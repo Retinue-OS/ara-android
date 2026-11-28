@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import os.retinue.ara.apps.ReminderRuntime
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.health.HealthSyncRuntime
 import os.retinue.ara.keyboard.KeyboardRuntime
@@ -30,6 +31,7 @@ class AraApp : Application() {
         UpdateRuntime.init(this)
         HealthSyncRuntime.init(this)
         KeyboardRuntime.init(this)
+        ReminderRuntime.init(this)
         val store = AraStore(this)
         // The one phrase model of earlier builds joins the library first, and stays the one its endpoints listen for.
         val migrated = WakeModelFiles.migrateLegacy(this)

@@ -114,7 +114,8 @@ server.
 - JavaScript, DOM storage and service workers are on; media may play without a
   tap (a wake arrives without one, and the web app's chime and voice-activity
   detector need audio to start).
-- The user agent ends in ` RetinueShell/6 (Android)` (6: `placeCall`; 5: the
+- The user agent ends in ` RetinueShell/7 (Android)` (7: the chamber-app
+  members `speak`, `notify`, `remindersChanged`; 6: `placeCall`; 5: the
   keyboard for other devices; 4: the app has a settings page of its own and
   holds the dashboard's per-device preferences; 3: the endpoint members of the
   bridge exist; 2: the Health Connect members).
@@ -194,6 +195,11 @@ The web app detects the shell and talks to it through:
   An `id` is echoed when it is 1–64 of `A–Z a–z 0–9 . _ : -`, and dropped
   otherwise; invalid arguments throw.
   RetinueShell/6 adds `placeCall(number)` (see [Phone calls](#phone-calls)).
+  RetinueShell/7 adds what [chamber apps](#chamber-apps) use through
+  Retinue's `window.Retinue`: `speak(text, lang, id)` (the native
+  text-to-speech; a `speak` event `{id, state: "done"|"error"}` follows),
+  `notify(title, body)` (an immediate notification while the page is open)
+  and `remindersChanged()` (fetch the reminder plan again).
   `setVoiceActive(true)` (the page has the mic open, or holds a continuous
   conversation) keeps the screen on and pauses wake detection until
   `setVoiceActive(false)`, however long that takes. As a safety net, a
@@ -532,6 +538,58 @@ Connect and the letterbox; unit-tested with fakes), `health/HealthSyncRuntime.kt
 
 ---
 
+## Chamber apps
+
+A Retinue chamber may ship **apps** — Progressive Web Apps served by the
+endpoint at `/apps/<chamber>/<app>/` (Retinue's `docs/chamber-apps.md`). Ara
+shows them natively and runs them in its WebView:
+
+- **In All apps, like any other app.** The endpoint shown lists its apps in
+  `/apps/index.json`, which Ara fetches with the endpoint's certificate and
+  sign-in whenever the endpoint is shown or All apps is opened, and keeps on
+  the phone for offline use. Each app is listed in **All apps** (and in the
+  tray and the folder editor) at its place by name, among the phone's apps
+  and web apps. From there it behaves like one: tap to open, long-press to pin
+  it to the launcher bar, add it to a folder, or start a new folder with it.
+  It opens in the shell's WebView, never beside Ara or full screen. An app on
+  the bar or in a folder belongs to its endpoint: it stays when another
+  endpoint is shown, and opening it then asks whether to switch, as a
+  `retinue-shell:` link for that endpoint does. Only pages of the endpoint's
+  own origin under `/apps/<chamber>/<app>/` are listed or opened, and the
+  origin check applies again on load; an app page gets `window.RetinueShell`
+  like every page of the origin, and nothing else does. The dashboard is the
+  start page as before: Home goes back to it, and a *Web page* entry for `/`
+  puts it on the bar.
+- **Speech and notifications.** `RetinueShell.speak` / `notify` (RetinueShell/7,
+  see [Shell ↔ web contract](#shell--web-contract)); `window.Retinue` uses them
+  where present and the browser's own APIs otherwise.
+- **Reminders.** Web Push does not reach the WebView, so the shell arms an
+  app's reminders itself (`apps/ReminderRuntime`): it fetches
+  `GET /apps/api/schedule?arm=1` from every endpoint that is shown or works in
+  the background (not from a disabled one, whose alarms are cancelled), and
+  arms every occurrence of the next 48 hours as an Android alarm — exact where
+  the user allows exact alarms (*Alarms & reminders* in the system settings),
+  otherwise within a few minutes — so they fire offline too. When one fires,
+  the shell shows the notification (on *Reminders*, or *Reminders (quiet)*
+  for an occurrence the server says would not break through the focus mode
+  at its time) and confirms it, `POST …/<job>/delivered {"occurrence"}`, so
+  the server does not push it to the other devices. The notification carries
+  **In 15 min** (the phone arms the snooze itself and sends the server the
+  exact instant, `POST …/snooze {"at"}`) and **Skip today**
+  (the phone cancels that reminder's other alarms of the day at once, offline
+  too, and sends `POST …/skip {"occurrence"}`, so a skip sent late still
+  names its day); a tap opens the app's deep link in the shell through the
+  same path as a `retinue-shell:` link ([Links into the app](#links-into-the-app)),
+  so it loads only on a configured origin and asks before switching endpoint.
+  Every action is written to an outbox on the phone before it is sent and
+  leaves it once the server has it, so neither a request that cannot be sent
+  now nor one cut short (a stalled connection outlasting the receiver's few
+  seconds) is lost: it goes with the next fetch. Requests never run under the
+  lock the alarms are changed under, so a tap is never held up by a fetch. The plan is fetched again when Ara comes to the front (at most every
+  five minutes), when a page calls `remindersChanged()`, after each alarm,
+  every four hours, and after a reboot or an update (which re-arm the stored
+  plan first, offline too).
+
 ## Launcher bar
 
 Entries are stored on the device (DataStore, as JSON) and are one of:
@@ -540,14 +598,16 @@ Entries are stored on the device (DataStore, as JSON) and are one of:
 |---|---|---|
 | **App** | pinned from All apps | the app's launcher activity |
 | **Shortcut** (`shortcut`) | pinned by another app | that app's shortcut (needs Ara as home app) |
+| **Chamber app** (`chamber`) | pinned from All apps | the app's page on its endpoint, in the shell (see [Chamber apps](#chamber-apps)) |
 | **Link** (`uri`) | `tel:`, `sms:`, `mailto:`, `geo:0,0?q=`, `https://…`, `intent:…` | the dialer (tel), a composer (sms/mailto), otherwise Android's handler |
 | **Web page** (`web`) | `/#contacts` | that page of the web app, in the shell |
 | **Folder** (`folder`) | a *Games* folder | its apps, over the bar |
 
 The defaults are Phone, Messages, Mail and Maps — the four OS actions the web
 app's dock used to have. The bar scrolls sideways when it is full. The last
-slot is always **All apps**: a searchable list of launchable apps and installed
-web apps (tap to open, long-press to pin it to the bar or put it in a folder).
+slot is always **All apps**: a searchable list of launchable apps, installed
+web apps and the shown endpoint's chamber apps, by name (tap to open,
+long-press to pin it to the bar or put it in a folder).
 It is what keeps other apps reachable once Ara is the home screen. Long-press a
 bar entry to edit, move, or remove it, or to open it the other way: beside Ara
 in split screen, or full screen (see [Split screen](#split-screen)); the editor
@@ -1240,7 +1300,11 @@ are not offered (the descriptor is a keyboard only).
 
 - **Web Push does not work inside Android WebView.** In the shell, push
   notifications still need the PWA installed in Chrome, or a follow-up
-  (UnifiedPush, or a light poll of `/attention`).
+  (UnifiedPush, or a light poll of `/attention`). Chamber-app reminders are
+  the exception: they are armed as local alarms (see [Chamber apps](#chamber-apps)).
+- A reminder's local alarm does not follow a change of focus mode made after
+  the plan was fetched: whether it rings is the server's prediction for its
+  time, fetched at most a few hours before.
 - With the phone **locked**, a wake in mode *Always* turns the screen on, shows
   Ara over the lock screen and asks to unlock; the wake reaches the web app
   (which then opens the mic) once the phone is unlocked. Without the
@@ -1286,6 +1350,10 @@ wake/      WakeLogic (WakeMode, WakeScorer,         — pure: scoring, the mic g
 web/       ShellWebView, ShellWebClients,           — the WebView, its setup and callbacks,
            ShellBridge, NativeSpeech,                 the bridge, TextToSpeech,
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
+apps/      AppsLogic                                — pure: the app list, the reminder plan, alarms to arm or
+                                                      cancel, the reminder API's paths (unit-tested)
+           AppsClient, ChamberApps,                 — the endpoint's /apps/ requests, its apps for All apps,
+           ReminderRuntime, ReminderReceiver          local reminder alarms, notifications, the outbox
 data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
            CertificateImport                        — pure: which file goes to the installer, its name (unit-tested)
