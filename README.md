@@ -544,16 +544,22 @@ A Retinue chamber may ship **apps** — Progressive Web Apps served by the
 endpoint at `/apps/<chamber>/<app>/` (Retinue's `docs/chamber-apps.md`). Ara
 shows them natively and runs them in its WebView:
 
-- **The Apps list.** While the endpoint shown has any apps (its
-  `/apps/index.json`, fetched with the endpoint's certificate and sign-in
-  whenever the endpoint is shown or the list is opened, and kept on the phone
-  for offline use), the launcher bar has an **Apps** slot before *All apps*.
-  It opens a sheet with the **Dashboard** first and then each app; a tap
-  loads it in the shell's WebView. Ara has no home screen of its own, so this
-  is how one switches between the apps and the dashboard. Only pages of the
-  endpoint's own origin under `/apps/<chamber>/<app>/` are listed, and the
+- **In All apps, like any other app.** The endpoint shown lists its apps in
+  `/apps/index.json`, which Ara fetches with the endpoint's certificate and
+  sign-in whenever the endpoint is shown or All apps is opened, and keeps on
+  the phone for offline use. Each app is listed in **All apps** (and in the
+  tray and the folder editor) at its place by name, among the phone's apps
+  and web apps. From there it behaves like one: tap to open, long-press to pin
+  it to the launcher bar, add it to a folder, or start a new folder with it.
+  It opens in the shell's WebView, never beside Ara or full screen. An app on
+  the bar or in a folder belongs to its endpoint: it stays when another
+  endpoint is shown, and opening it then asks whether to switch, as a
+  `retinue-shell:` link for that endpoint does. Only pages of the endpoint's
+  own origin under `/apps/<chamber>/<app>/` are listed or opened, and the
   origin check applies again on load; an app page gets `window.RetinueShell`
-  like every page of the origin, and nothing else does.
+  like every page of the origin, and nothing else does. The dashboard is the
+  start page as before: Home goes back to it, and a *Web page* entry for `/`
+  puts it on the bar.
 - **Speech and notifications.** `RetinueShell.speak` / `notify` (RetinueShell/7,
   see [Shell ↔ web contract](#shell--web-contract)); `window.Retinue` uses them
   where present and the browser's own APIs otherwise.
@@ -592,14 +598,16 @@ Entries are stored on the device (DataStore, as JSON) and are one of:
 |---|---|---|
 | **App** | pinned from All apps | the app's launcher activity |
 | **Shortcut** (`shortcut`) | pinned by another app | that app's shortcut (needs Ara as home app) |
+| **Chamber app** (`chamber`) | pinned from All apps | the app's page on its endpoint, in the shell (see [Chamber apps](#chamber-apps)) |
 | **Link** (`uri`) | `tel:`, `sms:`, `mailto:`, `geo:0,0?q=`, `https://…`, `intent:…` | the dialer (tel), a composer (sms/mailto), otherwise Android's handler |
 | **Web page** (`web`) | `/#contacts` | that page of the web app, in the shell |
 | **Folder** (`folder`) | a *Games* folder | its apps, over the bar |
 
 The defaults are Phone, Messages, Mail and Maps — the four OS actions the web
 app's dock used to have. The bar scrolls sideways when it is full. The last
-slot is always **All apps**: a searchable list of launchable apps and installed
-web apps (tap to open, long-press to pin it to the bar or put it in a folder).
+slot is always **All apps**: a searchable list of launchable apps, installed
+web apps and the shown endpoint's chamber apps, by name (tap to open,
+long-press to pin it to the bar or put it in a folder).
 It is what keeps other apps reachable once Ara is the home screen. Long-press a
 bar entry to edit, move, or remove it, or to open it the other way: beside Ara
 in split screen, or full screen (see [Split screen](#split-screen)); the editor
@@ -1344,7 +1352,7 @@ web/       ShellWebView, ShellWebClients,           — the WebView, its setup a
            ShellIntents, ShellDownloads               intents to Android, files opened in a viewer or saved
 apps/      AppsLogic                                — pure: the app list, the reminder plan, alarms to arm or
                                                       cancel, the reminder API's paths (unit-tested)
-           AppsClient, ChamberApps,                 — the endpoint's /apps/ requests, the Apps sheet's list,
+           AppsClient, ChamberApps,                 — the endpoint's /apps/ requests, its apps for All apps,
            ReminderRuntime, ReminderReceiver          local reminder alarms, notifications, the outbox
 data/      ShellSettings, AraStore                  — settings, launcher and launch-time persistence (DataStore)
 net/       AraHttp                                  — KeyChain client certificate, mTLS OkHttp client
@@ -1353,7 +1361,6 @@ net/       AraHttp                                  — KeyChain client certific
 ui/        MainActivity, SplitShellActivity,        — the Compose shell (home screen and split-screen
            ShellPage, ShellViewModel,                 window), the page they share, settings, bar,
            LauncherBar, AppTray, AppDrawer,           tray, drawer, folders (open folder, folder editor),
-           ChamberAppsSheet                           the Apps sheet (chamber apps and the dashboard),
            LauncherFolders,
            LauncherEditorScreen, SettingsPageModel,   the launcher bar's editor, the settings page's state
            HealthRationaleActivity,

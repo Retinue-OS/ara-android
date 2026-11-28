@@ -104,13 +104,11 @@ fun LauncherBar(
     onAllApps: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
-    /** The endpoint's chamber apps (a slot before "All apps", only while it has any); null: no slot. */
-    onChamberApps: (() -> Unit)? = null,
 ) {
     val folders = remember(entries) { entries.filterIsInstance<LauncherEntry.Folder>() }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // The entries plus "All apps" (and the chamber apps' slot, when shown).
-        val width = slotWidth(maxWidth, entries.size + 1 + (if (onChamberApps != null) 1 else 0))
+        // The entries plus "All apps".
+        val width = slotWidth(maxWidth, entries.size + 1)
         Row(
             modifier = Modifier.fillMaxWidth().height(LauncherBarHeight),
             verticalAlignment = Alignment.CenterVertically,
@@ -131,8 +129,10 @@ fun LauncherBar(
                             width = width,
                         )
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            // What Android starts: apps, web apps and links (not pages of the web app, not folders).
-                            if (alternateOpen != null && (entry is LauncherEntry.Launchable || entry is LauncherEntry.Link)) {
+                            // What Android starts: apps, web apps and links (not pages of the web app, chamber apps or folders).
+                            val startsOutside = (entry is LauncherEntry.Launchable && entry !is LauncherEntry.ChamberApp) ||
+                                entry is LauncherEntry.Link
+                            if (alternateOpen != null && startsOutside) {
                                 AlternateOpenItem(alternateOpen.item(entry.launchKey)) { menu = false; onOpenAlternate(entry) }
                             }
                             MenuItem(R.string.launcher_edit, Icons.Filled.Edit) { menu = false; onEdit(entry) }
@@ -148,7 +148,7 @@ fun LauncherBar(
                                     onMove(entry, 1)
                                 }
                             }
-                            // Only apps and web apps go into folders.
+                            // Only apps, web apps and chamber apps go into folders.
                             if (entry is LauncherEntry.Launchable) {
                                 folders.forEach { folder ->
                                     MenuItem(
@@ -167,16 +167,6 @@ fun LauncherBar(
                 }
             }
             var allMenu by remember { mutableStateOf(false) }
-            if (onChamberApps != null) {
-                // The server's own apps (Retinue chamber apps), and the way back to the dashboard.
-                LauncherSlot(
-                    label = stringResource(R.string.chamber_apps),
-                    icon = { Icon(Icons.Filled.Widgets, contentDescription = null, modifier = Modifier.size(30.dp)) },
-                    onClick = onChamberApps,
-                    onLongClick = onChamberApps,
-                    width = width,
-                )
-            }
             Box {
                 LauncherSlot(
                     label = stringResource(R.string.launcher_all_apps),
@@ -277,6 +267,7 @@ fun EntryIcon(entry: LauncherEntry) {
     when (entry) {
         is LauncherEntry.App -> AppIcon(entry.packageName, entry.activityName)
         is LauncherEntry.Shortcut -> ShortcutIcon(entry.packageName, entry.shortcutId)
+        is LauncherEntry.ChamberApp -> ChamberAppIcon()
         is LauncherEntry.Link -> Icon(linkIcon(entry.uri), contentDescription = null, modifier = Modifier.size(30.dp))
         is LauncherEntry.WebPage -> Icon(Icons.Filled.Language, contentDescription = null, modifier = Modifier.size(30.dp))
         is LauncherEntry.Folder -> FolderIcon(entry)
@@ -312,13 +303,20 @@ fun ShortcutIcon(packageName: String, shortcutId: String, size: Dp = 34.dp) {
     }
 }
 
-/** The icon of what a folder holds: an app's, or a web app's (a pinned shortcut's). */
+/** The icon of what a folder holds: an app's, a web app's (a pinned shortcut's), or a chamber app's. */
 @Composable
 fun LaunchableIcon(item: LauncherEntry.Launchable, size: Dp = 34.dp) {
     when (item) {
         is LauncherEntry.App -> AppIcon(item.packageName, item.activityName, size)
         is LauncherEntry.Shortcut -> ShortcutIcon(item.packageName, item.shortcutId, size)
+        is LauncherEntry.ChamberApp -> ChamberAppIcon(size)
     }
+}
+
+/** A chamber app's icon: one symbol for all of them (the index carries no icons). */
+@Composable
+fun ChamberAppIcon(size: Dp = 34.dp) {
+    Icon(Icons.Filled.Widgets, contentDescription = null, modifier = Modifier.size(size * 0.88f))
 }
 
 private fun linkIcon(uri: String): ImageVector = when (uri.substringBefore(':').trim().lowercase()) {
@@ -351,6 +349,7 @@ fun EntryEditorDialog(
                 is LauncherEntry.WebPage -> entry.path
                 is LauncherEntry.App -> entry.packageName
                 is LauncherEntry.Shortcut -> entry.packageName
+                is LauncherEntry.ChamberApp -> entry.path
                 is LauncherEntry.Folder -> ""
             },
         )
@@ -358,7 +357,7 @@ fun EntryEditorDialog(
     val targetValid = when (entry) {
         is LauncherEntry.Link -> LauncherLinks.isValid(target)
         is LauncherEntry.WebPage -> !target.contains("://")
-        is LauncherEntry.App, is LauncherEntry.Shortcut, is LauncherEntry.Folder -> true
+        is LauncherEntry.App, is LauncherEntry.Shortcut, is LauncherEntry.ChamberApp, is LauncherEntry.Folder -> true
     }
     val canSave = label.isNotBlank() && targetValid
     val title = when {
@@ -394,7 +393,7 @@ fun EntryEditorDialog(
                         singleLine = true,
                         isError = !targetValid,
                     )
-                    is LauncherEntry.App, is LauncherEntry.Shortcut ->
+                    is LauncherEntry.App, is LauncherEntry.Shortcut, is LauncherEntry.ChamberApp ->
                         Text(target, style = MaterialTheme.typography.bodySmall)
                     is LauncherEntry.Folder -> Unit
                 }
@@ -412,6 +411,7 @@ fun EntryEditorDialog(
                             is LauncherEntry.WebPage -> entry.copy(label = l, path = t.ifEmpty { "/" })
                             is LauncherEntry.App -> entry.copy(label = l)
                             is LauncherEntry.Shortcut -> entry.copy(label = l)
+                            is LauncherEntry.ChamberApp -> entry.copy(label = l)
                             is LauncherEntry.Folder -> entry.copy(label = l)
                         },
                     )

@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 /**
  * One slot of the launcher bar (plan §1). Stored on the device as JSON (see
- * [LauncherConfig]); the `type` discriminator is `app`, `shortcut`, `uri`, `web` or `folder`.
+ * [LauncherConfig]); the `type` discriminator is `app`, `shortcut`, `chamber`, `uri`, `web` or `folder`.
  */
 @Serializable
 sealed class LauncherEntry {
@@ -13,21 +13,21 @@ sealed class LauncherEntry {
     abstract val label: String
 
     /**
-     * An entry that behaves like an app: an installed app, or a pinned shortcut
-     * such as an installed web app. These are what All apps lists and the only
-     * things a folder holds, so folders cannot nest. [key] names what the entry
-     * starts, whatever its id.
+     * An entry that behaves like an app: an installed app, a pinned shortcut
+     * such as an installed web app, or an app of a Retinue chamber. These are
+     * what All apps lists and the only things a folder holds, so folders
+     * cannot nest. [key] names what the entry starts, whatever its id.
      */
     @Serializable
     sealed interface Launchable {
         val id: String
         val label: String
-        val packageName: String
         val key: String
 
         companion object {
             fun appKey(packageName: String, activityName: String) = "app:$packageName/$activityName"
             fun shortcutKey(packageName: String, shortcutId: String) = "shortcut:$packageName/$shortcutId"
+            fun chamberKey(endpointId: String, chamber: String, app: String) = "chamber:$endpointId/$chamber/$app"
         }
     }
 
@@ -37,7 +37,7 @@ sealed class LauncherEntry {
     data class App(
         override val id: String,
         override val label: String,
-        override val packageName: String,
+        val packageName: String,
         val activityName: String,
     ) : LauncherEntry(), Launchable {
         override val key: String get() = Launchable.appKey(packageName, activityName)
@@ -54,10 +54,31 @@ sealed class LauncherEntry {
     data class Shortcut(
         override val id: String,
         override val label: String,
-        override val packageName: String,
+        val packageName: String,
         val shortcutId: String,
     ) : LauncherEntry(), Launchable {
         override val key: String get() = Launchable.shortcutKey(packageName, shortcutId)
+    }
+
+    /**
+     * An app of a Retinue chamber (Retinue's docs/chamber-apps.md): a web app
+     * the endpoint [endpointId] serves at `/apps/<chamber>/<app>/`, listed in
+     * its `/apps/index.json`. It loads in the shell's WebView, on that
+     * endpoint's origin; [path] is its start page there (path and query). Shown
+     * in All apps while its endpoint is shown; once on the bar or in a folder
+     * it stays, and opening it while another endpoint is shown asks to switch.
+     */
+    @Serializable
+    @SerialName("chamber")
+    data class ChamberApp(
+        override val id: String,
+        override val label: String,
+        val endpointId: String,
+        val chamber: String,
+        val app: String,
+        val path: String,
+    ) : LauncherEntry(), Launchable {
+        override val key: String get() = Launchable.chamberKey(endpointId, chamber, app)
     }
 
     /** A URI handed to Android: `tel:`, `sms:`, `mailto:`, `geo:`, `https:`, `intent:` … */
@@ -79,7 +100,7 @@ sealed class LauncherEntry {
     ) : LauncherEntry()
 
     /**
-     * A folder of apps: installed apps and installed web apps ([Launchable]),
+     * A folder of apps: installed apps, installed web apps and chamber apps ([Launchable]),
      * never links, web pages or other folders, so folders cannot nest. [kind]
      * is the folder type picked when it was made (its symbol, default name
      * and suggested apps); [icon], when set, names an image in app storage

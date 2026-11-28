@@ -123,6 +123,7 @@ fun LauncherEditorScreen(
 private fun describe(entry: LauncherEntry): String = when (entry) {
     is LauncherEntry.App -> entry.packageName
     is LauncherEntry.Shortcut -> entry.packageName
+    is LauncherEntry.ChamberApp -> entry.path
     is LauncherEntry.Link -> entry.uri
     is LauncherEntry.WebPage -> entry.path
     is LauncherEntry.Folder -> if (entry.apps.isEmpty()) {

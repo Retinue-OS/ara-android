@@ -88,8 +88,9 @@ private val MinTopMenu = 24.dp
 private const val ScrimAlpha = 0.32f
 
 /**
- * The tray's lines: every app and web app (apps inside folders too, but no
- * folders) except those on the bar itself, which is the tray's first line;
+ * The tray's lines: every app, web app and chamber app of the shown endpoint
+ * (apps inside folders too, but no folders) except those on the bar itself,
+ * which is the tray's first line;
  * the most recently used first (see [AppRecency]), the never-used by name.
  * [usage] is Android's last use per package (with usage access), [launches]
  * Ara's own per item.
@@ -100,9 +101,10 @@ internal fun trayItems(
     launcher: LauncherConfig,
     launches: Map<String, Long>,
     usage: Map<String, Long>,
+    chamberApps: List<LauncherEntry.ChamberApp> = emptyList(),
 ): List<DrawerItem> {
     val onBar = launcher.entries.mapNotNullTo(HashSet()) { (it as? LauncherEntry.Launchable)?.key }
-    val items = drawerItems(apps, shortcuts).filterNot { it.key in onBar }
+    val items = drawerItems(apps, shortcuts, chamberApps).filterNot { it.key in onBar }
     return AppRecency.recentFirst(items) { item ->
         AppRecency.lastUsed(item.key, (item as? DrawerItem.App)?.app?.packageName, launches, usage)
     }
@@ -395,7 +397,7 @@ private fun TrayLines(
                 item = item,
                 folders = folders,
                 onLaunch = { onLaunch(item) },
-                alternateOpen = alternateOpen?.item(item.key),
+                alternateOpen = alternateOpen?.takeUnless { item.opensInAra }?.item(item.key),
                 onLaunchAlternate = { onLaunchAlternate(item) },
                 onPin = { onPin(item) },
                 onAddToFolder = onAddToFolder,

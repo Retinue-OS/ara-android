@@ -11,6 +11,7 @@
     <string name="link_malformed">This link could not be opened.</string>
     <string name="link_switch_title">Switch to %1$s?</string>
     <string name="link_switch_body">This link is for %1$s, another Retinue set up in this app. Switch to it and open the link there?</string>
+    <string name="link_switch_app_body">%2$s is an app of %1$s, another Retinue set up in this app. Switch to it and open %2$s there?</string>
     <string name="link_switch_confirm">Switch</string>
 
     <!-- Health Connect: why Ara asks (HealthRationaleActivity). -->
@@ -301,15 +302,8 @@
     <string name="keyboard_secret_enter">Press Enter after</string>
     <string name="keyboard_secret_type">Type</string>
     <string name="keyboard_secret_cancel">Cancel</string>
-    <!-- Chamber apps (apps/, ui/ChamberAppsSheet) -->
-    <string name="chamber_apps">Apps</string>
-    <string name="chamber_apps_title">Apps on %1$s</string>
-    <string name="chamber_apps_dashboard">Dashboard</string>
-    <string name="chamber_apps_dashboard_hint">The attention list and everything else</string>
-    <string name="chamber_apps_loading">Loading the apps…</string>
-    <string name="chamber_apps_none">This server has no chamber apps.</string>
-    <string name="chamber_apps_failed">The apps could not be loaded.</string>
-    <string name="chamber_apps_offline">Offline: the apps as last loaded.</string>
+    <!-- Chamber apps (apps/; listed in All apps, ui/AppDrawer) -->
+    <string name="chamber_app_gone">%1$s can no longer be opened: its Retinue is not set up in this app any more.</string>
     <string name="reminders_channel">Reminders</string>
     <string name="reminders_channel_quiet">Reminders (quiet)</string>
     <string name="app_notices_channel">App notices</string>

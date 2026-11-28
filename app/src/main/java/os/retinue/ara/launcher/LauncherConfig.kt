@@ -17,10 +17,9 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
 
     fun indexOf(id: String): Int = entries.indexOfFirst { it.id == id }
 
-    /** Append [entry]; an app or a shortcut already on the bar is not added twice. */
+    /** Append [entry]; an app, a web app or a chamber app already on the bar is not added twice. */
     fun add(entry: LauncherEntry): LauncherConfig {
-        if (entry is LauncherEntry.App && containsApp(entry.packageName, entry.activityName)) return this
-        if (entry is LauncherEntry.Shortcut && containsShortcut(entry.packageName, entry.shortcutId)) return this
+        if (entry is LauncherEntry.Launchable && containsKey(entry.key)) return this
         if (indexOf(entry.id) >= 0) return this
         return copy(entries = entries + entry)
     }
@@ -52,6 +51,9 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
         if (from == target) return this
         return copy(entries = entries.moved(from, target))
     }
+
+    /** Whether what [key] starts ([LauncherEntry.Launchable.key]) is on the bar itself (folders do not count). */
+    fun containsKey(key: String): Boolean = entries.any { (it as? LauncherEntry.Launchable)?.key == key }
 
     /** Whether the app is pinned to the bar itself (apps in folders do not count). */
     fun containsApp(packageName: String, activityName: String): Boolean =
@@ -123,10 +125,10 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
                 is LauncherEntry.App -> entry.takeUnless { it.packageName in packageNames }
                 is LauncherEntry.Shortcut -> entry.takeUnless { it.packageName in packageNames }
                 is LauncherEntry.Folder -> {
-                    val apps = entry.apps.filterNot { it.packageName in packageNames }
+                    val apps = entry.apps.filterNot { it.packageNameOrNull in packageNames }
                     if (apps.size == entry.apps.size) entry else entry.copy(apps = apps)
                 }
-                is LauncherEntry.Link, is LauncherEntry.WebPage -> entry
+                is LauncherEntry.ChamberApp, is LauncherEntry.Link, is LauncherEntry.WebPage -> entry
             }
         }
         return if (kept == entries) this else copy(entries = kept)
@@ -161,12 +163,20 @@ data class LauncherConfig(val entries: List<LauncherEntry>) {
     }
 }
 
+/** The installed package behind an app or web app; null for a chamber app, which no package holds. */
+val LauncherEntry.Launchable.packageNameOrNull: String?
+    get() = when (this) {
+        is LauncherEntry.App -> packageName
+        is LauncherEntry.Shortcut -> packageName
+        is LauncherEntry.ChamberApp -> null
+    }
+
 /**
  * JSON form of [LauncherConfig]: `{"version":1,"entries":[{"type":"uri",…},…]}`.
  * Decoding is forgiving per entry, so one entry of an unknown future type does
  * not cost the user the rest of the bar — and per item inside a folder
  * (`{"type":"folder",…,"apps":[{"type":"app",…},{"type":"shortcut",…}]}`),
- * where anything but an app or a web app is dropped: folders do not nest.
+ * where anything but an app, a web app or a chamber app is dropped: folders do not nest.
  */
 object LauncherCodec {
 

@@ -264,7 +264,8 @@ fun FolderSheet(
                                 onLongClick = { menu = true },
                             )
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                if (alternateOpen != null) {
+                                // A chamber app loads in Ara's page: there is no other way of opening it.
+                                if (alternateOpen != null && app !is LauncherEntry.ChamberApp) {
                                     AlternateOpenItem(alternateOpen.item(app.key)) {
                                         menu = false
                                         onLaunchAlternate(app)
@@ -341,6 +342,7 @@ fun FolderEditor(
     request: FolderEditorRequest,
     apps: List<AppInfo>,
     shortcuts: List<PinnedShortcut>,
+    chamberApps: List<LauncherEntry.ChamberApp> = emptyList(),
     onSave: (folder: LauncherEntry.Folder, newIcon: ByteArray?) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -405,8 +407,8 @@ fun FolderEditor(
         onSave(folder, (icon as? IconChoice.Picked)?.icon?.png)
     }
 
-    // Apps and web apps together, as in All apps.
-    val candidates = remember(apps, shortcuts) { drawerItems(apps, shortcuts) }
+    // Apps, web apps and chamber apps together, as in All apps.
+    val candidates = remember(apps, shortcuts, chamberApps) { drawerItems(apps, shortcuts, chamberApps) }
     val inFolder = remember(draft.apps) { draft.apps.mapTo(HashSet()) { it.key } }
     val available = remember(candidates, inFolder, query) {
         candidates.filter { it.key !in inFolder && it.matches(query) }

@@ -55,7 +55,7 @@ data class ReminderOccurrence(
  * The shell's side of chamber apps: parsing what the endpoint answers, the API
  * paths it posts to, and which local alarms to arm or cancel. Framework-free,
  * so it is unit-tested; the Android parts are [ReminderRuntime],
- * [ReminderReceiver] and the Apps sheet.
+ * [ReminderReceiver] and All apps.
  */
 object AppsLogic {
 
@@ -123,6 +123,25 @@ object AppsLogic {
         val u = b.resolve(path.trim()) ?: return null
         if (u.scheme != b.scheme || u.host != b.host || u.port != b.port) return null
         return u.toString()
+    }
+
+    /** The part of an app's [url] after its origin (path and query), as a launcher entry stores it. */
+    fun startPath(url: String): String {
+        val u = url.toHttpUrlOrNull() ?: return "/"
+        return u.encodedPath + (u.encodedQuery?.let { "?$it" } ?: "") + (u.encodedFragment?.let { "#$it" } ?: "")
+    }
+
+    /**
+     * The URL a launcher entry of the app [chamber]/[app] opens on the endpoint
+     * at [base]: its stored [path] there, when that is on [base]'s origin and
+     * under `/apps/<chamber>/<app>/` (as [parseIndex] requires of the list);
+     * else null and nothing loads.
+     */
+    fun appUrl(base: String, chamber: String, app: String, path: String): String? {
+        if (!isName(chamber) || !isName(app)) return null
+        val url = sameOriginUrl(base, path) ?: return null
+        val p = url.toHttpUrlOrNull()?.encodedPath ?: return null
+        return url.takeIf { p.startsWith("/apps/$chamber/$app/") }
     }
 
     /** The apps of `/apps/index.json`; empty for anything that is not such a document. */

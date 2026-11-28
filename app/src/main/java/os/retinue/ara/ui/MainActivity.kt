@@ -98,6 +98,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import os.retinue.ara.R
+import os.retinue.ara.apps.AppsLogic
 import os.retinue.ara.apps.ChamberApps
 import os.retinue.ara.apps.ReminderRuntime
 import os.retinue.ara.data.EndpointLabels
@@ -213,8 +214,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     // --- Native overlays -----------------------------------------------------
     private var showSettings by mutableStateOf(false)
     private var showDrawer by mutableStateOf(false)
-    /** The Apps sheet: the shown endpoint's chamber apps and the dashboard (ChamberAppsSheet). */
-    private var showChamberApps by mutableStateOf(false)
     private var editing by mutableStateOf<Pair<LauncherEntry, Boolean>?>(null)
 
     /** The folder open over the bar (its id, so it follows edits). */
@@ -455,6 +454,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                 val launcher by viewModel.launcher.collectAsStateWithLifecycle()
                 val apps by viewModel.apps.collectAsStateWithLifecycle()
                 val shortcuts by viewModel.shortcuts.collectAsStateWithLifecycle()
+                val chamberApps by viewModel.chamberApps.collectAsStateWithLifecycle()
                 val trayItems by viewModel.trayItems.collectAsStateWithLifecycle()
                 val stored by viewModel.settings.collectAsStateWithLifecycle()
                 val voiceActive by WakeRuntime.voiceActive.collectAsStateWithLifecycle()
@@ -475,13 +475,24 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     // Sheets are windows above everything here, so they step aside for the folder editor.
                     val editor = folderEditor
                     if (showDrawer && editor == null) {
-                        LaunchedEffect(Unit) { viewModel.refreshApps() }
+                        LaunchedEffect(Unit) {
+                            viewModel.refreshApps()
+                            // The shown endpoint's chamber apps afresh (the stored list shows meanwhile).
+                            ChamberApps.load(this@MainActivity, settings.current)
+                        }
                         AppDrawer(
                             apps = apps,
                             shortcuts = shortcuts,
+                            chamberApps = chamberApps,
                             folders = launcher.folders,
                             isPinned = { launcher.containsApp(it.packageName, it.activityName) },
                             isShortcutPinned = { launcher.containsShortcut(it.packageName, it.shortcutId) },
+                            isChamberAppPinned = { launcher.containsKey(it.key) },
+                            onLaunchChamberApp = { app ->
+                                showDrawer = false
+                                openEntry(app)
+                            },
+                            onPinChamberApp = ::pinChamberApp,
                             onLaunch = { launchApp(it) },
                             onPin = ::pinApp,
                             onLaunchShortcut = { launchShortcut(it) },
@@ -516,23 +527,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                             )
                         }
                     }
-                    if (showChamberApps && editor == null) {
-                        val appsState by ChamberApps.state.collectAsStateWithLifecycle()
-                        val current = settings.current
-                        ChamberAppsSheet(
-                            instanceName = current?.let { EndpointLabels.label(it, settings.endpoints) }.orEmpty(),
-                            state = appsState,
-                            onDashboard = {
-                                showChamberApps = false
-                                openChamberPage(settings.base?.let { ShellUrls.startUrl(it) })
-                            },
-                            onOpen = { app ->
-                                showChamberApps = false
-                                openChamberPage(app.url)
-                            },
-                            onDismiss = { showChamberApps = false },
-                        )
-                    }
                     // A fresh page in place of one whose renderer went away (onSettingsPageGone).
                     if (showSettings) key(settingsGeneration) { SettingsPageOverlay() }
                     if (showLauncherEditor) {
@@ -552,6 +546,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     linkSwitch?.let { request ->
                         LinkSwitchDialog(
                             label = request.label,
+                            appName = request.appName,
                             onConfirm = { switchForLink(request) },
                             onDismiss = { linkSwitch = null },
                         )
@@ -563,6 +558,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                                 request = request,
                                 apps = apps,
                                 shortcuts = shortcuts,
+                                chamberApps = chamberApps,
                                 onSave = { folder, newIcon ->
                                     viewModel.saveFolder(folder, request.isNew, newIcon)
                                     folderEditor = null
@@ -700,6 +696,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                         when (item) {
                             is DrawerItem.App -> pinApp(item.app)
                             is DrawerItem.Shortcut -> pinShortcut(item.shortcut)
+                            is DrawerItem.Chamber -> pinChamberApp(item.app)
                         }
                     },
                     onAddToFolder = ::addToFolder,
@@ -708,19 +705,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
                     // Between the system bars: the tray stops below the page's top menu.
                     modifier = Modifier.statusBarsPadding().navigationBarsPadding(),
                 ) {
-                    val chamberApps by ChamberApps.state.collectAsStateWithLifecycle()
                     LauncherBar(
-                        onChamberApps = if (chamberApps.apps.isNotEmpty() && chamberApps.endpointId == settings.current?.id) {
-                            {
-                                tray.collapse()
-                                ChamberApps.load(this@MainActivity, settings.current)
-                                showChamberApps = true
-                                // The apps' reminders need notifications (Android 13+ asks once).
-                                requestNotificationsIfNeeded()
-                            }
-                        } else {
-                            null
-                        },
                         entries = launcher.entries,
                         onOpen = { openEntry(it) },
                         alternateOpen = alternateOpen,
@@ -1326,7 +1311,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         }
         val endpointId = s.current?.id
         if (base != page.loadedBase || aliasChanged || endpointId != page.loadedEndpointId) {
-            // The Apps slot and sheet follow the endpoint shown; its reminders are armed whether shown or not.
+            // All apps lists the chamber apps of the endpoint shown; its reminders are armed whether shown or not.
             ChamberApps.load(this, s.current)
             ReminderRuntime.refreshSoon(this)
             page.loadedBase = base
@@ -1483,7 +1468,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun closeOverlays() {
         tray.collapse()
         showDrawer = false
-        showChamberApps = false
         editing = null
         openFolderId = null
         folderEditor = null
@@ -1558,8 +1542,8 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         viewModel.selectEndpoint(request.endpointId)
     }
 
-    /** A link for another configured endpoint: which, what it is called, and the link itself. */
-    private class LinkSwitch(val endpointId: String, val label: String, val link: String)
+    /** A link for another configured endpoint: which, what it is called, the link itself, and the chamber app it opens, if one. */
+    private class LinkSwitch(val endpointId: String, val label: String, val link: String, val appName: String? = null)
 
     /** The failure card's Retry: load the start page afresh. */
     private fun retryLoad() {
@@ -1582,18 +1566,6 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
      * [alternate] is the long-press choice, the other way of opening it;
      * choosing full screen there makes that the entry's way on a tap too.
      */
-    /**
-     * Load a page of the shown endpoint from the Apps sheet: the dashboard or
-     * a chamber app. Only a URL on the configured origin loads (the sheet's
-     * list is checked when parsed, and again here).
-     */
-    private fun openChamberPage(url: String?) {
-        if (url == null || !router.isConfiguredOrigin(url)) return
-        closeOverlays()
-        page.take(this)
-        webView?.loadUrl(url)
-    }
-
     private fun openEntry(entry: LauncherEntry, alternate: Boolean = false) {
         // Whatever opens, the tray goes down (an app may open beside Ara, which stays in view).
         tray.collapse()
@@ -1605,6 +1577,10 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
             val base = settings.base ?: return openSettings()
             page.take(this)
             webView?.loadUrl(ShellUrls.webPathUrl(base, entry.path))
+            return
+        }
+        if (entry is LauncherEntry.ChamberApp) {
+            openChamberApp(entry)
             return
         }
         val key = entry.launchKey
@@ -1734,6 +1710,41 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     private fun LauncherEntry.Launchable.asEntry(): LauncherEntry = when (this) {
         is LauncherEntry.App -> this
         is LauncherEntry.Shortcut -> this
+        is LauncherEntry.ChamberApp -> this
+    }
+
+    /**
+     * Open a chamber app in the page. It belongs to one endpoint: while that
+     * one is shown it loads at once; for another configured endpoint the user
+     * is asked whether to switch, as for a `retinue-shell:` link
+     * ([LinkSwitchDialog]); an endpoint removed since leaves nothing to open.
+     * Only a URL on the endpoint's origin under the app's own path loads
+     * ([AppsLogic.appUrl]), and [takeLinkUrl] checks the origin again.
+     */
+    private fun openChamberApp(entry: LauncherEntry.ChamberApp) {
+        val endpoint = settings.endpoints.firstOrNull { it.id == entry.endpointId }
+        val url = endpoint?.base?.let { AppsLogic.appUrl(it, entry.chamber, entry.app, entry.path) }
+        if (url == null) {
+            Toast.makeText(this, getString(R.string.chamber_app_gone, entry.label), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val link = ShellLinks.openLink(url)
+        if (endpoint.id != settings.current?.id) {
+            // Opens once the user agrees to switch (switchForLink → applySettings → takeLinkUrl).
+            linkSwitch = LinkSwitch(endpoint.id, EndpointLabels.label(endpoint, settings.endpoints), link, entry.label)
+            return
+        }
+        viewModel.recordLaunch(entry)
+        // The apps' reminders need notifications (Android 13+ asks once).
+        requestNotificationsIfNeeded()
+        pendingLink = link
+        openPendingLink()
+    }
+
+    private fun pinChamberApp(app: LauncherEntry.ChamberApp) {
+        val wasPinned = viewModel.launcher.value.containsKey(app.key)
+        viewModel.pin(app)
+        if (!wasPinned) Toast.makeText(this, getString(R.string.drawer_pinned, app.label), Toast.LENGTH_SHORT).show()
     }
 
     private fun pinApp(app: AppInfo) {

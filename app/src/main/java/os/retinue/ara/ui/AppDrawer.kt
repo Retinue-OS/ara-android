@@ -48,9 +48,10 @@ import os.retinue.ara.launcher.PinnedShortcut
 import java.text.Collator
 
 /**
- * An item of All apps: an installed app, or a shortcut pinned to Ara (an
- * installed web app), which is an app in every other way too. The folder
- * editor offers the same items.
+ * An item of All apps: an installed app, a shortcut pinned to Ara (an
+ * installed web app), which is an app in every other way too, or an app of
+ * the shown endpoint's chambers. The folder editor and the tray offer the
+ * same items.
  */
 internal sealed interface DrawerItem {
     val label: String
@@ -58,8 +59,11 @@ internal sealed interface DrawerItem {
     /** What it starts: the [LauncherEntry.Launchable.key] of an entry made from it. */
     val key: String
 
-    /** The app's Android category, which folder types suggest apps by; web apps have none. */
+    /** The app's Android category, which folder types suggest apps by; web apps and chamber apps have none. */
     val category: Int
+
+    /** It loads in Ara's own page (a chamber app), so there is no other way of opening it (beside Ara, full screen). */
+    val opensInAra: Boolean get() = false
 
     /** Whether its name or package contains [query] (an empty query matches every item). */
     fun matches(query: String): Boolean
@@ -82,12 +86,33 @@ internal sealed interface DrawerItem {
         override fun matches(query: String): Boolean = shortcut.matches(query)
         override fun toEntry(): LauncherEntry.Launchable = shortcut.toEntry()
     }
+
+    /** An app of a chamber of the shown endpoint; [app] is the entry it becomes, with its id still to be made. */
+    data class Chamber(val app: LauncherEntry.ChamberApp) : DrawerItem {
+        override val label get() = app.label
+        override val key get() = app.key
+        override val category get() = ApplicationInfo.CATEGORY_UNDEFINED
+        override val opensInAra get() = true
+        override fun matches(query: String): Boolean {
+            val q = query.trim()
+            return q.isEmpty() || app.label.contains(q, ignoreCase = true) || app.chamber.contains(q, ignoreCase = true)
+        }
+        override fun toEntry(): LauncherEntry.Launchable = app.copy(id = ShellViewModel.newId())
+    }
 }
 
-/** [apps] and the web apps pinned to Ara ([shortcuts]) in one list, sorted by name. */
-internal fun drawerItems(apps: List<AppInfo>, shortcuts: List<PinnedShortcut>): List<DrawerItem> {
+/**
+ * [apps], the web apps pinned to Ara ([shortcuts]) and the shown endpoint's
+ * chamber apps ([chamberApps]) in one list, sorted by name.
+ */
+internal fun drawerItems(
+    apps: List<AppInfo>,
+    shortcuts: List<PinnedShortcut>,
+    chamberApps: List<LauncherEntry.ChamberApp> = emptyList(),
+): List<DrawerItem> {
     val collator = Collator.getInstance()
-    return (apps.map { DrawerItem.App(it) } + shortcuts.map { DrawerItem.Shortcut(it) })
+    return (apps.map { DrawerItem.App(it) } + shortcuts.map { DrawerItem.Shortcut(it) } + chamberApps.map { DrawerItem.Chamber(it) })
+        .distinctBy { it.key }
         .sortedWith { a, b -> collator.compare(a.label, b.label) }
 }
 
@@ -96,14 +121,16 @@ internal fun DrawerItemIcon(item: DrawerItem, size: Dp) {
     when (item) {
         is DrawerItem.App -> AppIcon(item.app.packageName, item.app.activityName, size)
         is DrawerItem.Shortcut -> ShortcutIcon(item.shortcut.packageName, item.shortcut.shortcutId, size)
+        is DrawerItem.Chamber -> ChamberAppIcon(size)
     }
 }
 
 /**
- * "All apps": every launchable app and every shortcut pinned to Ara (web apps
- * a browser installed), searchable. Tap opens; long-press offers pinning it to
- * the launcher bar, adding it to a folder, or a new folder with it — for an
- * app and a web app alike — and for a web app also removing it from the
+ * "All apps": every launchable app, every shortcut pinned to Ara (web apps
+ * a browser installed) and every app of the shown endpoint's chambers, in
+ * one list by name, searchable. Tap opens; long-press offers pinning it to
+ * the launcher bar, adding it to a folder, or a new folder with it — for
+ * every kind alike — and for a web app also removing it from the
  * phone. Required once the shell is the home screen, since otherwise other
  * apps would be unreachable.
  */
@@ -112,9 +139,13 @@ internal fun DrawerItemIcon(item: DrawerItem, size: Dp) {
 fun AppDrawer(
     apps: List<AppInfo>,
     shortcuts: List<PinnedShortcut>,
+    chamberApps: List<LauncherEntry.ChamberApp>,
     folders: List<LauncherEntry.Folder>,
     isPinned: (AppInfo) -> Boolean,
     isShortcutPinned: (PinnedShortcut) -> Boolean,
+    isChamberAppPinned: (LauncherEntry.ChamberApp) -> Boolean,
+    onLaunchChamberApp: (LauncherEntry.ChamberApp) -> Unit,
+    onPinChamberApp: (LauncherEntry.ChamberApp) -> Unit,
     onLaunch: (AppInfo) -> Unit,
     onPin: (AppInfo) -> Unit,
     onAddToFolder: (LauncherEntry.Launchable, LauncherEntry.Folder) -> Unit,
@@ -130,7 +161,7 @@ fun AppDrawer(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by rememberSaveable { mutableStateOf("") }
-    val items = remember(apps, shortcuts) { drawerItems(apps, shortcuts) }
+    val items = remember(apps, shortcuts, chamberApps) { drawerItems(apps, shortcuts, chamberApps) }
     val shown = remember(items, query) { items.filter { it.matches(query) } }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f).padding(horizontal = 12.dp)) {
@@ -183,6 +214,19 @@ fun AppDrawer(
                             onAddToFolder = onAddToFolder,
                             onNewFolder = onNewFolder,
                             onRemove = { onRemoveShortcut(item.shortcut) },
+                        )
+                        is DrawerItem.Chamber -> DrawerTile(
+                            item = item,
+                            folders = folders,
+                            pinned = isChamberAppPinned(item.app),
+                            onLaunch = { onLaunchChamberApp(item.app) },
+                            // It loads in Ara's page: there is no other way of opening it.
+                            alternateOpen = null,
+                            onLaunchAlternate = {},
+                            onPin = { onPinChamberApp(item.app) },
+                            onAddToFolder = onAddToFolder,
+                            onNewFolder = onNewFolder,
+                            onRemove = null,
                         )
                     }
                 }

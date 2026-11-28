@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import os.retinue.ara.R
+import os.retinue.ara.apps.AppsLogic
+import os.retinue.ara.apps.ChamberApp
+import os.retinue.ara.apps.ChamberApps
 import os.retinue.ara.data.AraStore
 import os.retinue.ara.data.CredentialVault
 import os.retinue.ara.data.EndpointLabels
@@ -57,6 +60,17 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
     private val _shortcuts = MutableStateFlow<List<PinnedShortcut>>(emptyList())
     val shortcuts: StateFlow<List<PinnedShortcut>> = _shortcuts.asStateFlow()
 
+    /**
+     * The shown endpoint's chamber apps (see [ChamberApps]) as the entries
+     * they become on the bar or in a folder, ids still to be made: listed in
+     * All apps, the tray and the folder editor with the other apps.
+     */
+    val chamberApps: StateFlow<List<LauncherEntry.ChamberApp>> =
+        combine(ChamberApps.state, settings) { state, s ->
+            val endpointId = state.endpointId
+            if (endpointId == null || endpointId != s?.current?.id) emptyList() else state.apps.map { it.toEntry(endpointId, id = "") }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     /** Android's last use of each package, with usage access (see [AppUsage]); empty without. */
     private val _usage = MutableStateFlow<Map<String, Long>>(emptyMap())
 
@@ -70,8 +84,13 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
      * (apps in folders included, folders not), the most recently used first.
      */
     internal val trayItems: StateFlow<List<DrawerItem>> =
-        combine(_apps, _shortcuts, launcher, store.launches, _usage) { apps, shortcuts, bar, launches, usage ->
-            trayItems(apps, shortcuts, bar, launches, usage)
+        combine(
+            combine(_apps, _shortcuts, chamberApps, ::Triple),
+            launcher,
+            store.launches,
+            _usage,
+        ) { (apps, shortcuts, chamber), bar, launches, usage ->
+            trayItems(apps, shortcuts, bar, launches, usage, chamber)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // The models and the job that changes them are the phone's, the same in
@@ -251,6 +270,9 @@ class ShellViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pin(shortcut: PinnedShortcut) = updateLauncher { it.add(shortcut.toEntry()) }
 
+    /** Pin a chamber app (an All apps item, [app] with its id still to be made) to the bar. */
+    fun pin(app: LauncherEntry.ChamberApp) = updateLauncher { it.add(app.copy(id = newId())) }
+
     /** Off the bar only: a shortcut stays pinned, and listed under All apps. */
     fun removeEntry(entry: LauncherEntry) = updateLauncher { it.remove(entry.id) }
 
@@ -391,3 +413,7 @@ fun AppInfo.toEntry() = LauncherEntry.App(ShellViewModel.newId(), label, package
 
 /** A new launcher entry for this pinned shortcut (a web app), on the bar or in a folder. */
 fun PinnedShortcut.toEntry() = LauncherEntry.Shortcut(ShellViewModel.newId(), label, packageName, shortcutId)
+
+/** A launcher entry for this app of the endpoint [endpointId]'s chambers, on the bar or in a folder. */
+fun ChamberApp.toEntry(endpointId: String, id: String = ShellViewModel.newId()) =
+    LauncherEntry.ChamberApp(id, name, endpointId, chamber, this.id, AppsLogic.startPath(url))

@@ -98,6 +98,27 @@ object ShellLinks {
     }
 
     /**
+     * The `retinue-shell://open?url=…` link for [url], as a page would build
+     * it with `encodeURIComponent`; [targetUrl] reads [url] back from it.
+     */
+    fun openLink(url: String): String = "$SCHEME://open?url=" + percentEncode(url)
+
+    /** RFC 3986 percent-encoding as UTF-8 of everything but the unreserved characters. */
+    fun percentEncode(s: String): String {
+        val out = StringBuilder(s.length * 3 / 2)
+        for (b in s.toByteArray(Charsets.UTF_8)) {
+            val c = b.toInt() and 0xff
+            val ch = c.toChar()
+            if (c < 0x80 && (ch.isLetterOrDigit() || ch in "-._~")) {
+                out.append(ch)
+            } else {
+                out.append('%').append("0123456789ABCDEF"[c shr 4]).append("0123456789ABCDEF"[c and 0xf])
+            }
+        }
+        return out.toString()
+    }
+
+    /**
      * RFC 3986 percent-decoding as UTF-8. A `+` stays a `+` (this is not form
      * encoding: `encodeURIComponent` writes a space as `%20`). Null for a
      * broken escape or invalid UTF-8.
