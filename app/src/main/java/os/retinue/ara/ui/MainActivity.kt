@@ -1538,12 +1538,25 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
     /** The link's endpoint becomes the current one; the link loads once it is (applySettings → takeLinkUrl). */
     private fun switchForLink(request: LinkSwitch) {
         linkSwitch = null
+        // A chamber app opened from the bar or a folder counts as launched,
+        // and asks for notifications, once the switch is agreed to — not
+        // before, so a dismissed question counts nothing.
+        request.app?.let { app ->
+            viewModel.recordLaunch(app)
+            requestNotificationsIfNeeded()
+        }
         pendingLink = request.link
         viewModel.selectEndpoint(request.endpointId)
     }
 
     /** A link for another configured endpoint: which, what it is called, the link itself, and the chamber app it opens, if one. */
-    private class LinkSwitch(val endpointId: String, val label: String, val link: String, val appName: String? = null)
+    private class LinkSwitch(
+        val endpointId: String,
+        val label: String,
+        val link: String,
+        val appName: String? = null,
+        val app: LauncherEntry.ChamberApp? = null,
+    )
 
     /** The failure card's Retry: load the start page afresh. */
     private fun retryLoad() {
@@ -1731,7 +1744,7 @@ open class MainActivity : ComponentActivity(), ShellHost, SplitAware, SettingsPa
         val link = ShellLinks.openLink(url)
         if (endpoint.id != settings.current?.id) {
             // Opens once the user agrees to switch (switchForLink → applySettings → takeLinkUrl).
-            linkSwitch = LinkSwitch(endpoint.id, EndpointLabels.label(endpoint, settings.endpoints), link, entry.label)
+            linkSwitch = LinkSwitch(endpoint.id, EndpointLabels.label(endpoint, settings.endpoints), link, entry.label, entry)
             return
         }
         viewModel.recordLaunch(entry)
